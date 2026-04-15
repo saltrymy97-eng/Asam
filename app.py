@@ -1,116 +1,112 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
-import os
+from groq import Groq
+import base64
 from PIL import Image
-from google.cloud import vision
 import io
-import re
+import json
+import os
 
-st.set_page_config(page_title="دفتر الحسابات", page_icon="📒")
+# --- إعدادات الصفحة ---
+st.set_page_config(page_title="دفتر الحسابات الذكي عبر Groq", layout="wide")
 
-# --- إعداد Google Vision من خلال Streamlit Secrets ---
-# (شرح الخطوات بالأسفل)
-if "gcp_key" not in st.secrets:
-    st.error("الرجاء إضافة مفتاح Google Cloud في Streamlit Secrets")
-    st.stop()
+# --- إعداد Groq API ---
+# احصل على مفتاحك من: https://console.groq.com/
+GROQ_API_KEY = "ضغ_مفتاح_GROQ_الخاص_بك_هنا"
+client = Groq(api_key=GROQ_API_KEY)
 
-# حفظ المفتاح مؤقتاً
-with open("/tmp/key.json", "w") as f:
-    f.write(st.secrets["gcp_key"])
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/tmp/key.json"
+# --- دوال المعالجة ---
+def init_db():
+    if not os.path.exists('ledger_groq.csv'):
+        df = pd.DataFrame(columns=['التاريخ', 'الاسم', 'له (دائن)', 'عليه (مدين)', 'البيان'])
+        df.to_csv('ledger_groq.csv', index=False, encoding='utf-8-sig')
 
-@st.cache_resource
-def get_vision_client():
-    return vision.ImageAnnotatorClient()
+def encode_image(image_file):
+    """تحويل الصورة إلى Base64 لإرسالها إلى Groq"""
+    return base64.b64encode(image_file.getvalue()).decode('utf-8')
 
-def extract_text(image_file):
-    client = get_vision_client()
-    content = image_file.getvalue()
-    image = vision.Image(content=content)
-    response = client.document_text_detection(image=image)
-    if response.error.message:
-        raise Exception(response.error.message)
-    return response.full_text_annotation.text
-
-def parse_text(text):
-    entries = []
-    for line in text.split('\n'):
-        nums = re.findall(r'\d+\.?\d*', line)
-        if not nums:
-            continue
-        amount = float(nums[-1])
-        entry_type = "💵 دخل" if any(k in line for k in ["راتب","دخل"]) else "💸 مصروف"
-        category = "أخرى"
-        for cat, kws in {"طعام":["غداء","عشاء"],"مواصلات":["بنزين","تاكسي"],"فواتير":["كهرباء","ماء"]}.items():
-            if any(k in line for k in kws):
-                category = cat
-                break
-        entries.append({
-            "التاريخ": datetime.now().strftime("%Y-%m-%d"),
-            "النوع": entry_type,
-            "التصنيف": category,
-            "المبلغ": amount,
-            "الوصف": line[:50]
-        })
-    return entries
-
-# --- إدارة البيانات ---
-DATA_FILE = "ledger.csv"
-def load(): return pd.read_csv(DATA_FILE) if os.path.exists(DATA_FILE) else pd.DataFrame(columns=["التاريخ","النوع","التصنيف","المبلغ","الوصف"])
-def save(df): df.to_csv(DATA_FILE, index=False)
+def process_image_with_groq(base64_image):
+    """تحليل الصورة باستخدام نموذج Llama 3.2 Vision عبر Groq"""
+    completion = client.chat.completions.create(
+        model="llama-3.2-11b-vision-preview",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text", 
+                        "text": "حلل صورة دفتر الحسابات اليدوي واستخرج العمليات المالية. "
+                                "أريد النتيجة كقائمة JSON فقط بتنسيق: "
+                                '[{"الاسم": "...", "المبلغ": 0, "النوع": "له" أو "عليه", "البيان": "..."}]'
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}",
+                        },
+                    },
+                ],
+            }
+        ],
+        temperature=0,
+        response_format={"type": "json_object"}
+    )
+    return json.loads(completion.choices[0].message.content)
 
 # --- واجهة المستخدم ---
-st.title("📒 دفتر الحسابات + OCR")
-tab1, tab2 = st.tabs(["✍️ يدوي", "📸 تصوير"])
+st.title("⚡ دفتر الحسابات الذكي (Groq Speed)")
+init_db()
 
-with tab1:
-    with st.form("form"):
-        c1, c2 = st.columns(2)
-        typ = c1.radio("النوع", ["💵 دخل", "💸 مصروف"])
-        amt = c2.number_input("المبلغ", min_value=0.0)
-        cat = st.selectbox("التصنيف", ["طعام","مواصلات","تسوق","فواتير","أخرى"])
-        desc = st.text_input("الوصف")
-        if st.form_submit_button("حفظ") and amt>0:
-            df = load()
-            df = pd.concat([df, pd.DataFrame([{
-                "التاريخ": datetime.now().strftime("%Y-%m-%d"),
-                "النوع": typ,
-                "التصنيف": cat,
-                "المبلغ": amt,
-                "الوصف": desc or "-"
-            }])], ignore_index=True)
-            save(df)
-            st.success("تمت الإضافة")
-            st.rerun()
+tabs = st.tabs(["📊 كشف الحساب", "📸 مسح بالذكاء الاصطناعي"])
 
-with tab2:
-    img = st.camera_input("صورة الدفتر")
-    if img:
-        st.image(img)
-        if st.button("تحليل"):
-            with st.spinner("جاري التحليل..."):
-                txt = extract_text(img)
-                st.text_area("النص", txt)
-                entries = parse_text(txt)
-                if entries:
-                    st.dataframe(pd.DataFrame(entries))
-                    if st.button("حفظ العمليات"):
-                        df = load()
-                        df = pd.concat([df, pd.DataFrame(entries)], ignore_index=True)
-                        save(df)
-                        st.success("تم الحفظ")
+with tabs[0]:
+    if os.path.exists('ledger_groq.csv'):
+        df = pd.read_csv('ledger_groq.csv')
+        st.dataframe(df, use_container_width=True)
+
+with tabs[1]:
+    st.header("أتمتة إدخال البيانات")
+    uploaded_file = st.file_uploader("ارفع صورة صفحة الدفتر...", type=['jpg', 'jpeg', 'png'])
+    
+    if uploaded_file:
+        st.image(uploaded_file, caption="المعطيات المرئية", width=300)
+        
+        if st.button("تحليل عبر Groq"):
+            with st.spinner("جاري المعالجة بسرعة البرق..."):
+                try:
+                    # تحويل الصورة ومعالجتها
+                    base64_img = encode_image(uploaded_file)
+                    result = process_image_with_groq(base64_img)
+                    
+                    # استخراج البيانات (قد تكون تحت مفتاح معين في الـ JSON)
+                    if isinstance(result, dict) and 'transactions' in result:
+                        entries = result['transactions']
+                    elif isinstance(result, list):
+                        entries = result
+                    else:
+                        entries = list(result.values())[0] if isinstance(result, dict) else []
+
+                    # تنسيق البيانات وحفظها
+                    new_data = []
+                    for item in entries:
+                        new_data.append({
+                            'التاريخ': pd.Timestamp.now().strftime('%Y-%m-%d'),
+                            'الاسم': item.get('الاسم', 'غير معروف'),
+                            'له (دائن)': item.get('المبلغ', 0) if item.get('النوع') == 'له' else 0,
+                            'عليه (مدين)': item.get('المبلغ', 0) if item.get('النوع') == 'عليه' else 0,
+                            'البيان': item.get('البيان', '')
+                        })
+                    
+                    new_df = pd.DataFrame(new_data)
+                    st.table(new_df)
+                    
+                    if st.button("تأكيد وحفظ في السجل"):
+                        main_df = pd.read_csv('ledger_groq.csv')
+                        final_df = pd.concat([main_df, new_df], ignore_index=True)
+                        final_df.to_csv('ledger_groq.csv', index=False, encoding='utf-8-sig')
+                        st.success("تم التحديث!")
                         st.rerun()
-                else:
-                    st.warning("لم نجد عمليات")
-
-# --- عرض الرصيد ---
-df = load()
-if not df.empty:
-    inc = df[df["النوع"]=="💵 دخل"]["المبلغ"].sum()
-    exp = df[df["النوع"]=="💸 مصروف"]["المبلغ"].sum()
-    c1,c2,c3 = st.columns(3)
-    c1.metric("الرصيد", f"{inc-exp:.2f}")
-    c2.metric("الدخل", f"{inc:.2f}")
-    c3.metric("المصروف", f"{exp:.2f}")
-    st.dataframe(df.sort_values("التاريخ", ascending=False).head(10), hide_index=True)
+                        
+                except Exception as e:
+                    st.error(f"خطأ في الاتصال بـ Groq: {e}")
+                        
