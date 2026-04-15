@@ -1,4 +1,4 @@
 streamlit
-google-generativeai
+groq
 Pillow
 pandas
