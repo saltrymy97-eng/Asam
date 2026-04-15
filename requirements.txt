@@ -1,7 +1,5 @@
 streamlit
-pandas
-Pillow
 pytesseract
-opencv-python-headless
-numpy
-fpdf
+pillow
+pandas
+opencv-python
