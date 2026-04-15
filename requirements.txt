@@ -1,7 +1,7 @@
 streamlit
-groq
-Pillow
 pandas
+Pillow
 plotly
-reportlab
-python-dotenv
+easyocr
+opencv-python-headless
+numpy
