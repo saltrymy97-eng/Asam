@@ -56,10 +56,17 @@ st.markdown("""
     }
     .stat-value { font-size: 24px; font-weight: bold; color: #203a43; }
     .stat-label { font-size: 14px; color: #666; }
+    .preview-box {
+        border: 2px solid #2c5364;
+        border-radius: 10px;
+        padding: 15px;
+        background-color: #f8f9fa;
+        margin: 15px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="app-header"><h1>📘 دفتر الحسابات إكسترا بالذكاء الاصطناعي</h1><p>العملة: ريال يمني 🇾🇪 | يدعم الصفحات الكاملة</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="app-header"><h1>📘 دفتر الحسابات إكسترا بالذكاء الاصطناعي</h1><p>العملة: ريال يمني 🇾🇪 | يدعم الصفحات الكاملة مع معاينة قبل الحفظ</p></div>', unsafe_allow_html=True)
 
 # ------------------- إعداد Groq -------------------
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
@@ -81,11 +88,11 @@ c.execute('''CREATE TABLE IF NOT EXISTS transactions
 conn.commit()
 
 # ------------------- دالة ضغط الصورة -------------------
-def compress_image(image, target_size_kb=250):
+def compress_image(image, target_size_kb=300):
     img = image.copy()
     if img.mode == 'RGBA':
         img = img.convert('RGB')
-    max_dimension = 1200  # زيادة الحجم قليلاً لصفحات كاملة
+    max_dimension = 1200
     if max(img.size) > max_dimension:
         ratio = max_dimension / max(img.size)
         new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
@@ -99,19 +106,20 @@ def compress_image(image, target_size_kb=250):
         img.save(buffer, format="JPEG", quality=quality, optimize=True)
     return buffer.getvalue()
 
-# ------------------- دالة استخراج البيانات (معدلة للصفحات الكاملة) -------------------
+# ------------------- دالة استخراج البيانات (محسنة لمنع الهلوسة) -------------------
 def extract_all_entries_from_image(image_bytes):
-    """ترسل الصورة إلى Groq وتطلب قائمة بكل الأسماء والمبالغ"""
     img_base64 = base64.b64encode(image_bytes).decode()
     
-    # الموجه الجديد: يطلب استخراج جميع المدينين
+    # موجه أكثر صرامة: نطلب النص الظاهر فقط
     prompt_text = """
-    هذه صورة لدفتر حسابات مكتوب باللغة العربية. استخرج جميع أسماء العملاء والمبالغ المستحقة عليهم.
-    قم بإرجاع قائمة بالصيغة التالية (كل سطر يحتوي على اسم ومبلغ):
-    الاسم: [اسم العميل] المبلغ: [المبلغ بالأرقام]
-    الاسم: [اسم العميل] المبلغ: [المبلغ بالأرقام]
-    ...
-    لا تكتب أي شيء آخر غير القائمة. إذا لم تجد أي أسماء، اكتب "لا يوجد".
+    أنت مساعد دقيق. هذه صورة لدفتر حسابات مكتوب بخط اليد أو مطبوع بالعربية.
+    مهمتك: استخرج فقط الأسماء والمبالغ الموجودة بوضوح في الصورة. لا تخترع أي شيء غير موجود.
+    إذا لم تستطع قراءة اسم أو مبلغ بوضوح، تجاهله.
+    أجب بقائمة بالصيغة التالية (كل سطر يحتوي على اسم ومبلغ):
+    الاسم: [الاسم كما هو مكتوب] المبلغ: [المبلغ بالأرقام]
+    الاسم: [الاسم كما هو مكتوب] المبلغ: [المبلغ بالأرقام]
+    إذا لم تجد أي اسم ومبلغ واضحين، أجب بكلمة "لا يوجد".
+    لا تكتب أي تعليقات إضافية.
     """
     
     response = client.chat.completions.create(
@@ -123,37 +131,33 @@ def extract_all_entries_from_image(image_bytes):
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}}
             ]
         }],
-        temperature=0.1,
-        max_tokens=1024  # زيادة الحد الأقصى لاستيعاب قوائم طويلة
+        temperature=0.0,  # إلغاء العشوائية تماماً
+        max_tokens=1024
     )
     return response.choices[0].message.content
 
 def parse_entries_from_text(text):
-    """تحليل النص المسترجع من Groq واستخراج قائمة من (الاسم، المبلغ)"""
     entries = []
     if not text or text.strip() == "لا يوجد":
         return entries
     
-    # نبحث عن جميع الأسطر التي تحتوي على "الاسم:" و "المبلغ:"
     lines = text.split('\n')
     for line in lines:
-        # تجاهل الأسطر الفارغة
         if not line.strip():
             continue
-            
-        # استخدام regex مرن لاستخراج الاسم والمبلغ
+        
+        # محاولة استخراج الاسم والمبلغ بأنماط متعددة
         name_match = re.search(r'الاسم\s*[:：]\s*(.+?)(?:\s+المبلغ|\s*$)', line)
         amount_match = re.search(r'المبلغ\s*[:：]\s*(\d+(?:[.,]\d+)?)', line)
         
         if name_match and amount_match:
             name = name_match.group(1).strip()
-            # إزالة أي نقاط زائدة أو رموز من الاسم
             name = re.sub(r'[^\w\s\u0600-\u06FF]', '', name).strip()
             amount_str = amount_match.group(1).replace(',', '.')
             try:
                 amount = float(amount_str)
                 if name and amount > 0:
-                    entries.append((name, amount))
+                    entries.append({"name": name, "amount": amount})
             except ValueError:
                 continue
     return entries
@@ -233,64 +237,69 @@ def generate_ledger_image(df):
 # ------------------- الواجهة -------------------
 tab1, tab2, tab3, tab4 = st.tabs(["📸 معالجة تلقائية", "📊 لوحة التحكم", "📋 دفتر اليومية", "📈 الإحصائيات"])
 
-# ================== التبويب 1: إضافة معاملات (يدعم الصفحات الكاملة) ==================
+# ================== التبويب 1: معاينة قبل الحفظ ==================
 with tab1:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("🚀 رفع صور الدفتر - يدعم الصفحات الكاملة")
-    st.caption("ارفع صورة أو أكثر، وسيتم استخراج جميع المدينين الموجودين في كل صورة تلقائياً")
+    st.subheader("🚀 رفع صور الدفتر - معاينة وتأكيد قبل الحفظ")
+    st.caption("ارفع الصورة، راجع البيانات المستخرجة، ثم احفظها")
     
     uploaded_files = st.file_uploader("اختر الصور", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
     
     if uploaded_files:
         st.info(f"📁 {len(uploaded_files)} صورة")
         
-        if st.button("🚀 استخراج وحفظ الكل تلقائياً", type="primary"):
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            total_saved = 0
-            total_images = len(uploaded_files)
+        # معالجة كل صورة على حدة وعرض المعاينة
+        for idx, file in enumerate(uploaded_files):
+            st.markdown(f"### 📄 الصورة {idx+1}: {file.name}")
             
-            for i, file in enumerate(uploaded_files):
-                status_text.text(f"🔍 معالجة الصورة {i+1}/{total_images}: {file.name}")
-                
-                try:
-                    # فتح وضغط الصورة
-                    image = Image.open(file)
-                    compressed = compress_image(image)
-                    
-                    # استخراج النص من الصورة
-                    result_text = extract_all_entries_from_image(compressed)
-                    
-                    # تحليل النص إلى قائمة مدينين
-                    entries = parse_entries_from_text(result_text)
-                    
-                    if entries:
-                        saved_in_this_image = 0
-                        for name, amount in entries:
-                            c.execute("INSERT INTO transactions (name, amount, transaction_date, created_at) VALUES (?,?,?,?)",
-                                      (name, amount, datetime.now().strftime("%Y-%m-%d"), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-                            conn.commit()
-                            saved_in_this_image += 1
-                            total_saved += 1
-                        
-                        status_text.success(f"✅ الصورة {i+1}: تم استخراج {saved_in_this_image} مدين | {file.name}")
-                    else:
-                        status_text.warning(f"⚠️ الصورة {i+1}: لم يتم العثور على مدينين | {file.name}")
-                
-                except Exception as e:
-                    status_text.error(f"❌ خطأ في معالجة {file.name}: {e}")
-                
-                progress_bar.progress((i + 1) / total_images)
-                time.sleep(0.5)
+            col_img, col_data = st.columns([1, 2])
+            with col_img:
+                # عرض الصورة الأصلية
+                image = Image.open(file)
+                st.image(image, caption="الصورة المرفوعة", use_container_width=True)
             
-            progress_bar.empty()
-            if total_saved > 0:
-                st.success(f"🎉 تم حفظ {total_saved} معاملة من {total_images} صورة")
-                st.balloons()
-            else:
-                st.warning("لم يتم حفظ أي معاملات")
-            time.sleep(2)
-            st.rerun()
+            with col_data:
+                if st.button(f"🔍 تحليل الصورة {idx+1}", key=f"analyze_{idx}"):
+                    with st.spinner("جاري تحليل الصورة..."):
+                        try:
+                            compressed = compress_image(image)
+                            result_text = extract_all_entries_from_image(compressed)
+                            entries = parse_entries_from_text(result_text)
+                            
+                            if entries:
+                                st.success(f"تم العثور على {len(entries)} مدين محتمل")
+                                
+                                # عرض البيانات في جدول قابل للتعديل
+                                st.markdown("**📋 البيانات المستخرجة (يمكنك تعديلها):**")
+                                edited_entries = []
+                                for i, entry in enumerate(entries):
+                                    col1, col2, col3 = st.columns([3, 2, 1])
+                                    with col1:
+                                        new_name = st.text_input("الاسم", value=entry['name'], key=f"name_{idx}_{i}")
+                                    with col2:
+                                        new_amount = st.number_input("المبلغ", value=entry['amount'], min_value=0.0, key=f"amount_{idx}_{i}")
+                                    with col3:
+                                        keep = st.checkbox("حفظ", value=True, key=f"keep_{idx}_{i}")
+                                    if keep:
+                                        edited_entries.append({"name": new_name, "amount": new_amount})
+                                
+                                # زر تأكيد الحفظ
+                                if st.button(f"💾 تأكيد وحفظ {len(edited_entries)} معاملة", key=f"save_{idx}"):
+                                    saved = 0
+                                    for e in edited_entries:
+                                        if e['name'] and e['amount'] > 0:
+                                            c.execute("INSERT INTO transactions (name, amount, transaction_date, created_at) VALUES (?,?,?,?)",
+                                                      (e['name'], e['amount'], datetime.now().strftime("%Y-%m-%d"), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                                            conn.commit()
+                                            saved += 1
+                                    st.success(f"✅ تم حفظ {saved} معاملة")
+                                    st.rerun()
+                            else:
+                                st.warning("⚠️ لم يتم العثور على أي مدين في هذه الصورة")
+                        except Exception as e:
+                            st.error(f"❌ خطأ: {e}")
+            
+            st.divider()
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ================== التبويب 2: لوحة التحكم ==================
