@@ -1,15 +1,18 @@
 import streamlit as st
-import pytesseract
-from PIL import Image
+import easyocr
 import pandas as pd
 import re
+from PIL import Image
+import numpy as np
 from datetime import datetime
 
-st.set_page_config(page_title="دفتر الحسابات", layout="centered")
+st.set_page_config(page_title="دفتر الحسابات الذكي", layout="centered")
 
-st.title("📒 دفتر الحسابات الذكي")
+st.title("📒 دفتر الحسابات الذكي (EasyOCR)")
 
-uploaded_file = st.file_uploader("📸 ارفع صورة", type=["jpg", "png", "jpeg"])
+uploaded_file = st.file_uploader("📸 ارفع صورة الدفتر", type=["jpg", "png", "jpeg"])
+
+reader = easyocr.Reader(['ar', 'en'])
 
 def classify_debt(date):
     days = (datetime.now() - date).days
@@ -22,18 +25,21 @@ def classify_debt(date):
 
 if uploaded_file:
     image = Image.open(uploaded_file)
-    st.image(image, use_column_width=True)
+    st.image(image, caption="الصورة", use_container_width=True)
 
-    text = pytesseract.image_to_string(image, lang='eng')
+    img_array = np.array(image)
+
+    results = reader.readtext(img_array, detail=0)
+
+    text = "\n".join(results)
 
     st.subheader("📄 النص المستخرج")
     st.write(text)
 
     data = []
-    lines = text.split("\n")
 
-    for line in lines:
-        match = re.search(r"(\w+)\s+(\d+)\s+(له|عليه)", line)
+    for line in results:
+        match = re.search(r"(.+)\s+(\d+)\s+(له|عليه)", line)
         if match:
             name = match.group(1)
             amount = float(match.group(2))
@@ -54,4 +60,4 @@ if uploaded_file:
         st.subheader("📊 النتائج")
         st.dataframe(df)
     else:
-        st.warning("❌ لا توجد بيانات مطابقة")
+        st.warning("❌ لم يتم العثور على بيانات مطابقة")
