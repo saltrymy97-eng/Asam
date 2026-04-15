@@ -1,5 +1,5 @@
 streamlit
+paddleocr
+pillow
 pandas
-Pillow
 plotly
-pytesseract
