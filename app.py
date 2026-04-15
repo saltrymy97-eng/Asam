@@ -93,7 +93,6 @@ with tab1:
     if uploaded_files:
         st.info(f"📁 {len(uploaded_files)} صورة")
         
-        # زر واحد لكل شيء
         if st.button("🚀 استخراج وحفظ الكل تلقائياً", type="primary"):
             progress_bar = st.progress(0)
             status_text = st.empty()
@@ -103,16 +102,10 @@ with tab1:
                 status_text.text(f"معالجة {i+1}/{len(uploaded_files)}: {file.name}")
                 
                 try:
-                    # فتح الصورة
                     image = Image.open(file)
-                    
-                    # ضغط
                     compressed = compress_image(image)
-                    
-                    # استخراج النص
                     result = extract_from_image(compressed)
                     
-                    # تحليل النتيجة
                     name_match = re.search(r'الاسم:\s*(.+?)(?:\n|$)', result)
                     amount_match = re.search(r'المبلغ:\s*(\d+(?:[.,]\d+)?)', result)
                     
@@ -120,7 +113,6 @@ with tab1:
                     amount_str = amount_match.group(1).replace(',', '.') if amount_match else "0"
                     amount = float(amount_str)
                     
-                    # حفظ تلقائي في قاعدة البيانات
                     if name and amount > 0:
                         c.execute("INSERT INTO transactions (name, amount, transaction_date, created_at) VALUES (?,?,?,?)",
                                   (name, amount, datetime.now().strftime("%Y-%m-%d"), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
@@ -157,13 +149,11 @@ with tab2:
         
         df['التصنيف'] = df['transaction_date'].apply(classify)
         
-        # رسم بياني دائري
         counts = df['التصنيف'].value_counts().reset_index()
         counts.columns = ['التصنيف', 'العدد']
         fig = px.pie(counts, values='العدد', names='التصنيف', title="نسبة الديون", hole=0.3)
         st.plotly_chart(fig, use_container_width=True)
         
-        # عرض كل فئة
         for cat in ["🟢 حديث (أقل من شهر)", "🟡 متوسط (1-3 أشهر)", "🔴 قديم (أكثر من 3 أشهر)"]:
             sub = df[df['التصنيف'] == cat]
             if not sub.empty:
@@ -193,12 +183,12 @@ with tab3:
         if st.button("🗑️ حذف جميع المعاملات"):
             c.execute("DELETE FROM transactions")
             conn.commit()
-            st.warning("تم الحذف")
+            st.warning("تم حذف جميع المعاملات")
             st.rerun()
     else:
         st.info("لا توجد معاملات")
 
-# ================== التبويب 4: إحصائيات ==================
+# ================== التبويب 4: إحصائيات (تم الإصلاح) ==================
 with tab4:
     df = pd.read_sql_query("SELECT amount, transaction_date FROM transactions", conn)
     if not df.empty:
@@ -207,13 +197,25 @@ with tab4:
         col2.metric("📊 عدد المعاملات", len(df))
         col3.metric("📈 متوسط الدين", f"{df['amount'].mean():,.0f} ريال")
         
-        # رسم بياني شهري
-        df['transaction_date'] = pd.to_datetime(df['transaction_date'])
-        monthly = df.groupby(df['transaction_date'].dt.to_period('M')).sum().reset_index()
-        monthly['transaction_date'] = monthly['transaction_date'].astype(str)
-        fig = px.bar(monthly, x='transaction_date', y='amount', title="الديون شهرياً")
-        st.plotly_chart(fig, use_container_width=True)
+        # تحويل عمود التاريخ من نص إلى تاريخ (الإصلاح الأساسي)
+        df['transaction_date'] = pd.to_datetime(df['transaction_date'], errors='coerce')
+        df = df.dropna(subset=['transaction_date'])
+        
+        if not df.empty:
+            # تجميع شهري
+            df['month'] = df['transaction_date'].dt.to_period('M')
+            monthly = df.groupby('month')['amount'].sum().reset_index()
+            monthly['month'] = monthly['month'].astype(str)
+            fig = px.bar(monthly, x='month', y='amount', title="إجمالي الديون شهرياً (ريال يمني)")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("لا توجد تواريخ صالحة للرسم البياني")
     else:
-        st.info("لا توجد بيانات")
+        st.info("لا توجد بيانات للإحصائيات")
 
-conn.close()
+# ------------------- إغلاق الاتصال -------------------
+def on_close():
+    conn.close()
+
+import atexit
+atexit.register(on_close)
