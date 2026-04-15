@@ -5,12 +5,11 @@ from datetime import datetime
 from PIL import Image
 import re
 import base64
-import io
 
 # ------------------- إعداد الصفحة -------------------
 st.set_page_config(page_title="دفتر الحسابات إكسترا", layout="wide")
 st.title("📘 دفتر الحسابات إكسترا")
-st.markdown("انسخ النص من عدسة جوجل ← اضغط زر 'لصق' ← يحفظ تلقائياً + تنزيل الصورة")
+st.markdown("انسخ النص من عدسة جوجل ← الصقه هنا ← اضغط حفظ")
 
 # ------------------- قاعدة البيانات -------------------
 conn = sqlite3.connect('debter.db', check_same_thread=False)
@@ -23,67 +22,71 @@ c.execute('''CREATE TABLE IF NOT EXISTS transactions
 conn.commit()
 
 # ------------------- واجهة -------------------
-col1, col2 = st.columns([1, 1])
+tab1, tab2 = st.tabs(["📝 إضافة معاملة", "📋 المعاملات"])
 
-with col1:
-    st.subheader("📋 النص المستخرج من عدسة جوجل")
-    pasted_text = st.text_area("الصق النص هنا", height=150, key="pasted_text")
+with tab1:
+    col1, col2 = st.columns([1, 1])
     
-    # زر لصق باستخدام HTML/JavaScript (يعمل في المتصفح)
-    st.markdown("""
-        <button id="pasteBtn" style="background-color:#2a5298; color:white; padding:0.5rem 1rem; border:none; border-radius:8px; cursor:pointer;">
-        📋 لصق من الحافظة
-        </button>
-        <script>
-        document.getElementById('pasteBtn').onclick = async function() {
-            try {
-                const text = await navigator.clipboard.readText();
-                const textarea = parent.document.querySelector('textarea');
-                if (textarea) {
-                    textarea.value = text;
-                    textarea.dispatchEvent(new Event('input', {bubbles: true}));
-                }
-            } catch(e) { alert('الرجاء السماح بالوصول إلى الحافظة'); }
-        };
-        </script>
-    """, unsafe_allow_html=True)
+    with col1:
+        st.subheader("1️⃣ الصق النص من عدسة جوجل")
+        pasted_text = st.text_area("النص", height=150)
+        
+        # رفع الصورة
+        uploaded_img = st.file_uploader("2️⃣ (اختياري) ارفع صورة الدفتر", type=["jpg", "jpeg", "png"])
     
-    uploaded_img = st.file_uploader("📸 ارفع صورة الدفتر (سيتم تنزيلها تلقائياً)", type=["jpg", "jpeg", "png"])
+    with col2:
+        st.subheader("3️⃣ النتيجة")
+        if st.button("✅ تحليل وحفظ", type="primary"):
+            if pasted_text.strip():
+                # استخراج الاسم والمبلغ
+                amounts = re.findall(r'\d+(?:[.,]\d+)?', pasted_text)
+                amount = float(amounts[0].replace(',', '.')) if amounts else 0.0
+                arabic_words = re.findall(r'[\u0600-\u06FF]{3,}', pasted_text)
+                name = " ".join(arabic_words[:2]) if arabic_words else "غير معروف"
+                
+                # حفظ في قاعدة البيانات
+                c.execute("INSERT INTO transactions (name, amount, date) VALUES (?,?,?)",
+                          (name, amount, datetime.now().strftime("%Y-%m-%d")))
+                conn.commit()
+                
+                # حفظ الصورة إذا وجدت
+                if uploaded_img:
+                    filename = f"دفتر_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                    with open(filename, "wb") as f:
+                        f.write(uploaded_img.getvalue())
+                    st.success(f"✅ تم حفظ الصورة: {filename}")
+                
+                st.success(f"✅ تم حفظ: {name} - {amount:,.0f} ريال")
+                
+                # عرض النتيجة للنسخ
+                result_text = f"الاسم: {name}\nالمبلغ: {amount:,.0f} ريال\nالتاريخ: {datetime.now().strftime('%Y-%m-%d')}"
+                st.code(result_text, language="text")
+                
+                # زر نسخ النتيجة
+                st.markdown(f"""
+                    <textarea id="copyText" style="position:absolute;left:-9999px">{result_text}</textarea>
+                    <button onclick="copyToClipboard()" style="background-color:#28a745; color:white; padding:0.5rem 1rem; border:none; border-radius:8px; cursor:pointer; margin-top:10px">
+                    📋 نسخ النتيجة إلى الحافظة
+                    </button>
+                    <script>
+                    function copyToClipboard() {{
+                        var text = document.getElementById("copyText");
+                        text.select();
+                        document.execCommand("copy");
+                        alert("تم نسخ النتيجة");
+                    }}
+                    </script>
+                """, unsafe_allow_html=True)
+            else:
+                st.warning("الرجاء لصق النص أولاً")
 
-with col2:
-    st.subheader("💾 حفظ المعاملة")
-    if st.button("✅ تحليل وحفظ"):
-        if pasted_text.strip():
-            amounts = re.findall(r'\d+(?:[.,]\d+)?', pasted_text)
-            amount = float(amounts[0].replace(',', '.')) if amounts else 0.0
-            arabic_words = re.findall(r'[\u0600-\u06FF]{3,}', pasted_text)
-            name = " ".join(arabic_words[:2]) if arabic_words else "غير معروف"
-            
-            c.execute("INSERT INTO transactions (name, amount, date) VALUES (?,?,?)",
-                      (name, amount, datetime.now().strftime("%Y-%m-%d")))
-            conn.commit()
-            st.success(f"✅ تم حفظ: {name} - {amount:,.0f} ريال")
-            
-            if uploaded_img:
-                img_bytes = uploaded_img.getvalue()
-                filename = f"دفتر_اليوم_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-                with open(filename, "wb") as f:
-                    f.write(img_bytes)
-                st.success(f"✅ تم حفظ الصورة: {filename}")
-            
-            st.rerun()
-        else:
-            st.warning("الرجاء لصق النص أولاً")
-
-# ------------------- عرض آخر المعاملات -------------------
-st.subheader("📋 آخر 5 معاملات")
-df = pd.read_sql_query("SELECT name, amount, date FROM transactions ORDER BY date DESC LIMIT 5", conn)
-st.dataframe(df)
-
-# ------------------- رابط تنزيل الصورة -------------------
-if uploaded_img:
-    b64 = base64.b64encode(uploaded_img.getvalue()).decode()
-    href = f'<a href="data:image/jpeg;base64,{b64}" download="دفتر_اليوم.jpg">📥 تنزيل الصورة</a>'
-    st.markdown(href, unsafe_allow_html=True)
+with tab2:
+    st.subheader("جميع المعاملات")
+    df = pd.read_sql_query("SELECT name, amount, date FROM transactions ORDER BY date DESC", conn)
+    if not df.empty:
+        st.dataframe(df.rename(columns={'name':'الاسم', 'amount':'المبلغ(ريال)', 'date':'التاريخ'}))
+        st.download_button("📥 تحميل CSV", df.to_csv(index=False).encode(), "transactions.csv")
+    else:
+        st.info("لا توجد معاملات")
 
 conn.close()
