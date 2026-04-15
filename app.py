@@ -1,112 +1,97 @@
 import streamlit as st
+import sqlite3
 import pandas as pd
-from groq import Groq
-import base64
+from datetime import datetime
 from PIL import Image
-import io
-import json
-import os
+import google.generativeai as genai
+import re
 
-# --- إعدادات الصفحة ---
-st.set_page_config(page_title="دفتر الحسابات الذكي عبر Groq", layout="wide")
+# ------------------- إعداد Gemini -------------------
+# استخدم st.secrets أو أدخل المفتاح مباشرة (للتجربة فقط)
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
+if not GEMINI_API_KEY:
+    GEMINI_API_KEY = st.text_input("أدخل مفتاح Google Gemini API:", type="password")
+    if not GEMINI_API_KEY:
+        st.stop()
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash')
 
-# --- إعداد Groq API ---
-# احصل على مفتاحك من: https://console.groq.com/
-GROQ_API_KEY = "ضغ_مفتاح_GROQ_الخاص_بك_هنا"
-client = Groq(api_key=GROQ_API_KEY)
+# ------------------- قاعدة البيانات -------------------
+conn = sqlite3.connect('debter.db', check_same_thread=False)
+c = conn.cursor()
+c.execute('''CREATE TABLE IF NOT EXISTS transactions
+             (id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT,
+              amount REAL,
+              date TEXT,
+              raw_text TEXT)''')
+conn.commit()
 
-# --- دوال المعالجة ---
-def init_db():
-    if not os.path.exists('ledger_groq.csv'):
-        df = pd.DataFrame(columns=['التاريخ', 'الاسم', 'له (دائن)', 'عليه (مدين)', 'البيان'])
-        df.to_csv('ledger_groq.csv', index=False, encoding='utf-8-sig')
+# ------------------- واجهة Streamlit -------------------
+st.set_page_config(page_title="دفتر الحسابات - Gemini Vision", layout="wide")
+st.title("📒 دفتر الحسابات مع Google Gemini Vision")
+st.markdown("استخراج اسم العميل والمبلغ من صور الدفتر الورقي (بما في ذلك الخط اليدوي)")
 
-def encode_image(image_file):
-    """تحويل الصورة إلى Base64 لإرسالها إلى Groq"""
-    return base64.b64encode(image_file.getvalue()).decode('utf-8')
+tab1, tab2 = st.tabs(["📸 إضافة معاملة", "📋 المعاملات"])
 
-def process_image_with_groq(base64_image):
-    """تحليل الصورة باستخدام نموذج Llama 3.2 Vision عبر Groq"""
-    completion = client.chat.completions.create(
-        model="llama-3.2-11b-vision-preview",
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text", 
-                        "text": "حلل صورة دفتر الحسابات اليدوي واستخرج العمليات المالية. "
-                                "أريد النتيجة كقائمة JSON فقط بتنسيق: "
-                                '[{"الاسم": "...", "المبلغ": 0, "النوع": "له" أو "عليه", "البيان": "..."}]'
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{base64_image}",
-                        },
-                    },
-                ],
-            }
-        ],
-        temperature=0,
-        response_format={"type": "json_object"}
-    )
-    return json.loads(completion.choices[0].message.content)
-
-# --- واجهة المستخدم ---
-st.title("⚡ دفتر الحسابات الذكي (Groq Speed)")
-init_db()
-
-tabs = st.tabs(["📊 كشف الحساب", "📸 مسح بالذكاء الاصطناعي"])
-
-with tabs[0]:
-    if os.path.exists('ledger_groq.csv'):
-        df = pd.read_csv('ledger_groq.csv')
-        st.dataframe(df, use_container_width=True)
-
-with tabs[1]:
-    st.header("أتمتة إدخال البيانات")
-    uploaded_file = st.file_uploader("ارفع صورة صفحة الدفتر...", type=['jpg', 'jpeg', 'png'])
+with tab1:
+    uploaded_file = st.file_uploader("ارفع صورة الدفتر الورقي", type=["jpg", "jpeg", "png"])
     
-    if uploaded_file:
-        st.image(uploaded_file, caption="المعطيات المرئية", width=300)
+    if uploaded_file is not None:
+        image = Image.open(uploaded_file)
+        st.image(image, caption="الصورة المرفوعة", width=350)
         
-        if st.button("تحليل عبر Groq"):
-            with st.spinner("جاري المعالجة بسرعة البرق..."):
+        if st.button("🔍 استخراج البيانات بواسطة Gemini", type="primary"):
+            with st.spinner("Gemini Vision يقرأ الصورة..."):
                 try:
-                    # تحويل الصورة ومعالجتها
-                    base64_img = encode_image(uploaded_file)
-                    result = process_image_with_groq(base64_img)
+                    response = model.generate_content([
+                        "استخرج من هذه الصورة اسم العميل والمبلغ فقط. أجب بهذا الشكل الدقيق:\nالاسم: [الاسم]\nالمبلغ: [الرقم]\nإذا لم تجد شيئًا، اكتب 'غير موجود'.",
+                        image
+                    ])
+                    result_text = response.text
+                    st.success("✅ تم الاستخراج بنجاح")
+                    st.text_area("النص المستخرج من Gemini", result_text, height=150)
                     
-                    # استخراج البيانات (قد تكون تحت مفتاح معين في الـ JSON)
-                    if isinstance(result, dict) and 'transactions' in result:
-                        entries = result['transactions']
-                    elif isinstance(result, list):
-                        entries = result
-                    else:
-                        entries = list(result.values())[0] if isinstance(result, dict) else []
-
-                    # تنسيق البيانات وحفظها
-                    new_data = []
-                    for item in entries:
-                        new_data.append({
-                            'التاريخ': pd.Timestamp.now().strftime('%Y-%m-%d'),
-                            'الاسم': item.get('الاسم', 'غير معروف'),
-                            'له (دائن)': item.get('المبلغ', 0) if item.get('النوع') == 'له' else 0,
-                            'عليه (مدين)': item.get('المبلغ', 0) if item.get('النوع') == 'عليه' else 0,
-                            'البيان': item.get('البيان', '')
-                        })
+                    name_match = re.search(r'الاسم:\s*(.+?)(?:\n|$)', result_text)
+                    amount_match = re.search(r'المبلغ:\s*(\d+(?:[.,]\d+)?)', result_text)
                     
-                    new_df = pd.DataFrame(new_data)
-                    st.table(new_df)
+                    default_name = name_match.group(1).strip() if name_match else ""
+                    default_amount = amount_match.group(1) if amount_match else ""
                     
-                    if st.button("تأكيد وحفظ في السجل"):
-                        main_df = pd.read_csv('ledger_groq.csv')
-                        final_df = pd.concat([main_df, new_df], ignore_index=True)
-                        final_df.to_csv('ledger_groq.csv', index=False, encoding='utf-8-sig')
-                        st.success("تم التحديث!")
-                        st.rerun()
-                        
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        final_name = st.text_input("اسم العميل", value=default_name)
+                    with col2:
+                        final_amount = st.text_input("المبلغ", value=default_amount)
+                    
+                    if st.button("💾 حفظ المعاملة"):
+                        if final_name and final_amount:
+                            amount_float = float(final_amount.replace(',', '.'))
+                            c.execute(
+                                "INSERT INTO transactions (name, amount, date, raw_text) VALUES (?,?,?,?)",
+                                (final_name, amount_float, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), result_text)
+                            )
+                            conn.commit()
+                            st.success(f"تم حفظ معاملة {final_name} بمبلغ {amount_float}")
+                            st.rerun()
+                        else:
+                            st.warning("يرجى إدخال اسم العميل والمبلغ")
                 except Exception as e:
-                    st.error(f"خطأ في الاتصال بـ Groq: {e}")
-                        
+                    st.error(f"فشل الاتصال بـ Gemini: {e}")
+
+with tab2:
+    st.subheader("جميع المعاملات المسجلة")
+    df = pd.read_sql_query("SELECT id, name, amount, date FROM transactions ORDER BY date DESC", conn)
+    if not df.empty:
+        st.dataframe(df, use_container_width=True)
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 تحميل CSV", csv, "transactions.csv", "text/csv")
+        if st.button("🗑️ حذف جميع المعاملات"):
+            c.execute("DELETE FROM transactions")
+            conn.commit()
+            st.warning("تم حذف جميع المعاملات")
+            st.rerun()
+    else:
+        st.info("لا توجد معاملات بعد")
+
+conn.close()
