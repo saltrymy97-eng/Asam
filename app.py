@@ -10,75 +10,72 @@ import re
 # --- إعداد الصفحة ---
 st.set_page_config(page_title="دفتر الحسابات الذكي", page_icon="📒", layout="centered")
 
+# --- تهيئة session_state للتحكم بالتحديث ---
+if 'data_updated' not in st.session_state:
+    st.session_state.data_updated = False
+
 # --- تحميل PaddleOCR مع دعم اللغة العربية ---
 @st.cache_resource
 def load_ocr():
-    # استخدام المعلمات المثلى للغة العربية
-    return PaddleOCR(
-        lang='ar',
-        use_angle_cls=True,
-        det_db_thresh=0.3,
-        det_db_box_thresh=0.5,
-        use_gpu=False  # Streamlit Cloud لا تدعم GPU
-    )
+    try:
+        return PaddleOCR(
+            lang='ar',
+            use_angle_cls=True,
+            det_db_thresh=0.3,
+            det_db_box_thresh=0.5,
+            use_gpu=False
+        )
+    except Exception as e:
+        st.error(f"خطأ في تحميل PaddleOCR: {e}")
+        return None
 
 # --- دالة استخراج النص من الصورة ---
 def extract_text_from_image(image_file):
-    """
-    استخراج النص العربي من الصورة باستخدام PaddleOCR.
-    """
     image = Image.open(image_file)
     image_np = np.array(image)
     
     ocr = load_ocr()
+    if ocr is None:
+        return ""
+    
     result = ocr.ocr(image_np, cls=True)
     
-    # تجميع النص المستخرج مع الحفاظ على ترتيب الأسطر
     extracted_lines = []
     if result and result[0]:
         for line in result[0]:
             text = line[1][0]
             confidence = line[1][1]
-            if confidence > 0.5:  # تجاهل النتائج منخفضة الثقة
+            if confidence > 0.5:
                 extracted_lines.append(text)
     
     return "\n".join(extracted_lines)
 
-# --- دالة تحليل النص العربي وتحويله لعمليات مالية ---
+# --- دالة تحليل النص العربي ---
 def parse_arabic_ledger_text(text):
-    """
-    تحليل النص العربي المستخرج من دفتر الحسابات اليدوي.
-    تدعم هذه الدالة صيغاً متعددة شائعة في الدفاتر اليدوية.
-    """
     entries = []
     lines = text.split('\n')
     
-    # كلمات مفتاحية للتصنيف
     categories_map = {
-        "طعام": ["طعام", "غداء", "عشاء", "فطور", "مطعم", "اكل", "أكل", "قهوة", "شاي", "عصير", "مقصف", "بوفيه"],
-        "مواصلات": ["مواصلات", "بنزين", "ديزل", "سيارة", "قطار", "طائرة", "تاكسي", "أجرة", "موقف", "وقوف"],
-        "تسوق": ["تسوق", "شراء", "ملابس", "حذاء", "شنطة", "جهاز", "أثاث", "هدية"],
-        "فواتير": ["فاتورة", "كهرباء", "ماء", "غاز", "انترنت", "جوال", "هاتف", "اشتراك"],
-        "ترفيه": ["ترفيه", "سينما", "مسرح", "حفلة", "رحلة", "سفر", "فندق", "منتجع"],
-        "راتب": ["راتب", "مكافأة", "بدل", "عمولة", "دخل شهري"],
-        "صحة": ["صحة", "دواء", "طبيب", "مستشفى", "صيدلية", "علاج"],
-        "تعليم": ["تعليم", "مدرسة", "جامعة", "دورة", "كتاب", "رسوم دراسية"]
+        "طعام": ["طعام", "غداء", "عشاء", "فطور", "مطعم", "اكل", "أكل", "قهوة", "شاي"],
+        "مواصلات": ["مواصلات", "بنزين", "سيارة", "تاكسي", "أجرة"],
+        "تسوق": ["تسوق", "شراء", "ملابس", "جهاز"],
+        "فواتير": ["فاتورة", "كهرباء", "ماء", "انترنت", "جوال"],
+        "ترفيه": ["ترفيه", "سينما", "سفر", "رحلة"],
+        "راتب": ["راتب", "مكافأة", "دخل"],
+        "أخرى": []
     }
     
-    # كلمات تدل على الدخل
-    income_keywords = ["راتب", "دخل", "مردود", "حوالة", "وارد", "إيراد", "مبيعات", "أجرة", "بدل", "مكافأة", "عمولة"]
+    income_keywords = ["راتب", "دخل", "مردود", "حوالة", "وارد", "إيراد"]
     
     for line in lines:
         line = line.strip()
         if not line or len(line) < 3:
             continue
         
-        # البحث عن أي رقم في السطر (يدعم الأرقام العربية والإنجليزية والفواصل العشرية)
         numbers = re.findall(r'[\d\u0660-\u0669]+(?:[.,][\d\u0660-\u0669]+)?', line)
         if not numbers:
             continue
         
-        # تحويل الأرقام العربية إلى إنجليزية إذا لزم الأمر
         def convert_arabic_numbers(text):
             arabic_numbers = '٠١٢٣٤٥٦٧٨٩'
             english_numbers = '0123456789'
@@ -92,18 +89,15 @@ def parse_arabic_ledger_text(text):
         except ValueError:
             continue
         
-        # تجاهل المبالغ الصغيرة جداً أو الكبيرة جداً (أخطاء محتملة)
         if amount < 0.01 or amount > 1000000:
             continue
         
-        # تحديد النوع (دخل أو مصروف)
         entry_type = "💸 مصروف"
         for keyword in income_keywords:
             if keyword in line:
                 entry_type = "💵 دخل"
                 break
         
-        # تحديد التصنيف
         category = "أخرى"
         for cat, keywords in categories_map.items():
             for keyword in keywords:
@@ -113,19 +107,15 @@ def parse_arabic_ledger_text(text):
             if category != "أخرى":
                 break
         
-        # استخراج الوصف (تنظيف النص من الأرقام والكلمات المفتاحية الشائعة)
         description = line
-        # إزالة الأرقام
         for num in numbers:
             description = description.replace(num, "")
-        # إزالة كلمات شائعة غير مهمة
-        common_words = ["ريال", "ر.س", "رس", "سعودي", "دولار", "$", "دفع", "سداد", "شراء", "قيمة", "مبلغ"]
+        common_words = ["ريال", "ر.س", "رس", "سعودي", "دولار", "$"]
         for word in common_words:
             description = description.replace(word, "")
-        # تنظيف المسافات الزائدة
         description = re.sub(r'\s+', ' ', description).strip()
         if not description or len(description) < 2:
-            description = line[:30]  # استخدام أول 30 حرف كوصف
+            description = line[:30]
         
         entries.append({
             "التاريخ": datetime.now().strftime("%Y-%m-%d"),
@@ -186,14 +176,16 @@ with st.sidebar:
                     df = pd.concat([df, new_row], ignore_index=True)
                     save_data(df)
                     st.success("تمت الإضافة بنجاح!")
-                    st.rerun()
+                    st.session_state.data_updated = True
+                    # استخدام experimental_rerun بدل rerun
+                    st.experimental_rerun()
                 else:
                     st.error("المبلغ يجب أن يكون أكبر من صفر")
     
     with tab2:
         st.subheader("📸 مسح ضوئي للدفتر اليدوي")
         st.caption("التقط صورة لصفحة الدفتر وسيتم تحليلها تلقائياً")
-        st.info("💡 نصيحة: تأكد من الإضاءة الجيدة ووضوح الخط للحصول على أفضل نتيجة")
+        st.info("💡 نصيحة: تأكد من الإضاءة الجيدة ووضوح الخط")
         
         img_file = st.camera_input("التقط صورة الآن")
         
@@ -203,16 +195,14 @@ with st.sidebar:
             if st.button("🔍 تحليل وإضافة تلقائياً", type="primary"):
                 with st.spinner("جارٍ تحليل الصورة... قد تستغرق العملية 10-20 ثانية."):
                     try:
-                        # 1. استخراج النص العربي
                         extracted_text = extract_text_from_image(img_file)
                         
                         if not extracted_text:
-                            st.warning("لم يتم التعرف على أي نص في الصورة. حاول مرة أخرى بإضاءة أفضل.")
+                            st.warning("لم يتم التعرف على أي نص. حاول مرة أخرى.")
                         else:
                             st.subheader("📝 النص المستخرج")
                             st.text_area("النص الخام:", extracted_text, height=150)
                             
-                            # 2. تحليل النص إلى عمليات مالية
                             parsed_entries = parse_arabic_ledger_text(extracted_text)
                             
                             if parsed_entries:
@@ -227,16 +217,16 @@ with st.sidebar:
                                         df = pd.concat([df, new_df], ignore_index=True)
                                         save_data(df)
                                         st.success(f"تم حفظ {len(parsed_entries)} عملية بنجاح!")
-                                        st.rerun()
+                                        st.session_state.data_updated = True
+                                        st.experimental_rerun()
                                 with col2:
                                     if st.button("🗑️ إلغاء"):
-                                        st.rerun()
+                                        st.experimental_rerun()
                             else:
-                                st.warning("لم يتم التعرف على أي عمليات مالية. تأكد من أن النص يحتوي على أرقام ومبالغ.")
+                                st.warning("لم يتم التعرف على أي عمليات مالية.")
                             
                     except Exception as e:
-                        st.error(f"حدث خطأ أثناء معالجة الصورة: {e}")
-                        st.info("حاول مرة أخرى بصورة أوضح.")
+                        st.error(f"حدث خطأ: {e}")
 
 # --- عرض البيانات في الصفحة الرئيسية ---
 df = load_data()
@@ -261,7 +251,6 @@ if not df.empty:
     
     st.divider()
     
-    # عرض آخر العمليات
     st.subheader("📋 آخر العمليات")
     df_display = df.sort_values(by="التاريخ", ascending=False).head(10).copy()
     df_display['المبلغ'] = df_display['المبلغ'].apply(lambda x: f"{x:,.2f}")
@@ -271,7 +260,6 @@ if not df.empty:
         hide_index=True
     )
     
-    # رسم بياني للمصروفات الشهرية
     if not expense_df.empty:
         st.subheader("📊 توزيع المصروفات (الشهر الحالي)")
         expense_df_copy = expense_df.copy()
