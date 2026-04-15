@@ -1,10 +1,7 @@
 streamlit
 pandas
 Pillow
-groq
-fpdf
 pytesseract
 opencv-python-headless
 numpy
-arabic-reshaper
-python-bidi
+fpdf
