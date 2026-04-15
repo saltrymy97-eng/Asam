@@ -1,5 +1,7 @@
 streamlit
+paddlepaddle
 paddleocr
+opencv-python-headless
 pillow
 pandas
 plotly
