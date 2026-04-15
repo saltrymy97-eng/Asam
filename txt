@@ -1,6 +1,8 @@
 streamlit
 pandas
 Pillow
-easyocr
 groq
 fpdf
+pytesseract
+opencv-python-headless
+numpy
