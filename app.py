@@ -6,11 +6,12 @@ from PIL import Image, ImageDraw, ImageFont
 import base64
 from io import BytesIO
 import re
-from groq import Groq
 import plotly.express as px
 import time
 import os
 import urllib.request
+import easyocr
+import numpy as np
 
 # ------------------- إعداد الصفحة -------------------
 st.set_page_config(page_title="دفتر الحسابات إكسترا", page_icon="📘", layout="wide")
@@ -24,6 +25,12 @@ def load_arabic_font_for_image():
         st.info("جاري تحميل الخط العربي لأول مرة... قد يستغرق بضع ثوان.")
         urllib.request.urlretrieve(url, font_path)
     return font_path
+
+# ------------------- تحميل قارئ EasyOCR (يدعم العربية) -------------------
+@st.cache_resource
+def load_ocr_reader():
+    # يدعم العربية (ar) والإنجليزية (en)
+    return easyocr.Reader(['ar', 'en'], gpu=False)
 
 # ------------------- تحسينات CSS -------------------
 st.markdown("""
@@ -66,15 +73,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="app-header"><h1>📘 دفتر الحسابات إكسترا بالذكاء الاصطناعي</h1><p>العملة: ريال يمني 🇾🇪 | يدعم الصفحات الكاملة مع معاينة قبل الحفظ</p></div>', unsafe_allow_html=True)
-
-# ------------------- إعداد Groq -------------------
-GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
-if not GROQ_API_KEY:
-    GROQ_API_KEY = st.text_input("🔑 مفتاح Groq API:", type="password")
-    if not GROQ_API_KEY:
-        st.stop()
-client = Groq(api_key=GROQ_API_KEY)
+st.markdown('<div class="app-header"><h1>📘 دفتر الحسابات إكسترا</h1><p>العملة: ريال يمني 🇾🇪 | OCR دقيق للغة العربية</p></div>', unsafe_allow_html=True)
 
 # ------------------- قاعدة البيانات -------------------
 conn = sqlite3.connect('debter_extra.db', check_same_thread=False)
@@ -87,73 +86,46 @@ c.execute('''CREATE TABLE IF NOT EXISTS transactions
               created_at TEXT)''')
 conn.commit()
 
-# ------------------- دالة ضغط الصورة -------------------
-def compress_image(image, target_size_kb=300):
-    img = image.copy()
-    if img.mode == 'RGBA':
-        img = img.convert('RGB')
-    max_dimension = 1200
-    if max(img.size) > max_dimension:
-        ratio = max_dimension / max(img.size)
-        new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
-        img = img.resize(new_size, Image.Resampling.LANCZOS)
-    quality = 50
-    buffer = BytesIO()
-    img.save(buffer, format="JPEG", quality=quality, optimize=True)
-    while len(buffer.getvalue()) / 1024 > target_size_kb and quality > 15:
-        quality -= 10
-        buffer = BytesIO()
-        img.save(buffer, format="JPEG", quality=quality, optimize=True)
-    return buffer.getvalue()
+# ------------------- دالة استخراج النص باستخدام EasyOCR -------------------
+def extract_text_with_easyocr(image):
+    reader = load_ocr_reader()
+    # تحويل PIL Image إلى numpy array
+    img_array = np.array(image)
+    # استخراج النص
+    result = reader.readtext(img_array, detail=0, paragraph=True)
+    return ' '.join(result)
 
-# ------------------- دالة استخراج البيانات (محسنة لمنع الهلوسة) -------------------
-def extract_all_entries_from_image(image_bytes):
-    img_base64 = base64.b64encode(image_bytes).decode()
-    
-    # موجه أكثر صرامة: نطلب النص الظاهر فقط
-    prompt_text = """
-    أنت مساعد دقيق. هذه صورة لدفتر حسابات مكتوب بخط اليد أو مطبوع بالعربية.
-    مهمتك: استخرج فقط الأسماء والمبالغ الموجودة بوضوح في الصورة. لا تخترع أي شيء غير موجود.
-    إذا لم تستطع قراءة اسم أو مبلغ بوضوح، تجاهله.
-    أجب بقائمة بالصيغة التالية (كل سطر يحتوي على اسم ومبلغ):
-    الاسم: [الاسم كما هو مكتوب] المبلغ: [المبلغ بالأرقام]
-    الاسم: [الاسم كما هو مكتوب] المبلغ: [المبلغ بالأرقام]
-    إذا لم تجد أي اسم ومبلغ واضحين، أجب بكلمة "لا يوجد".
-    لا تكتب أي تعليقات إضافية.
-    """
-    
-    response = client.chat.completions.create(
-        model="meta-llama/llama-4-scout-17b-16e-instruct",
-        messages=[{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt_text},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}}
-            ]
-        }],
-        temperature=0.0,  # إلغاء العشوائية تماماً
-        max_tokens=1024
-    )
-    return response.choices[0].message.content
-
-def parse_entries_from_text(text):
+def parse_name_amount_pairs(text):
+    """محاولة استخراج أزواج (اسم، مبلغ) من النص المستخرج عبر OCR"""
     entries = []
-    if not text or text.strip() == "لا يوجد":
+    if not text:
         return entries
     
-    lines = text.split('\n')
-    for line in lines:
-        if not line.strip():
+    # تنظيف النص
+    text = text.replace('\n', ' ')
+    
+    # نمط شائع: اسم متبوع برقم (مثال: محمد 1500)
+    pattern1 = re.compile(r'([\u0600-\u06FF\w\s]+?)\s+(\d+(?:[.,]\d+)?)')
+    # نمط آخر: رقم ثم اسم
+    pattern2 = re.compile(r'(\d+(?:[.,]\d+)?)\s+([\u0600-\u06FF\w\s]+)')
+    
+    matches = pattern1.findall(text)
+    for match in matches:
+        name = match[0].strip()
+        amount_str = match[1].replace(',', '.')
+        try:
+            amount = float(amount_str)
+            if name and amount > 0:
+                entries.append({"name": name, "amount": amount})
+        except ValueError:
             continue
-        
-        # محاولة استخراج الاسم والمبلغ بأنماط متعددة
-        name_match = re.search(r'الاسم\s*[:：]\s*(.+?)(?:\s+المبلغ|\s*$)', line)
-        amount_match = re.search(r'المبلغ\s*[:：]\s*(\d+(?:[.,]\d+)?)', line)
-        
-        if name_match and amount_match:
-            name = name_match.group(1).strip()
-            name = re.sub(r'[^\w\s\u0600-\u06FF]', '', name).strip()
-            amount_str = amount_match.group(1).replace(',', '.')
+    
+    # إذا لم يجد نمط1، جرب نمط2
+    if not entries:
+        matches = pattern2.findall(text)
+        for match in matches:
+            amount_str = match[0].replace(',', '.')
+            name = match[1].strip()
             try:
                 amount = float(amount_str)
                 if name and amount > 0:
@@ -235,12 +207,12 @@ def generate_ledger_image(df):
     return buffer
 
 # ------------------- الواجهة -------------------
-tab1, tab2, tab3, tab4 = st.tabs(["📸 معالجة تلقائية", "📊 لوحة التحكم", "📋 دفتر اليومية", "📈 الإحصائيات"])
+tab1, tab2, tab3, tab4 = st.tabs(["📸 معالجة OCR", "📊 لوحة التحكم", "📋 دفتر اليومية", "📈 الإحصائيات"])
 
-# ================== التبويب 1: معاينة قبل الحفظ ==================
+# ================== التبويب 1: OCR + معاينة ==================
 with tab1:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("🚀 رفع صور الدفتر - معاينة وتأكيد قبل الحفظ")
+    st.subheader("🚀 رفع صور الدفتر - OCR دقيق للعربية")
     st.caption("ارفع الصورة، راجع البيانات المستخرجة، ثم احفظها")
     
     uploaded_files = st.file_uploader("اختر الصور", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
@@ -248,28 +220,28 @@ with tab1:
     if uploaded_files:
         st.info(f"📁 {len(uploaded_files)} صورة")
         
-        # معالجة كل صورة على حدة وعرض المعاينة
         for idx, file in enumerate(uploaded_files):
             st.markdown(f"### 📄 الصورة {idx+1}: {file.name}")
             
             col_img, col_data = st.columns([1, 2])
             with col_img:
-                # عرض الصورة الأصلية
                 image = Image.open(file)
                 st.image(image, caption="الصورة المرفوعة", use_container_width=True)
             
             with col_data:
-                if st.button(f"🔍 تحليل الصورة {idx+1}", key=f"analyze_{idx}"):
-                    with st.spinner("جاري تحليل الصورة..."):
+                if st.button(f"🔍 استخراج النص (OCR) {idx+1}", key=f"ocr_{idx}"):
+                    with st.spinner("جاري تحليل الصورة بدقة..."):
                         try:
-                            compressed = compress_image(image)
-                            result_text = extract_all_entries_from_image(compressed)
-                            entries = parse_entries_from_text(result_text)
+                            # استخدام EasyOCR لاستخراج النص
+                            extracted_text = extract_text_with_easyocr(image)
+                            st.text_area("النص الخام المستخرج:", extracted_text, height=100)
+                            
+                            # محاولة تحليل الأسماء والمبالغ
+                            entries = parse_name_amount_pairs(extracted_text)
                             
                             if entries:
-                                st.success(f"تم العثور على {len(entries)} مدين محتمل")
+                                st.success(f"تم اقتراح {len(entries)} مدين محتمل")
                                 
-                                # عرض البيانات في جدول قابل للتعديل
                                 st.markdown("**📋 البيانات المستخرجة (يمكنك تعديلها):**")
                                 edited_entries = []
                                 for i, entry in enumerate(entries):
@@ -283,8 +255,18 @@ with tab1:
                                     if keep:
                                         edited_entries.append({"name": new_name, "amount": new_amount})
                                 
+                                # إمكانية إضافة مدين يدوي
+                                st.markdown("---")
+                                st.markdown("**➕ إضافة مدين جديد يدوياً:**")
+                                manual_name = st.text_input("اسم العميل", key=f"man_name_{idx}")
+                                manual_amount = st.number_input("المبلغ", min_value=0.0, key=f"man_amount_{idx}")
+                                if st.button("أضف إلى القائمة", key=f"add_man_{idx}"):
+                                    if manual_name and manual_amount > 0:
+                                        edited_entries.append({"name": manual_name, "amount": manual_amount})
+                                        st.success(f"تمت إضافة {manual_name}")
+                                
                                 # زر تأكيد الحفظ
-                                if st.button(f"💾 تأكيد وحفظ {len(edited_entries)} معاملة", key=f"save_{idx}"):
+                                if edited_entries and st.button(f"💾 تأكيد وحفظ {len(edited_entries)} معاملة", key=f"save_{idx}"):
                                     saved = 0
                                     for e in edited_entries:
                                         if e['name'] and e['amount'] > 0:
@@ -295,10 +277,19 @@ with tab1:
                                     st.success(f"✅ تم حفظ {saved} معاملة")
                                     st.rerun()
                             else:
-                                st.warning("⚠️ لم يتم العثور على أي مدين في هذه الصورة")
+                                st.warning("⚠️ لم يتم التعرف على أسماء ومبالغ. يمكنك إضافتها يدوياً أدناه.")
+                                # إضافة يدوية
+                                manual_name = st.text_input("اسم العميل", key=f"man_name_only_{idx}")
+                                manual_amount = st.number_input("المبلغ", min_value=0.0, key=f"man_amount_only_{idx}")
+                                if st.button("حفظ يدوي", key=f"save_man_{idx}"):
+                                    if manual_name and manual_amount > 0:
+                                        c.execute("INSERT INTO transactions (name, amount, transaction_date, created_at) VALUES (?,?,?,?)",
+                                                  (manual_name, manual_amount, datetime.now().strftime("%Y-%m-%d"), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                                        conn.commit()
+                                        st.success(f"تم حفظ {manual_name}")
+                                        st.rerun()
                         except Exception as e:
                             st.error(f"❌ خطأ: {e}")
-            
             st.divider()
     st.markdown('</div>', unsafe_allow_html=True)
 
