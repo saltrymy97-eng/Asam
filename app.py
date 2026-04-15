@@ -18,7 +18,6 @@ st.set_page_config(page_title="دفتر الحسابات إكسترا", page_ico
 # ------------------- تحميل الخط العربي للصورة -------------------
 @st.cache_resource
 def load_arabic_font_for_image():
-    """تحميل خط عربي لاستخدامه في إنشاء الصورة"""
     font_path = "NotoSansArabic.ttf"
     if not os.path.exists(font_path):
         url = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansArabic/NotoSansArabic-Regular.ttf"
@@ -60,7 +59,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="app-header"><h1>📘 دفتر الحسابات إكسترا بالذكاء الاصطناعي</h1><p>العملة: ريال يمني 🇾🇪 | تلقائي بالكامل</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="app-header"><h1>📘 دفتر الحسابات إكسترا بالذكاء الاصطناعي</h1><p>العملة: ريال يمني 🇾🇪 | يدعم الصفحات الكاملة</p></div>', unsafe_allow_html=True)
 
 # ------------------- إعداد Groq -------------------
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
@@ -86,7 +85,7 @@ def compress_image(image, target_size_kb=250):
     img = image.copy()
     if img.mode == 'RGBA':
         img = img.convert('RGB')
-    max_dimension = 800
+    max_dimension = 1200  # زيادة الحجم قليلاً لصفحات كاملة
     if max(img.size) > max_dimension:
         ratio = max_dimension / max(img.size)
         new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
@@ -100,35 +99,75 @@ def compress_image(image, target_size_kb=250):
         img.save(buffer, format="JPEG", quality=quality, optimize=True)
     return buffer.getvalue()
 
-# ------------------- دالة استخراج البيانات -------------------
-def extract_from_image(image_bytes):
+# ------------------- دالة استخراج البيانات (معدلة للصفحات الكاملة) -------------------
+def extract_all_entries_from_image(image_bytes):
+    """ترسل الصورة إلى Groq وتطلب قائمة بكل الأسماء والمبالغ"""
     img_base64 = base64.b64encode(image_bytes).decode()
+    
+    # الموجه الجديد: يطلب استخراج جميع المدينين
+    prompt_text = """
+    هذه صورة لدفتر حسابات مكتوب باللغة العربية. استخرج جميع أسماء العملاء والمبالغ المستحقة عليهم.
+    قم بإرجاع قائمة بالصيغة التالية (كل سطر يحتوي على اسم ومبلغ):
+    الاسم: [اسم العميل] المبلغ: [المبلغ بالأرقام]
+    الاسم: [اسم العميل] المبلغ: [المبلغ بالأرقام]
+    ...
+    لا تكتب أي شيء آخر غير القائمة. إذا لم تجد أي أسماء، اكتب "لا يوجد".
+    """
+    
     response = client.chat.completions.create(
         model="meta-llama/llama-4-scout-17b-16e-instruct",
         messages=[{
             "role": "user",
             "content": [
-                {"type": "text", "text": "استخرج اسم العميل والمبلغ فقط. أجب بهذا الشكل:\nالاسم: ...\nالمبلغ: ..."},
+                {"type": "text", "text": prompt_text},
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}}
             ]
         }],
-        temperature=0.1
+        temperature=0.1,
+        max_tokens=1024  # زيادة الحد الأقصى لاستيعاب قوائم طويلة
     )
     return response.choices[0].message.content
 
+def parse_entries_from_text(text):
+    """تحليل النص المسترجع من Groq واستخراج قائمة من (الاسم، المبلغ)"""
+    entries = []
+    if not text or text.strip() == "لا يوجد":
+        return entries
+    
+    # نبحث عن جميع الأسطر التي تحتوي على "الاسم:" و "المبلغ:"
+    lines = text.split('\n')
+    for line in lines:
+        # تجاهل الأسطر الفارغة
+        if not line.strip():
+            continue
+            
+        # استخدام regex مرن لاستخراج الاسم والمبلغ
+        name_match = re.search(r'الاسم\s*[:：]\s*(.+?)(?:\s+المبلغ|\s*$)', line)
+        amount_match = re.search(r'المبلغ\s*[:：]\s*(\d+(?:[.,]\d+)?)', line)
+        
+        if name_match and amount_match:
+            name = name_match.group(1).strip()
+            # إزالة أي نقاط زائدة أو رموز من الاسم
+            name = re.sub(r'[^\w\s\u0600-\u06FF]', '', name).strip()
+            amount_str = amount_match.group(1).replace(',', '.')
+            try:
+                amount = float(amount_str)
+                if name and amount > 0:
+                    entries.append((name, amount))
+            except ValueError:
+                continue
+    return entries
+
 # ------------------- دالة إنشاء صورة الدفتر -------------------
 def generate_ledger_image(df):
-    """إنشاء صورة PNG تحتوي على جدول المعاملات بالعربية"""
     font_path = load_arabic_font_for_image()
     
-    # إعدادات الأبعاد
     row_height = 40
     header_height = 50
-    col_widths = [180, 100, 130, 150]  # اسم العميل، المبلغ، تاريخ العملية، تاريخ الإضافة
+    col_widths = [180, 100, 130, 150]
     table_width = sum(col_widths)
-    table_height = header_height + (len(df) + 1) * row_height + 80  # مساحة للعنوان والإجمالي
+    table_height = header_height + (len(df) + 1) * row_height + 80
     
-    # إنشاء صورة بيضاء
     img = Image.new('RGB', (table_width + 40, table_height + 100), color='white')
     draw = ImageDraw.Draw(img)
     
@@ -137,33 +176,26 @@ def generate_ledger_image(df):
         font_header = ImageFont.truetype(font_path, 18)
         font_cell = ImageFont.truetype(font_path, 16)
     except:
-        # استخدام الخط الافتراضي إذا فشل التحميل
         font_title = ImageFont.load_default()
         font_header = ImageFont.load_default()
         font_cell = ImageFont.load_default()
     
-    # رسم العنوان
     title = "دفتر الحسابات - إكسترا"
     draw.text((table_width//2, 20), title, font=font_title, fill='#203a43', anchor='mt')
     
-    # رسم تاريخ الإصدار
     date_str = f"تاريخ الإصدار: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
     draw.text((table_width//2, 55), date_str, font=font_cell, fill='#555555', anchor='mt')
     
     y_start = 100
     x_start = 20
     
-    # رؤوس الجدول
     headers = ['اسم العميل', 'المبلغ (ريال)', 'تاريخ العملية', 'تاريخ الإضافة']
     for i, header in enumerate(headers):
         x = x_start + sum(col_widths[:i])
-        # خلفية الرأس
         draw.rectangle([x, y_start, x + col_widths[i], y_start + header_height], fill='#2c5364')
-        # نص الرأس
-        draw.text((x + col_widths[i]//2, y_start + header_height//2), header, 
+        draw.text((x + col_widths[i]//2, y_start + header_height//2), header,
                  font=font_header, fill='white', anchor='mm')
     
-    # خطوط الجدول
     for i, row in df.iterrows():
         y = y_start + header_height + (i + 1) * row_height
         row_data = [
@@ -174,31 +206,25 @@ def generate_ledger_image(df):
         ]
         for j, cell in enumerate(row_data):
             x = x_start + sum(col_widths[:j])
-            # خلفية الصف (رمادي فاتح للصفوف الزوجية)
             if i % 2 == 0:
                 draw.rectangle([x, y, x + col_widths[j], y + row_height], fill='#f8f9fa')
-            # نص الخلية
-            draw.text((x + 10, y + row_height//2), str(cell), 
+            draw.text((x + 10, y + row_height//2), str(cell),
                      font=font_cell, fill='#333333', anchor='lm')
     
-    # رسم إجمالي الديون
     total = df['amount'].sum()
     total_text = f"إجمالي الديون: {total:,.0f} ريال يمني"
     y_total = y_start + header_height + (len(df) + 1) * row_height + 20
-    draw.text((x_start + table_width - 10, y_total), total_text, 
+    draw.text((x_start + table_width - 10, y_total), total_text,
              font=font_header, fill='#203a43', anchor='ra')
     
-    # رسم حدود الجدول
     for i in range(len(headers) + 1):
         x = x_start + (sum(col_widths[:i]) if i < len(headers) else table_width)
-        draw.line([(x, y_start), (x, y_start + header_height + (len(df) + 1) * row_height)], 
+        draw.line([(x, y_start), (x, y_start + header_height + (len(df) + 1) * row_height)],
                  fill='#cccccc', width=1)
     
-    # خط أفقي تحت الرأس
-    draw.line([(x_start, y_start + header_height), (x_start + table_width, y_start + header_height)], 
+    draw.line([(x_start, y_start + header_height), (x_start + table_width, y_start + header_height)],
              fill='#cccccc', width=2)
     
-    # حفظ الصورة في BytesIO
     buffer = BytesIO()
     img.save(buffer, format='PNG')
     buffer.seek(0)
@@ -207,11 +233,11 @@ def generate_ledger_image(df):
 # ------------------- الواجهة -------------------
 tab1, tab2, tab3, tab4 = st.tabs(["📸 معالجة تلقائية", "📊 لوحة التحكم", "📋 دفتر اليومية", "📈 الإحصائيات"])
 
-# ================== التبويب 1: إضافة معاملات ==================
+# ================== التبويب 1: إضافة معاملات (يدعم الصفحات الكاملة) ==================
 with tab1:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("🚀 رفع صور الدفتر - تلقائي بالكامل")
-    st.caption("ارفع الصور، اضغط زر واحد، وسيتم الاستخراج والحفظ تلقائياً")
+    st.subheader("🚀 رفع صور الدفتر - يدعم الصفحات الكاملة")
+    st.caption("ارفع صورة أو أكثر، وسيتم استخراج جميع المدينين الموجودين في كل صورة تلقائياً")
     
     uploaded_files = st.file_uploader("اختر الصور", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
     
@@ -221,39 +247,48 @@ with tab1:
         if st.button("🚀 استخراج وحفظ الكل تلقائياً", type="primary"):
             progress_bar = st.progress(0)
             status_text = st.empty()
-            saved_count = 0
+            total_saved = 0
+            total_images = len(uploaded_files)
             
             for i, file in enumerate(uploaded_files):
-                status_text.text(f"معالجة {i+1}/{len(uploaded_files)}: {file.name}")
+                status_text.text(f"🔍 معالجة الصورة {i+1}/{total_images}: {file.name}")
+                
                 try:
+                    # فتح وضغط الصورة
                     image = Image.open(file)
                     compressed = compress_image(image)
-                    result = extract_from_image(compressed)
                     
-                    name_match = re.search(r'الاسم:\s*(.+?)(?:\n|$)', result)
-                    amount_match = re.search(r'المبلغ:\s*(\d+(?:[.,]\d+)?)', result)
+                    # استخراج النص من الصورة
+                    result_text = extract_all_entries_from_image(compressed)
                     
-                    name = name_match.group(1).strip() if name_match else ""
-                    amount_str = amount_match.group(1).replace(',', '.') if amount_match else "0"
-                    amount = float(amount_str)
+                    # تحليل النص إلى قائمة مدينين
+                    entries = parse_entries_from_text(result_text)
                     
-                    if name and amount > 0:
-                        c.execute("INSERT INTO transactions (name, amount, transaction_date, created_at) VALUES (?,?,?,?)",
-                                  (name, amount, datetime.now().strftime("%Y-%m-%d"), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-                        conn.commit()
-                        saved_count += 1
-                        status_text.success(f"✅ {i+1}/{len(uploaded_files)}: {name} - {amount:,.0f} ريال")
+                    if entries:
+                        saved_in_this_image = 0
+                        for name, amount in entries:
+                            c.execute("INSERT INTO transactions (name, amount, transaction_date, created_at) VALUES (?,?,?,?)",
+                                      (name, amount, datetime.now().strftime("%Y-%m-%d"), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                            conn.commit()
+                            saved_in_this_image += 1
+                            total_saved += 1
+                        
+                        status_text.success(f"✅ الصورة {i+1}: تم استخراج {saved_in_this_image} مدين | {file.name}")
                     else:
-                        status_text.warning(f"⚠️ {i+1}/{len(uploaded_files)}: لم يتم العثور على بيانات")
-                except Exception as e:
-                    status_text.error(f"❌ خطأ في {file.name}: {e}")
+                        status_text.warning(f"⚠️ الصورة {i+1}: لم يتم العثور على مدينين | {file.name}")
                 
-                progress_bar.progress((i + 1) / len(uploaded_files))
+                except Exception as e:
+                    status_text.error(f"❌ خطأ في معالجة {file.name}: {e}")
+                
+                progress_bar.progress((i + 1) / total_images)
                 time.sleep(0.5)
             
             progress_bar.empty()
-            st.success(f"🎉 تم الحفظ التلقائي لـ {saved_count} معاملة")
-            st.balloons()
+            if total_saved > 0:
+                st.success(f"🎉 تم حفظ {total_saved} معاملة من {total_images} صورة")
+                st.balloons()
+            else:
+                st.warning("لم يتم حفظ أي معاملات")
             time.sleep(2)
             st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
@@ -338,7 +373,6 @@ with tab3:
             total = df_all['amount'].sum()
             st.metric("💵 إجمالي الديون", f"{total:,.0f} ريال يمني")
         with col2:
-            # زر تحميل صورة الدفتر
             if st.button("📸 تحميل صورة الدفتر"):
                 with st.spinner("جاري إنشاء صورة الدفتر..."):
                     img_buffer = generate_ledger_image(df_all)
