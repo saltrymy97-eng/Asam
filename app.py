@@ -10,8 +10,7 @@ import plotly.express as px
 import time
 import os
 import urllib.request
-import easyocr
-import numpy as np
+import pytesseract
 
 # ------------------- إعداد الصفحة -------------------
 st.set_page_config(page_title="دفتر الحسابات إكسترا", page_icon="📘", layout="wide")
@@ -25,12 +24,6 @@ def load_arabic_font_for_image():
         st.info("جاري تحميل الخط العربي لأول مرة... قد يستغرق بضع ثوان.")
         urllib.request.urlretrieve(url, font_path)
     return font_path
-
-# ------------------- تحميل قارئ EasyOCR (يدعم العربية) -------------------
-@st.cache_resource
-def load_ocr_reader():
-    # يدعم العربية (ar) والإنجليزية (en)
-    return easyocr.Reader(['ar', 'en'], gpu=False)
 
 # ------------------- تحسينات CSS -------------------
 st.markdown("""
@@ -73,7 +66,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="app-header"><h1>📘 دفتر الحسابات إكسترا</h1><p>العملة: ريال يمني 🇾🇪 | OCR دقيق للغة العربية</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="app-header"><h1>📘 دفتر الحسابات إكسترا</h1><p>العملة: ريال يمني 🇾🇪 | OCR دقيق للعربية</p></div>', unsafe_allow_html=True)
 
 # ------------------- قاعدة البيانات -------------------
 conn = sqlite3.connect('debter_extra.db', check_same_thread=False)
@@ -86,14 +79,17 @@ c.execute('''CREATE TABLE IF NOT EXISTS transactions
               created_at TEXT)''')
 conn.commit()
 
-# ------------------- دالة استخراج النص باستخدام EasyOCR -------------------
-def extract_text_with_easyocr(image):
-    reader = load_ocr_reader()
-    # تحويل PIL Image إلى numpy array
-    img_array = np.array(image)
-    # استخراج النص
-    result = reader.readtext(img_array, detail=0, paragraph=True)
-    return ' '.join(result)
+# ------------------- دالة استخراج النص باستخدام Tesseract -------------------
+def extract_text_with_tesseract(image):
+    # تحديد اللغة العربية
+    # إذا كان Tesseract مثبتًا في مسار غير قياسي على السيرفر، قد نحتاج لتحديد المسار
+    # لكن في Streamlit Cloud يكون مثبتًا في المسار الافتراضي
+    try:
+        text = pytesseract.image_to_string(image, lang='ara')
+    except:
+        # إذا فشل، جرب بدون تحديد لغة
+        text = pytesseract.image_to_string(image)
+    return text
 
 def parse_name_amount_pairs(text):
     """محاولة استخراج أزواج (اسم، مبلغ) من النص المستخرج عبر OCR"""
@@ -101,37 +97,35 @@ def parse_name_amount_pairs(text):
     if not text:
         return entries
     
-    # تنظيف النص
-    text = text.replace('\n', ' ')
+    # تنظيف النص: إزالة الأسطر الفارغة والمسافات الزائدة
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
     
-    # نمط شائع: اسم متبوع برقم (مثال: محمد 1500)
-    pattern1 = re.compile(r'([\u0600-\u06FF\w\s]+?)\s+(\d+(?:[.,]\d+)?)')
-    # نمط آخر: رقم ثم اسم
-    pattern2 = re.compile(r'(\d+(?:[.,]\d+)?)\s+([\u0600-\u06FF\w\s]+)')
-    
-    matches = pattern1.findall(text)
-    for match in matches:
-        name = match[0].strip()
-        amount_str = match[1].replace(',', '.')
-        try:
-            amount = float(amount_str)
-            if name and amount > 0:
-                entries.append({"name": name, "amount": amount})
-        except ValueError:
-            continue
-    
-    # إذا لم يجد نمط1، جرب نمط2
-    if not entries:
-        matches = pattern2.findall(text)
-        for match in matches:
-            amount_str = match[0].replace(',', '.')
-            name = match[1].strip()
+    for line in lines:
+        # محاولة إيجاد نمط: اسم ثم رقم
+        # يدعم الأسماء العربية (أحرف ومسافات) ثم رقم
+        match = re.search(r'([\u0600-\u06FF\w\s]+?)\s+(\d+(?:[.,]\d+)?)', line)
+        if match:
+            name = match.group(1).strip()
+            amount_str = match.group(2).replace(',', '.')
             try:
                 amount = float(amount_str)
                 if name and amount > 0:
                     entries.append({"name": name, "amount": amount})
             except ValueError:
                 continue
+        
+        # نمط آخر: رقم ثم اسم
+        if not match:
+            match = re.search(r'(\d+(?:[.,]\d+)?)\s+([\u0600-\u06FF\w\s]+)', line)
+            if match:
+                amount_str = match.group(1).replace(',', '.')
+                name = match.group(2).strip()
+                try:
+                    amount = float(amount_str)
+                    if name and amount > 0:
+                        entries.append({"name": name, "amount": amount})
+                except ValueError:
+                    continue
     return entries
 
 # ------------------- دالة إنشاء صورة الدفتر -------------------
@@ -212,7 +206,7 @@ tab1, tab2, tab3, tab4 = st.tabs(["📸 معالجة OCR", "📊 لوحة الت
 # ================== التبويب 1: OCR + معاينة ==================
 with tab1:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.subheader("🚀 رفع صور الدفتر - OCR دقيق للعربية")
+    st.subheader("🚀 رفع صور الدفتر - OCR دقيق للعربية (Tesseract)")
     st.caption("ارفع الصورة، راجع البيانات المستخرجة، ثم احفظها")
     
     uploaded_files = st.file_uploader("اختر الصور", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
@@ -232,8 +226,8 @@ with tab1:
                 if st.button(f"🔍 استخراج النص (OCR) {idx+1}", key=f"ocr_{idx}"):
                     with st.spinner("جاري تحليل الصورة بدقة..."):
                         try:
-                            # استخدام EasyOCR لاستخراج النص
-                            extracted_text = extract_text_with_easyocr(image)
+                            # استخدام Tesseract لاستخراج النص
+                            extracted_text = extract_text_with_tesseract(image)
                             st.text_area("النص الخام المستخرج:", extracted_text, height=100)
                             
                             # محاولة تحليل الأسماء والمبالغ
