@@ -9,7 +9,6 @@ import re
 from groq import Groq
 import plotly.express as px
 import time
-import os
 
 # ------------------- إعداد الصفحة -------------------
 st.set_page_config(page_title="دفتر الحسابات إكسترا", page_icon="📘", layout="wide")
@@ -20,7 +19,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="main-header"><h1>📘 دفتر الحسابات إكسترا بالذكاء الاصطناعي</h1><p>العملة: ريال يمني 🇾🇪</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header"><h1>📘 دفتر الحسابات إكسترا بالذكاء الاصطناعي</h1><p>العملة: ريال يمني 🇾🇪 | تلقائي بالكامل</p></div>', unsafe_allow_html=True)
 
 # ------------------- إعداد Groq -------------------
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
@@ -30,27 +29,20 @@ if not GROQ_API_KEY:
         st.stop()
 client = Groq(api_key=GROQ_API_KEY)
 
-# ------------------- قاعدة البيانات (تم الإصلاح) -------------------
-def init_database():
-    """إنشاء قاعدة البيانات والجدول إذا لم يكن موجوداً"""
-    conn = sqlite3.connect('debter_extra.db', check_same_thread=False)
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS transactions
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  name TEXT,
-                  amount REAL,
-                  transaction_date TEXT,
-                  created_at TEXT)''')
-    conn.commit()
-    return conn, c
+# ------------------- قاعدة البيانات -------------------
+conn = sqlite3.connect('debter_extra.db', check_same_thread=False)
+c = conn.cursor()
+c.execute('''CREATE TABLE IF NOT EXISTS transactions
+             (id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT,
+              amount REAL,
+              transaction_date TEXT,
+              created_at TEXT)''')
+conn.commit()
 
-conn, c = init_database()
-
-# ------------------- دالة ضغط قوية -------------------
+# ------------------- دالة ضغط الصورة -------------------
 def compress_image(image, target_size_kb=250):
-    """ضغط الصورة بقوة من 5.6 ميجا إلى أقل من 250KB"""
     img = image.copy()
-    
     if img.mode == 'RGBA':
         img = img.convert('RGB')
     
@@ -69,12 +61,9 @@ def compress_image(image, target_size_kb=250):
         buffer = BytesIO()
         img.save(buffer, format="JPEG", quality=quality, optimize=True)
     
-    compressed_size = len(buffer.getvalue()) / 1024
-    st.caption(f"📦 {compressed_size:.0f} KB")
-    
     return buffer.getvalue()
 
-# ------------------- دالة الاستخراج -------------------
+# ------------------- دالة استخراج البيانات -------------------
 def extract_from_image(image_bytes):
     img_base64 = base64.b64encode(image_bytes).decode()
     
@@ -94,113 +83,137 @@ def extract_from_image(image_bytes):
 # ------------------- الواجهة -------------------
 tab1, tab2, tab3, tab4 = st.tabs(["📸 إضافة معاملات", "📊 تصنيف المدينين", "📋 المعاملات", "📈 إحصائيات"])
 
+# ================== التبويب 1: تلقائي بالكامل ==================
 with tab1:
-    st.subheader("رفع صور الدفتر")
+    st.subheader("رفع صور الدفتر - تلقائي بالكامل")
+    st.caption("ارفع الصور، اضغط زر واحد، وسيتم الاستخراج والحفظ تلقائياً")
+    
     uploaded_files = st.file_uploader("اختر الصور", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
     
     if uploaded_files:
-        st.info(f"{len(uploaded_files)} صورة")
+        st.info(f"📁 {len(uploaded_files)} صورة")
         
-        if st.button("🔍 استخراج البيانات"):
-            progress = st.progress(0)
-            results = []
+        # زر واحد لكل شيء
+        if st.button("🚀 استخراج وحفظ الكل تلقائياً", type="primary"):
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            saved_count = 0
             
             for i, file in enumerate(uploaded_files):
-                image = Image.open(file)
-                
-                with st.spinner(f"معالجة الصورة {i+1}..."):
-                    compressed = compress_image(image)
+                status_text.text(f"معالجة {i+1}/{len(uploaded_files)}: {file.name}")
                 
                 try:
-                    text = extract_from_image(compressed)
-                    name_match = re.search(r'الاسم:\s*(.+?)(?:\n|$)', text)
-                    amount_match = re.search(r'المبلغ:\s*(\d+(?:[.,]\d+)?)', text)
+                    # فتح الصورة
+                    image = Image.open(file)
+                    
+                    # ضغط
+                    compressed = compress_image(image)
+                    
+                    # استخراج النص
+                    result = extract_from_image(compressed)
+                    
+                    # تحليل النتيجة
+                    name_match = re.search(r'الاسم:\s*(.+?)(?:\n|$)', result)
+                    amount_match = re.search(r'المبلغ:\s*(\d+(?:[.,]\d+)?)', result)
                     
                     name = name_match.group(1).strip() if name_match else ""
                     amount_str = amount_match.group(1).replace(',', '.') if amount_match else "0"
                     amount = float(amount_str)
                     
-                    results.append({"name": name, "amount": amount, "raw": text})
-                    st.success(f"✅ {name or 'غير معروف'}: {amount:,.0f} ريال")
-                    
-                except Exception as e:
-                    st.error(f"خطأ في الصورة {i+1}: {e}")
+                    # حفظ تلقائي في قاعدة البيانات
+                    if name and amount > 0:
+                        c.execute("INSERT INTO transactions (name, amount, transaction_date, created_at) VALUES (?,?,?,?)",
+                                  (name, amount, datetime.now().strftime("%Y-%m-%d"), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                        conn.commit()
+                        saved_count += 1
+                        status_text.success(f"✅ {i+1}/{len(uploaded_files)}: {name} - {amount:,.0f} ريال")
+                    else:
+                        status_text.warning(f"⚠️ {i+1}/{len(uploaded_files)}: لم يتم العثور على بيانات")
                 
-                progress.progress((i + 1) / len(uploaded_files))
-                time.sleep(0.3)
+                except Exception as e:
+                    status_text.error(f"❌ خطأ في {file.name}: {e}")
+                
+                progress_bar.progress((i + 1) / len(uploaded_files))
+                time.sleep(0.5)
             
-            st.session_state['results'] = results
-        
-        if 'results' in st.session_state and st.session_state['results']:
-            for idx, r in enumerate(st.session_state['results']):
-                with st.expander(f"معاملة {idx+1}: {r['name'] or 'غير مسمى'}"):
-                    col1, col2 = st.columns(2)
-                    name = col1.text_input(f"الاسم", r['name'], key=f"name_{idx}")
-                    amount = col2.number_input(f"المبلغ (ريال)", value=r['amount'], step=100, key=f"amount_{idx}")
-                    date = st.date_input(f"التاريخ", datetime.now(), key=f"date_{idx}")
-                    
-                    if st.button(f"💾 حفظ", key=f"save_{idx}"):
-                        if name and amount > 0:
-                            c.execute("INSERT INTO transactions (name, amount, transaction_date, created_at) VALUES (?,?,?,?)",
-                                      (name, amount, date.strftime("%Y-%m-%d"), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-                            conn.commit()
-                            st.success(f"تم حفظ {name} - {amount:,.0f} ريال")
-                            st.session_state['results'].pop(idx)
-                            st.rerun()
-                        else:
-                            st.warning("أدخل الاسم والمبلغ")
+            progress_bar.empty()
+            st.success(f"🎉 تم الحفظ التلقائي لـ {saved_count} معاملة")
+            st.balloons()
+            time.sleep(2)
+            st.rerun()
 
+# ================== التبويب 2: التصنيف ==================
 with tab2:
-    try:
-        df = pd.read_sql_query("SELECT name, amount, transaction_date FROM transactions", conn)
-        if not df.empty and 'transaction_date' in df.columns:
-            def classify(d):
-                try:
-                    days = (datetime.now() - datetime.strptime(d, "%Y-%m-%d")).days
-                    if days <= 30: return "🟢 حديث (أقل من شهر)"
-                    elif days <= 90: return "🟡 متوسط (1-3 أشهر)"
-                    return "🔴 قديم (أكثر من 3 أشهر)"
-                except:
-                    return "⚪ غير مصنف"
-            df['التصنيف'] = df['transaction_date'].apply(classify)
-            for cat in ["🟢 حديث (أقل من شهر)", "🟡 متوسط (1-3 أشهر)", "🔴 قديم (أكثر من 3 أشهر)"]:
-                sub = df[df['التصنيف'] == cat]
-                if not sub.empty:
-                    with st.expander(f"{cat} - {len(sub)} عميل | {sub['amount'].sum():,.0f} ريال"):
-                        st.dataframe(sub[['name', 'amount', 'transaction_date']])
-        else:
-            st.info("لا توجد معاملات بعد")
-    except Exception as e:
-        st.info("لا توجد معاملات بعد. أضف معاملات أولاً.")
-
-with tab3:
-    try:
-        df = pd.read_sql_query("SELECT name, amount, transaction_date FROM transactions ORDER BY transaction_date DESC", conn)
-        if not df.empty:
-            st.dataframe(df.rename(columns={'name':'الاسم', 'amount':'المبلغ(ريال)', 'transaction_date':'التاريخ'}))
-            st.download_button("📥 تحميل CSV", df.to_csv(index=False).encode(), "transactions.csv")
-        else:
-            st.info("لا توجد معاملات")
-    except Exception as e:
+    df = pd.read_sql_query("SELECT name, amount, transaction_date FROM transactions", conn)
+    if not df.empty:
+        def classify(d):
+            try:
+                days = (datetime.now() - datetime.strptime(d, "%Y-%m-%d")).days
+                if days <= 30: return "🟢 حديث (أقل من شهر)"
+                elif days <= 90: return "🟡 متوسط (1-3 أشهر)"
+                return "🔴 قديم (أكثر من 3 أشهر)"
+            except:
+                return "⚪ غير مصنف"
+        
+        df['التصنيف'] = df['transaction_date'].apply(classify)
+        
+        # رسم بياني دائري
+        counts = df['التصنيف'].value_counts().reset_index()
+        counts.columns = ['التصنيف', 'العدد']
+        fig = px.pie(counts, values='العدد', names='التصنيف', title="نسبة الديون", hole=0.3)
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # عرض كل فئة
+        for cat in ["🟢 حديث (أقل من شهر)", "🟡 متوسط (1-3 أشهر)", "🔴 قديم (أكثر من 3 أشهر)"]:
+            sub = df[df['التصنيف'] == cat]
+            if not sub.empty:
+                total = sub['amount'].sum()
+                with st.expander(f"{cat} - {len(sub)} عميل | إجمالي: {total:,.0f} ريال"):
+                    st.dataframe(sub[['name', 'amount', 'transaction_date']], use_container_width=True)
+    else:
         st.info("لا توجد معاملات بعد")
 
-with tab4:
-    try:
-        df = pd.read_sql_query("SELECT amount FROM transactions", conn)
-        if not df.empty:
-            col1, col2, col3 = st.columns(3)
-            col1.metric("💰 إجمالي الديون", f"{df['amount'].sum():,.0f} ريال")
-            col2.metric("📊 عدد المعاملات", len(df))
-            col3.metric("📈 متوسط الدين", f"{df['amount'].mean():,.0f} ريال")
-        else:
-            st.info("لا توجد بيانات للإحصائيات")
-    except Exception as e:
-        st.info("لا توجد بيانات بعد")
+# ================== التبويب 3: جميع المعاملات ==================
+with tab3:
+    df = pd.read_sql_query("SELECT name, amount, transaction_date, created_at FROM transactions ORDER BY transaction_date DESC", conn)
+    if not df.empty:
+        st.dataframe(df.rename(columns={
+            'name': 'اسم العميل',
+            'amount': 'المبلغ (ريال)',
+            'transaction_date': 'تاريخ العملية',
+            'created_at': 'تاريخ الإضافة'
+        }), use_container_width=True)
+        
+        total = df['amount'].sum()
+        st.metric("💵 إجمالي الديون", f"{total:,.0f} ريال يمني")
+        
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 تحميل CSV", csv, "transactions.csv", "text/csv")
+        
+        if st.button("🗑️ حذف جميع المعاملات"):
+            c.execute("DELETE FROM transactions")
+            conn.commit()
+            st.warning("تم الحذف")
+            st.rerun()
+    else:
+        st.info("لا توجد معاملات")
 
-# ------------------- إغلاق قاعدة البيانات عند الخروج -------------------
-def on_close():
-    conn.close()
-    
-# تسجيل دالة الإغلاق
-import atexit
-atexit.register(on_close)
+# ================== التبويب 4: إحصائيات ==================
+with tab4:
+    df = pd.read_sql_query("SELECT amount, transaction_date FROM transactions", conn)
+    if not df.empty:
+        col1, col2, col3 = st.columns(3)
+        col1.metric("💰 إجمالي الديون", f"{df['amount'].sum():,.0f} ريال")
+        col2.metric("📊 عدد المعاملات", len(df))
+        col3.metric("📈 متوسط الدين", f"{df['amount'].mean():,.0f} ريال")
+        
+        # رسم بياني شهري
+        df['transaction_date'] = pd.to_datetime(df['transaction_date'])
+        monthly = df.groupby(df['transaction_date'].dt.to_period('M')).sum().reset_index()
+        monthly['transaction_date'] = monthly['transaction_date'].astype(str)
+        fig = px.bar(monthly, x='transaction_date', y='amount', title="الديون شهرياً")
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("لا توجد بيانات")
+
+conn.close()
