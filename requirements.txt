@@ -3,8 +3,6 @@ pandas
 Pillow
 groq
 fpdf
-torchfree_ocr
-onnxruntime
+pytesseract
 opencv-python-headless
 numpy
-python-bidi
