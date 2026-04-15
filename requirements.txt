@@ -1,7 +1,4 @@
 streamlit
-paddlepaddle
-paddleocr
-opencv-python-headless
 pillow
 pandas
-plotly
+sqlite3
