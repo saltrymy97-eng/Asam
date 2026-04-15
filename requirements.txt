@@ -1,7 +1,6 @@
 streamlit
 pandas
-paddlepaddle-cpu
-paddleocr
+easyocr
 Pillow
-opencv-python-headless
 numpy
+opencv-python-headless
