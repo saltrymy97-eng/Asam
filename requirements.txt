@@ -1,4 +1,5 @@
 streamlit
+google-generativeai
+pillow
+sqlite3
 pandas
-groq
-Pillow
