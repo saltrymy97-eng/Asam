@@ -77,9 +77,14 @@ def categorize_by_period(debt_date_str):
         return "⚪ تاريخ غير صحيح"
 
 # =========================
-# تنظيف النص باستخدام Groq
+# تنظيف النص باستخدام Groq (مع اقتطاع النص الطويل)
 # =========================
 def clean_with_groq(raw_text, api_key):
+    # اقتطاع النص إلى أول 3000 حرف (لتجنب تجاوز الحد الأقصى للرموز)
+    MAX_CHARS = 3000
+    if len(raw_text) > MAX_CHARS:
+        raw_text = raw_text[:MAX_CHARS] + "... (تم اقتطاع النص لاختصاره)"
+    
     client = Groq(api_key=api_key)
     prompt = f"""
     أنت مساعد لاستخراج بيانات الديون من النص العربي.
@@ -87,12 +92,16 @@ def clean_with_groq(raw_text, api_key):
     النص: {raw_text}
     أخرج JSON فقط.
     """
-    response = client.chat.completions.create(
-        model="llama3-70b-8192",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.1
-    )
-    return response.choices[0].message.content
+    try:
+        response = client.chat.completions.create(
+            model="llama3-70b-8192",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        st.error(f"خطأ في Groq API: {e}")
+        return "[]"
 
 # =========================
 # إنشاء PDF
@@ -158,7 +167,7 @@ with tab1:
             else:
                 with st.spinner("جاري قراءة الدفتر..."):
                     raw_text = extract_text_from_image("temp_image.jpg")
-                    st.text_area("النص الخام", raw_text, height=100)
+                    st.text_area("النص الخام المستخرج", raw_text, height=100)
                     cleaned_json = clean_with_groq(raw_text, groq_api_key)
                     st.text_area("النتيجة بعد الذكاء الاصطناعي", cleaned_json, height=150)
                     try:
@@ -177,7 +186,7 @@ with tab1:
         
         for idx, debt in enumerate(st.session_state.edited_debts):
             with st.container():
-                st.markdown(f"**مدين {idx+1}**")
+                st.markdown(f"**مدين رقم {idx+1}**")
                 col1, col2, col3 = st.columns([2,2,2])
                 with col1:
                     st.session_state.edited_debts[idx]['الاسم'] = st.text_input("الاسم", debt.get('الاسم', ''), key=f"name_{idx}")
