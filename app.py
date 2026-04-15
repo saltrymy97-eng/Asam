@@ -2,38 +2,29 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 from datetime import datetime
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import base64
 from io import BytesIO
 import re
 from groq import Groq
 import plotly.express as px
 import time
-from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import mm
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-import arabic_reshaper
-from bidi.algorithm import get_display
 import os
 import urllib.request
 
 # ------------------- إعداد الصفحة -------------------
 st.set_page_config(page_title="دفتر الحسابات إكسترا", page_icon="📘", layout="wide")
 
-# ------------------- تحميل الخط العربي -------------------
+# ------------------- تحميل الخط العربي للصورة -------------------
 @st.cache_resource
-def load_arabic_font():
+def load_arabic_font_for_image():
+    """تحميل خط عربي لاستخدامه في إنشاء الصورة"""
     font_path = "NotoSansArabic.ttf"
     if not os.path.exists(font_path):
         url = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansArabic/NotoSansArabic-Regular.ttf"
         st.info("جاري تحميل الخط العربي لأول مرة... قد يستغرق بضع ثوان.")
         urllib.request.urlretrieve(url, font_path)
-    pdfmetrics.registerFont(TTFont('NotoSansArabic', font_path))
-    return True
+    return font_path
 
 # ------------------- تحسينات CSS -------------------
 st.markdown("""
@@ -125,83 +116,91 @@ def extract_from_image(image_bytes):
     )
     return response.choices[0].message.content
 
-# ------------------- دالة تجهيز النص العربي للـ PDF -------------------
-def reshape_arabic(text):
-    if not text:
-        return ""
-    reshaped = arabic_reshaper.reshape(text)
-    return get_display(reshaped)
-
-# ------------------- دالة إنشاء PDF منسق -------------------
-def generate_pdf(df):
-    load_arabic_font()
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=15*mm, leftMargin=15*mm, topMargin=20*mm, bottomMargin=20*mm)
-    elements = []
+# ------------------- دالة إنشاء صورة الدفتر -------------------
+def generate_ledger_image(df):
+    """إنشاء صورة PNG تحتوي على جدول المعاملات بالعربية"""
+    font_path = load_arabic_font_for_image()
     
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('Title', parent=styles['Title'], fontName='NotoSansArabic', fontSize=18, alignment=1, textColor=colors.HexColor('#203a43'), spaceAfter=12)
-    normal_style = ParagraphStyle('Normal', parent=styles['Normal'], fontName='NotoSansArabic', fontSize=10, alignment=1)
-    header_style = ParagraphStyle('Header', parent=styles['Normal'], fontName='NotoSansArabic', fontSize=12, alignment=1, textColor=colors.white)
+    # إعدادات الأبعاد
+    row_height = 40
+    header_height = 50
+    col_widths = [180, 100, 130, 150]  # اسم العميل، المبلغ، تاريخ العملية، تاريخ الإضافة
+    table_width = sum(col_widths)
+    table_height = header_height + (len(df) + 1) * row_height + 80  # مساحة للعنوان والإجمالي
     
-    title_text = reshape_arabic("تقرير دفتر الحسابات - إكسترا")
-    elements.append(Paragraph(title_text, title_style))
-    elements.append(Spacer(1, 10))
+    # إنشاء صورة بيضاء
+    img = Image.new('RGB', (table_width + 40, table_height + 100), color='white')
+    draw = ImageDraw.Draw(img)
     
-    date_text = reshape_arabic(f"تاريخ الإصدار: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    elements.append(Paragraph(date_text, normal_style))
-    elements.append(Spacer(1, 20))
+    try:
+        font_title = ImageFont.truetype(font_path, 24)
+        font_header = ImageFont.truetype(font_path, 18)
+        font_cell = ImageFont.truetype(font_path, 16)
+    except:
+        # استخدام الخط الافتراضي إذا فشل التحميل
+        font_title = ImageFont.load_default()
+        font_header = ImageFont.load_default()
+        font_cell = ImageFont.load_default()
     
-    total_debt = df['amount'].sum()
-    total_customers = df['name'].nunique()
-    summary_data = [
-        [Paragraph(reshape_arabic("إجمالي الديون"), header_style), Paragraph(f"{total_debt:,.0f} ريال", normal_style)],
-        [Paragraph(reshape_arabic("عدد العملاء"), header_style), Paragraph(str(total_customers), normal_style)]
-    ]
-    summary_table = Table(summary_data, colWidths=[80*mm, 80*mm])
-    summary_table.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#203a43')),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('FONTNAME', (0,0), (-1,0), 'NotoSansArabic'),
-        ('FONTSIZE', (0,0), (-1,0), 12),
-        ('BOTTOMPADDING', (0,0), (-1,0), 8),
-        ('BACKGROUND', (0,1), (-1,-1), colors.beige),
-        ('GRID', (0,0), (-1,-1), 1, colors.grey)
-    ]))
-    elements.append(summary_table)
-    elements.append(Spacer(1, 30))
+    # رسم العنوان
+    title = "دفتر الحسابات - إكسترا"
+    draw.text((table_width//2, 20), title, font=font_title, fill='#203a43', anchor='mt')
     
+    # رسم تاريخ الإصدار
+    date_str = f"تاريخ الإصدار: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    draw.text((table_width//2, 55), date_str, font=font_cell, fill='#555555', anchor='mt')
+    
+    y_start = 100
+    x_start = 20
+    
+    # رؤوس الجدول
     headers = ['اسم العميل', 'المبلغ (ريال)', 'تاريخ العملية', 'تاريخ الإضافة']
-    reshaped_headers = [reshape_arabic(h) for h in headers]
-    table_data = [reshaped_headers]
+    for i, header in enumerate(headers):
+        x = x_start + sum(col_widths[:i])
+        # خلفية الرأس
+        draw.rectangle([x, y_start, x + col_widths[i], y_start + header_height], fill='#2c5364')
+        # نص الرأس
+        draw.text((x + col_widths[i]//2, y_start + header_height//2), header, 
+                 font=font_header, fill='white', anchor='mm')
     
-    for _, row in df.iterrows():
-        table_data.append([
-            reshape_arabic(row['name']),
+    # خطوط الجدول
+    for i, row in df.iterrows():
+        y = y_start + header_height + (i + 1) * row_height
+        row_data = [
+            row['name'],
             f"{row['amount']:,.0f}",
             row['transaction_date'],
             row['created_at']
-        ])
+        ]
+        for j, cell in enumerate(row_data):
+            x = x_start + sum(col_widths[:j])
+            # خلفية الصف (رمادي فاتح للصفوف الزوجية)
+            if i % 2 == 0:
+                draw.rectangle([x, y, x + col_widths[j], y + row_height], fill='#f8f9fa')
+            # نص الخلية
+            draw.text((x + 10, y + row_height//2), str(cell), 
+                     font=font_cell, fill='#333333', anchor='lm')
     
-    col_widths = [60*mm, 40*mm, 40*mm, 40*mm]
-    trans_table = Table(table_data, colWidths=col_widths, repeatRows=1)
-    trans_table.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2c5364')),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('FONTNAME', (0,0), (-1,0), 'NotoSansArabic'),
-        ('FONTSIZE', (0,0), (-1,0), 11),
-        ('BOTTOMPADDING', (0,0), (-1,0), 8),
-        ('BACKGROUND', (0,1), (-1,-1), colors.whitesmoke),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-        ('FONTNAME', (0,1), (-1,-1), 'NotoSansArabic'),
-        ('FONTSIZE', (0,1), (-1,-1), 9),
-    ]))
-    elements.append(trans_table)
-    doc.build(elements)
+    # رسم إجمالي الديون
+    total = df['amount'].sum()
+    total_text = f"إجمالي الديون: {total:,.0f} ريال يمني"
+    y_total = y_start + header_height + (len(df) + 1) * row_height + 20
+    draw.text((x_start + table_width - 10, y_total), total_text, 
+             font=font_header, fill='#203a43', anchor='ra')
+    
+    # رسم حدود الجدول
+    for i in range(len(headers) + 1):
+        x = x_start + (sum(col_widths[:i]) if i < len(headers) else table_width)
+        draw.line([(x, y_start), (x, y_start + header_height + (len(df) + 1) * row_height)], 
+                 fill='#cccccc', width=1)
+    
+    # خط أفقي تحت الرأس
+    draw.line([(x_start, y_start + header_height), (x_start + table_width, y_start + header_height)], 
+             fill='#cccccc', width=2)
+    
+    # حفظ الصورة في BytesIO
+    buffer = BytesIO()
+    img.save(buffer, format='PNG')
     buffer.seek(0)
     return buffer
 
@@ -259,12 +258,11 @@ with tab1:
             st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
-# ================== التبويب 2: لوحة التحكم (تم الإصلاح) ==================
+# ================== التبويب 2: لوحة التحكم ==================
 with tab2:
     df_dashboard = pd.read_sql_query("SELECT name, amount, transaction_date FROM transactions", conn)
     
     if not df_dashboard.empty:
-        # بطاقات إحصائية
         total_debt = df_dashboard['amount'].sum()
         total_customers = df_dashboard['name'].nunique()
         avg_debt = df_dashboard['amount'].mean()
@@ -292,7 +290,6 @@ with tab2:
             </div>
             """, unsafe_allow_html=True)
         
-        # تصنيف الديون
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.subheader("📊 تصنيف الديون حسب العمر")
         
@@ -341,24 +338,22 @@ with tab3:
             total = df_all['amount'].sum()
             st.metric("💵 إجمالي الديون", f"{total:,.0f} ريال يمني")
         with col2:
-            csv = df_all.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("📥 تحميل CSV", csv, "transactions.csv", "text/csv")
-        with col3:
-            if st.button("📄 تصدير PDF منسق"):
-                with st.spinner("جاري إنشاء ملف PDF..."):
-                    pdf_buffer = generate_pdf(df_all)
+            # زر تحميل صورة الدفتر
+            if st.button("📸 تحميل صورة الدفتر"):
+                with st.spinner("جاري إنشاء صورة الدفتر..."):
+                    img_buffer = generate_ledger_image(df_all)
                     st.download_button(
-                        label="📥 اضغط لتحميل PDF",
-                        data=pdf_buffer,
-                        file_name=f"دفتر_الحسابات_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
-                        mime="application/pdf"
+                        label="📥 اضغط لتحميل الصورة",
+                        data=img_buffer,
+                        file_name=f"دفتر_الحسابات_{datetime.now().strftime('%Y%m%d_%H%M')}.png",
+                        mime="image/png"
                     )
-        
-        if st.button("🗑️ حذف جميع المعاملات", type="secondary"):
-            c.execute("DELETE FROM transactions")
-            conn.commit()
-            st.warning("تم حذف جميع المعاملات")
-            st.rerun()
+        with col3:
+            if st.button("🗑️ حذف جميع المعاملات", type="secondary"):
+                c.execute("DELETE FROM transactions")
+                conn.commit()
+                st.warning("تم حذف جميع المعاملات")
+                st.rerun()
     else:
         st.info("لا توجد معاملات")
     st.markdown('</div>', unsafe_allow_html=True)
