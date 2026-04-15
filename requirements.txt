@@ -6,3 +6,5 @@ fpdf
 pytesseract
 opencv-python-headless
 numpy
+arabic-reshaper
+python-bidi
