@@ -26,10 +26,7 @@ st.set_page_config(page_title="دفتر الحسابات إكسترا", page_ico
 # ------------------- تحسينات CSS -------------------
 st.markdown("""
 <style>
-    /* إعدادات عامة */
     .stApp { background-color: #f4f7f6; }
-    
-    /* ترويسة مخصصة */
     .app-header {
         background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
         padding: 1.5rem;
@@ -39,8 +36,6 @@ st.markdown("""
         margin-bottom: 2rem;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
-
-    /* تصميم البطاقات */
     .card {
         background: white;
         border-radius: 10px;
@@ -49,8 +44,6 @@ st.markdown("""
         margin-bottom: 1rem;
         border: 1px solid #eee;
     }
-
-    /* بطاقات الإحصائيات */
     .stat-card {
         background: white;
         border-radius: 10px;
@@ -61,17 +54,6 @@ st.markdown("""
     }
     .stat-value { font-size: 24px; font-weight: bold; color: #203a43; }
     .stat-label { font-size: 14px; color: #666; }
-
-    /* أزرار مخصصة */
-    .custom-button {
-        background-color: #203a43;
-        color: white;
-        padding: 0.5rem 1rem;
-        border-radius: 8px;
-        border: none;
-        font-weight: bold;
-        cursor: pointer;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -101,28 +83,23 @@ def compress_image(image, target_size_kb=250):
     img = image.copy()
     if img.mode == 'RGBA':
         img = img.convert('RGB')
-    
     max_dimension = 800
     if max(img.size) > max_dimension:
         ratio = max_dimension / max(img.size)
         new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
         img = img.resize(new_size, Image.Resampling.LANCZOS)
-    
     quality = 50
     buffer = BytesIO()
     img.save(buffer, format="JPEG", quality=quality, optimize=True)
-    
     while len(buffer.getvalue()) / 1024 > target_size_kb and quality > 15:
         quality -= 10
         buffer = BytesIO()
         img.save(buffer, format="JPEG", quality=quality, optimize=True)
-    
     return buffer.getvalue()
 
 # ------------------- دالة استخراج البيانات -------------------
 def extract_from_image(image_bytes):
     img_base64 = base64.b64encode(image_bytes).decode()
-    
     response = client.chat.completions.create(
         model="meta-llama/llama-4-scout-17b-16e-instruct",
         messages=[{
@@ -136,31 +113,29 @@ def extract_from_image(image_bytes):
     )
     return response.choices[0].message.content
 
-# ------------------- دالة إنشاء PDF منسق (جديد) -------------------
+# ------------------- دالة تجهيز النص العربي للـ PDF -------------------
+def reshape_arabic(text):
+    """تشكيل النص العربي ليعمل بشكل صحيح في ReportLab"""
+    if not text:
+        return ""
+    reshaped = arabic_reshaper.reshape(text)
+    return get_display(reshaped)
+
+# ------------------- دالة إنشاء PDF منسق (دعم كامل للعربية) -------------------
 def generate_pdf(df):
-    """توليد ملف PDF منسق بالعربية لدفتر الحسابات"""
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=15*mm, leftMargin=15*mm, topMargin=20*mm, bottomMargin=20*mm)
     elements = []
     
-    # تجهيز الخط العربي (نستخدم خط DejaVu المدمج مع fallback)
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
         'Title',
         parent=styles['Title'],
         fontName='Helvetica-Bold',
         fontSize=18,
-        alignment=1,  #居中
+        alignment=1,
         textColor=colors.HexColor('#203a43'),
         spaceAfter=12
-    )
-    header_style = ParagraphStyle(
-        'Header',
-        parent=styles['Normal'],
-        fontName='Helvetica-Bold',
-        fontSize=12,
-        alignment=1,
-        textColor=colors.white
     )
     normal_style = ParagraphStyle(
         'Normal',
@@ -171,12 +146,12 @@ def generate_pdf(df):
     )
     
     # عنوان التقرير
-    title_text = "تقرير دفتر الحسابات - إكسترا"
+    title_text = reshape_arabic("تقرير دفتر الحسابات - إكسترا")
     elements.append(Paragraph(title_text, title_style))
     elements.append(Spacer(1, 10))
     
     # تاريخ الإصدار
-    date_text = f"تاريخ الإصدار: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    date_text = reshape_arabic(f"تاريخ الإصدار: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     elements.append(Paragraph(date_text, normal_style))
     elements.append(Spacer(1, 20))
     
@@ -184,9 +159,9 @@ def generate_pdf(df):
     total_debt = df['amount'].sum()
     total_customers = df['name'].nunique()
     summary_data = [
-        [Paragraph("إجمالي الديون", header_style), 
+        [Paragraph(reshape_arabic("إجمالي الديون"), normal_style), 
          Paragraph(f"{total_debt:,.0f} ريال", normal_style)],
-        [Paragraph("عدد العملاء", header_style), 
+        [Paragraph(reshape_arabic("عدد العملاء"), normal_style), 
          Paragraph(str(total_customers), normal_style)]
     ]
     summary_table = Table(summary_data, colWidths=[80*mm, 80*mm])
@@ -205,19 +180,18 @@ def generate_pdf(df):
     elements.append(Spacer(1, 30))
     
     # جدول المعاملات
-    # تحضير البيانات مع تشكيل عربي صحيح
-    reshaped_headers = ['اسم العميل', 'المبلغ (ريال)', 'تاريخ العملية', 'تاريخ الإضافة']
+    headers = ['اسم العميل', 'المبلغ (ريال)', 'تاريخ العملية', 'تاريخ الإضافة']
+    reshaped_headers = [reshape_arabic(h) for h in headers]
     table_data = [reshaped_headers]
     
     for _, row in df.iterrows():
         table_data.append([
-            row['name'],
+            reshape_arabic(row['name']),
             f"{row['amount']:,.0f}",
             row['transaction_date'],
             row['created_at']
         ])
     
-    # إنشاء الجدول
     col_widths = [60*mm, 40*mm, 40*mm, 40*mm]
     trans_table = Table(table_data, colWidths=col_widths, repeatRows=1)
     trans_table.setStyle(TableStyle([
@@ -235,7 +209,6 @@ def generate_pdf(df):
     ]))
     
     elements.append(trans_table)
-    
     doc.build(elements)
     buffer.seek(0)
     return buffer
@@ -296,12 +269,11 @@ with tab1:
             st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
-# ================== التبويب 2: لوحة التحكم (نظرة عامة) ==================
+# ================== التبويب 2: لوحة التحكم ==================
 with tab2:
     df_dashboard = pd.read_sql_query("SELECT name, amount, transaction_date FROM transactions", conn)
     
     if not df_dashboard.empty:
-        # بطاقات إحصائية سريعة
         total_debt = df_dashboard['amount'].sum()
         total_customers = df_dashboard['name'].nunique()
         avg_debt = df_dashboard['amount'].mean()
@@ -328,10 +300,7 @@ with tab2:
                 <div class="stat-label">متوسط الدين</div>
             </div>
             """, unsafe_allow_html=True)
-
-        st.markdown('</div>', unsafe_allow_html=True)
         
-        # تصنيف الديون
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.subheader("📊 تصنيف الديون حسب العمر")
         
@@ -363,7 +332,7 @@ with tab2:
     else:
         st.info("لا توجد معاملات بعد")
 
-# ================== التبويب 3: دفتر اليومية (جميع المعاملات) ==================
+# ================== التبويب 3: دفتر اليومية ==================
 with tab3:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     df_all = pd.read_sql_query("SELECT name, amount, transaction_date, created_at FROM transactions ORDER BY transaction_date DESC", conn)
@@ -380,11 +349,10 @@ with tab3:
             total = df_all['amount'].sum()
             st.metric("💵 إجمالي الديون", f"{total:,.0f} ريال يمني")
         with col2:
-            # تحميل CSV
-            csv = df_all.to_csv(index=False).encode('utf-8')
+            # ✅ تصدير CSV بترميز UTF-8-BOM لفتحه بشكل صحيح في Excel
+            csv = df_all.to_csv(index=False).encode('utf-8-sig')
             st.download_button("📥 تحميل CSV", csv, "transactions.csv", "text/csv")
         with col3:
-            # زر تصدير PDF
             if st.button("📄 تصدير PDF منسق"):
                 with st.spinner("جاري إنشاء ملف PDF..."):
                     pdf_buffer = generate_pdf(df_all)
@@ -413,12 +381,10 @@ with tab4:
         col2.metric("📊 عدد المعاملات", len(df_stats))
         col3.metric("📈 متوسط الدين", f"{df_stats['amount'].mean():,.0f} ريال")
         
-        # تحويل عمود التاريخ من نص إلى تاريخ
         df_stats['transaction_date'] = pd.to_datetime(df_stats['transaction_date'], errors='coerce')
         df_stats = df_stats.dropna(subset=['transaction_date'])
         
         if not df_stats.empty:
-            # تجميع شهري
             df_stats['month'] = df_stats['transaction_date'].dt.to_period('M')
             monthly = df_stats.groupby('month')['amount'].sum().reset_index()
             monthly['month'] = monthly['month'].astype(str)
