@@ -2,10 +2,6 @@ import streamlit as st
 import requests
 import re
 import socket
-import json
-from collections import Counter
-from streamlit_mic_recorder import mic_recorder
-from groq import Groq
 
 # ---------- إعداد الصفحة ----------
 st.set_page_config(
@@ -15,7 +11,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ---------- أنماط CSS مخصصة لواجهة جميلة ----------
+# ---------- أنماط CSS مخصصة ----------
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap');
@@ -34,16 +30,6 @@ st.markdown("""
         box-shadow: 0 10px 30px rgba(0,0,0,0.1);
     }
     
-    .ayah-box {
-        background: linear-gradient(145deg, #f8f9fa 0%, #ffffff 100%);
-        border-radius: 25px;
-        padding: 30px;
-        margin: 20px 0;
-        box-shadow: 0 15px 40px rgba(0,0,0,0.08);
-        border: 1px solid rgba(46, 125, 50, 0.1);
-        transition: transform 0.2s, box-shadow 0.2s;
-    }
-    
     .ayah-text {
         font-size: 32px;
         line-height: 2.2;
@@ -56,21 +42,6 @@ st.markdown("""
         border-radius: 15px;
         border-right: 5px solid #2e7d32;
     }
-    
-    .ayah-number {
-        font-size: 1.2rem;
-        color: #2e7d32;
-        font-weight: bold;
-    }
-    
-    .stButton button {
-        background: linear-gradient(135deg, #2e7d32 0%, #1b5e20 100%);
-        color: white;
-        border: none;
-        padding: 10px 25px;
-        border-radius: 10px;
-        font-weight: bold;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -82,23 +53,7 @@ def check_internet():
     except OSError:
         return False
 
-# ---------- إعداد Groq API ----------
-if 'groq_api_key' not in st.session_state:
-    st.session_state.groq_api_key = ""
-
-# ---------- قاعدة بيانات مصغرة للأحكام التجويدية ----------
-TAJWEED_RULES = {
-    "مد لازم": "يمد 6 حركات. مثال: 'الضالين'، 'الصاخة'",
-    "مد متصل": "يمد 4-5 حركات إذا جاءت همزة بعد حرف المد في نفس الكلمة. مثال: 'جاء'، 'سوء'",
-    "مد منفصل": "يمد 4-5 حركات إذا جاءت همزة بعد حرف المد في كلمة منفصلة. مثال: 'إنا أعطيناك'",
-    "مد طبيعي": "يمد حركتين. مثال: 'قال'، 'قيل'، 'يقول'",
-    "مد عارض للسكون": "يمد 2-4-6 حركات عند الوقف. مثال: 'العالمين'",
-    "إظهار حلقي": "تظهر النون الساكنة أو التنوين عند حروف الحلق (ء هـ ع ح غ خ). مثال: 'من آمن'",
-    "إدغام بغنة": "تدغم النون أو التنوين مع حروف (ي ن م و) مع غنة. مثال: 'من يقول'",
-    "إقلاب": "تقلب النون أو التنوين ميماً مع غنة عند الباء. مثال: 'من بعد'",
-    "قلقلة": "اضطراب الصوت عند حروف (قطب جد). مثال: 'أحد'، 'لهب'",
-}
-
+# ---------- قاعدة بيانات الأحكام التجويدية ----------
 TAJWEED_EXAMPLES = {
     "الضالين": "مد لازم 6 حركات",
     "المستقيم": "مد عارض للسكون + قلقلة في الطاء",
@@ -108,84 +63,101 @@ TAJWEED_EXAMPLES = {
     "إياك": "مد منفصل 4-5 حركات",
 }
 
-# ---------- الشريط الجانبي للإعدادات ----------
-with st.sidebar:
-    st.header("⚙️ الإعدادات")
-    internet_available = check_internet()
-    if internet_available:
-        st.success("🌐 الإنترنت متصل")
-    else:
-        st.warning("📴 أنت غير متصل بالإنترنت")
-    
-    with st.expander("📚 قاموس الأحكام التجويدية"):
-        for rule, explanation in TAJWEED_RULES.items():
-            st.markdown(f"**{rule}**: {explanation}")
-    
-    st.markdown("---")
-    if internet_available:
-        api_key = st.text_input("🔑 أدخل مفتاح Groq API", type="password")
-        if api_key:
-            st.session_state.groq_api_key = api_key
-            st.success("✅ تم حفظ المفتاح!")
-
 # ---------- جلب بيانات السور ----------
 BASE_URL = "https://api.alquran.cloud/v1"
 
 @st.cache_data(ttl=3600)
 def get_surahs():
+    """جلب جميع السور من API"""
     try:
-        response = requests.get(f"{BASE_URL}/surah", timeout=5)
-        return {surah['name']: surah['number'] for surah in response.json()['data']}
+        response = requests.get(f"{BASE_URL}/surah", timeout=10)
+        data = response.json()
+        if data['code'] == 200:
+            surahs = {}
+            for surah in data['data']:
+                # استخدام الاسم الإنجليزي كمعرف، والاسم العربي للعرض
+                surahs[surah['englishName'] + " - " + surah['name']] = surah['number']
+            return surahs
+        else:
+            return {"الفاتحة": 1, "البقرة": 2, "آل عمران": 3}
     except:
         return {"الفاتحة": 1, "البقرة": 2, "آل عمران": 3, "النساء": 4, "المائدة": 5}
 
 SURAHS = get_surahs()
 
-# تم إضافة القارئين المطلوبين (مع استخدام معرفات متوقعة)
+# ---------- القراء المتاحون (معرفات مؤكدة) ----------
 RECITERS = {
     "مشاري العفاسي": "ar.afasy",
-    "عبد الباسط عبد الصمد": "ar.abdulsamad",
+    "عبد الباسط عبد الصمد (مرتل)": "ar.abdulsamad",
     "ماهر المعيقلي": "ar.maher",
-    "سعد الغامدي": "ar.ghamdi",
     "فارس عباد": "ar.abbad",
-    "محمود خليل الحصري": "ar.husary",
+    "علي الحذيفي": "ar.hudhaify",
+    "محمد أيوب": "ar.ayyoub",
     "عبد الرحمن السديس": "ar.sudais",
-    "يوسف الصقير": "ar.yousufalsuqair",  # معرف تقديري (قد يحتاج للتأكيد)
-    "محمد اللحيدان": "ar.muhammadalluhaidan",  # معرف تقديري
+    "سعود الشريم": "ar.shuraim",
+    "محمود خليل الحصري": "ar.husary",
+    "أحمد العجمي": "ar.ajamy",
+    "ياسر الدوسري": "ar.yasser",
 }
 
 # ---------- واجهة المستخدم ----------
 st.markdown("""
 <div class="main-title">
     <h1>📖 رفيق التلاوة والتغني</h1>
-    <p>استمع للآيات وتابع النص الكريم مع الترجمة والتفسير واختبر حفظك</p>
+    <p>استمع للآيات وتابع النص الكريم مع الترجمة والتفسير</p>
 </div>
 """, unsafe_allow_html=True)
 
 col1, col2 = st.columns(2)
 with col1:
-    selected_surah_name = st.selectbox("📌 اختر السورة", list(SURAHS.keys()))
+    selected_surah_display = st.selectbox("📌 اختر السورة", list(SURAHS.keys()))
 with col2:
     selected_reciter_name = st.selectbox("🎙️ اختر القارئ", list(RECITERS.keys()))
 
-surah_number = SURAHS[selected_surah_name]
+surah_number = SURAHS[selected_surah_display]
 reciter_id = RECITERS[selected_reciter_name]
 
-internet_available = check_internet()
-teacher_mode = st.toggle("🧑‍🏫 تفعيل وضع المعلم (اختبر حفظك)")
-
-# ---------- جلب بيانات السورة ----------
+# ---------- جلب بيانات السورة (مع معالجة الأخطاء) ----------
 @st.cache_data(ttl=3600)
 def fetch_surah(surah_num, reciter):
+    """جلب بيانات السورة من API مع التعامل مع الأخطاء"""
     try:
-        arabic_data = requests.get(f"{BASE_URL}/surah/{surah_num}", timeout=10).json()
-        translation_data = requests.get(f"{BASE_URL}/surah/{surah_num}/en.asad", timeout=10).json()
-        tafsir_data = requests.get(f"{BASE_URL}/surah/{surah_num}/ar.muyassar", timeout=10).json()
-        audio_data = requests.get(f"{BASE_URL}/surah/{surah_num}/{reciter}", timeout=10).json()
-        return arabic_data['data'], translation_data['data'], tafsir_data['data'], audio_data['data']
+        # النص العربي
+        arabic_res = requests.get(f"{BASE_URL}/surah/{surah_num}", timeout=10)
+        arabic_data = arabic_res.json()['data'] if arabic_res.status_code == 200 else None
+        
+        # الترجمة الإنجليزية
+        trans_res = requests.get(f"{BASE_URL}/surah/{surah_num}/en.asad", timeout=10)
+        trans_data = trans_res.json()['data'] if trans_res.status_code == 200 else None
+        
+        # تفسير الميسر
+        tafsir_res = requests.get(f"{BASE_URL}/surah/{surah_num}/ar.muyassar", timeout=10)
+        tafsir_data = tafsir_res.json()['data'] if tafsir_res.status_code == 200 else None
+        
+        # الصوت - نجرب القارئ، وإذا فشل نستخدم قارئاً افتراضياً
+        audio_data = None
+        try:
+            audio_res = requests.get(f"{BASE_URL}/surah/{surah_num}/{reciter}", timeout=10)
+            if audio_res.status_code == 200:
+                audio_data = audio_res.json()['data']
+        except:
+            pass
+        
+        # إذا فشل تحميل الصوت للقارئ المختار، نستخدم مشاري العفاسي كافتراضي
+        if audio_data is None and reciter != "ar.afasy":
+            try:
+                audio_res = requests.get(f"{BASE_URL}/surah/{surah_num}/ar.afasy", timeout=10)
+                if audio_res.status_code == 200:
+                    audio_data = audio_res.json()['data']
+                    st.warning("⚠️ القارئ المختار غير متوفر لهذه السورة. تم استخدام مشاري العفاسي بدلاً عنه.")
+            except:
+                pass
+        
+        return arabic_data, trans_data, tafsir_data, audio_data
+        
     except Exception as e:
-        st.error(f"❌ فشل جلب البيانات: {e}")
-        st.stop()
+        st.error(f"❌ فشل الاتصال بالإنترنت أو API: {e}")
+        return None, None, None, None
 
 # ---------- دوال مساعدة ----------
 def clean_arabic_text(text):
@@ -193,35 +165,6 @@ def clean_arabic_text(text):
     text = re.sub(arabic_diacritics, '', text)
     text = re.sub(r'[^\w\s]', '', text)
     return re.sub(r'\s+', ' ', text).strip()
-
-def compare_texts(original, spoken):
-    orig_clean = clean_arabic_text(original)
-    spoken_clean = clean_arabic_text(spoken)
-    if orig_clean == spoken_clean:
-        return True, "✅ **أحسنت! تلاوتك صحيحة تماماً.**"
-    orig_words = orig_clean.split()
-    spoken_words = spoken_clean.split()
-    omissions = [word for word in orig_words if word not in spoken_words]
-    additions = [word for word in spoken_words if word not in orig_words]
-    return False, (additions, omissions)
-
-def transcribe_audio(audio_bytes):
-    if not check_internet() or not st.session_state.groq_api_key:
-        return None, "⚠️ لا يوجد اتصال بالإنترنت أو مفتاح API غير موجود"
-    try:
-        client = Groq(api_key=st.session_state.groq_api_key)
-        with open("temp_audio.webm", "wb") as f:
-            f.write(audio_bytes)
-        with open("temp_audio.webm", "rb") as f:
-            transcription = client.audio.transcriptions.create(
-                model="whisper-large-v3",
-                file=("temp_audio.webm", f),
-                language="ar",
-                response_format="text"
-            )
-        return str(transcription), None
-    except Exception as e:
-        return None, f"❌ خطأ: {str(e)}"
 
 def get_tajweed_hints(ayah_text):
     hints = []
@@ -233,74 +176,64 @@ def get_tajweed_hints(ayah_text):
     return hints[:5]
 
 # ---------- عرض الآيات ----------
-try:
+internet_available = check_internet()
+
+if not internet_available:
+    st.error("📴 أنت غير متصل بالإنترنت. الرجاء الاتصال بالإنترنت لتحميل الآيات.")
+else:
     with st.spinner("🔄 جاري تحميل الآيات..."):
-        arabic_surah, translation_surah, tafsir_surah, audio_surah = fetch_surah(surah_number, reciter_id)
-
-    ayahs_arabic = arabic_surah['ayahs']
-    total_ayahs = len(ayahs_arabic)
-    ayah_range = st.slider("🎯 اختر نطاق الآيات", 1, total_ayahs, (1, min(5, total_ayahs)))
-    start, end = ayah_range
-
-    for i in range(start - 1, end):
-        ayah_num = i + 1
-        arabic_text = ayahs_arabic[i]['text']
-        translation_text = translation_surah['ayahs'][i]['text']
-        tafsir_text = tafsir_surah['ayahs'][i]['text']
-        audio_url = audio_surah['ayahs'][i]['audio']
-
-        with st.container():
-            st.markdown(f"### الآية {ayah_num}")
+        arabic_surah, trans_surah, tafsir_surah, audio_surah = fetch_surah(surah_number, reciter_id)
+    
+    if arabic_surah is None:
+        st.error("❌ تعذر تحميل بيانات السورة. حاول مرة أخرى لاحقاً.")
+    else:
+        ayahs_arabic = arabic_surah['ayahs']
+        total_ayahs = len(ayahs_arabic)
+        
+        ayah_range = st.slider("🎯 اختر نطاق الآيات", 1, total_ayahs, (1, min(5, total_ayahs)))
+        start, end = ayah_range
+        
+        st.markdown("---")
+        
+        for i in range(start - 1, end):
+            ayah_num = i + 1
+            arabic_text = ayahs_arabic[i]['text']
             
-            if teacher_mode:
-                with st.expander("📜 اضغط هنا لكشف الآية"):
-                    st.markdown(f"<div class='ayah-text'>{arabic_text}</div>", unsafe_allow_html=True)
-            else:
+            # الترجمة والتفسير (قد لا يكونان متوفرين)
+            translation_text = trans_surah['ayahs'][i]['text'] if trans_surah else "الترجمة غير متوفرة"
+            tafsir_text = tafsir_surah['ayahs'][i]['text'] if tafsir_surah else "التفسير غير متوفر"
+            
+            # الصوت
+            audio_url = audio_surah['ayahs'][i]['audio'] if audio_surah else None
+            
+            with st.container():
+                st.markdown(f"### الآية {ayah_num}")
+                
+                # النص العربي
                 st.markdown(f"<div class='ayah-text'>{arabic_text}</div>", unsafe_allow_html=True)
-            
-            st.markdown(f"**الترجمة:** {translation_text}")
-            
-            tab1, tab2 = st.tabs(["📖 تفسير الميسر", "🎙️ دليل تجويدي"])
-            with tab1:
-                st.markdown(f"<div style='text-align:right; direction:rtl;'>{tafsir_text}</div>", unsafe_allow_html=True)
-            with tab2:
-                hints = get_tajweed_hints(arabic_text)
-                if hints:
-                    for hint in hints:
-                        st.markdown(f"- {hint}")
+                
+                # الترجمة
+                st.markdown(f"**الترجمة:** {translation_text}")
+                
+                # تبويب التفسير والتجويد
+                tab1, tab2 = st.tabs(["📖 تفسير الميسر", "🎙️ دليل تجويدي"])
+                with tab1:
+                    st.markdown(f"<div style='text-align:right; direction:rtl;'>{tafsir_text}</div>", unsafe_allow_html=True)
+                with tab2:
+                    hints = get_tajweed_hints(arabic_text)
+                    if hints:
+                        for hint in hints:
+                            st.markdown(f"- {hint}")
+                    else:
+                        st.info("لا توجد تلميحات خاصة بهذه الآية.")
+                
+                # مشغل الصوت
+                if audio_url:
+                    st.audio(audio_url, format="audio/mp3")
                 else:
-                    st.info("لا توجد تلميحات خاصة بهذه الآية.")
-            
-            st.audio(audio_url, format="audio/mp3")
-            
-            if teacher_mode and internet_available and st.session_state.groq_api_key:
+                    st.warning("⚠️ الصوت غير متوفر لهذه الآية")
+                
                 st.markdown("---")
-                st.markdown("### 🎙️ اختبر تلاوتك")
-                audio_data = mic_recorder(start_prompt="🎤 ابدأ التسجيل", stop_prompt="⏹️ توقف", key=f"mic_{ayah_num}", format="webm")
-                if audio_data and 'bytes' in audio_data:
-                    with st.spinner("🧠 الذكاء الاصطناعي يحلل تلاوتك..."):
-                        transcribed_text, error = transcribe_audio(audio_data['bytes'])
-                        if error:
-                            st.error(error)
-                        elif transcribed_text:
-                            st.markdown("**📝 النص الذي تعرف عليه الذكاء الاصطناعي:**")
-                            st.info(transcribed_text)
-                            is_correct, result = compare_texts(arabic_text, transcribed_text)
-                            if is_correct:
-                                st.success(result)
-                                st.balloons()
-                            else:
-                                additions, omissions = result
-                                st.warning("⚠️ **وجدت بعض الاختلافات:**")
-                                if omissions:
-                                    st.markdown(f"**🔴 كلمات نسيتها:** <span style='color:red'>{' '.join(omissions)}</span>", unsafe_allow_html=True)
-                                if additions:
-                                    st.markdown(f"**🟡 كلمات زائدة قلتها:** <span style='color:orange'>{' '.join(additions)}</span>", unsafe_allow_html=True)
-                                st.markdown("**📖 النص الصحيح:**")
-                                st.markdown(f"<div style='font-size:20px; text-align:right; direction:rtl;'>{arabic_text}</div>", unsafe_allow_html=True)
-
-except Exception as e:
-    st.error(f"❌ حدث خطأ: {e}")
 
 st.markdown("---")
-st.caption("🌿 صُنع بحب القرآن | البيانات من Quran Cloud API | التصحيح عبر Groq Whisper")
+st.caption("🌿 صُنع بحب القرآن | البيانات من Quran Cloud API")
