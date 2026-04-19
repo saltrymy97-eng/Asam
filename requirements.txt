@@ -1,4 +1,12 @@
 streamlit
-requests
-streamlit-mic-recorder
+pandas
+fpdf
+arabic-reshaper
+python-bidi
+openpyxl
+langchain
+langchain-groq
+langchain-experimental
 groq
+ipython
+python-dotenv
