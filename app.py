@@ -1,15 +1,11 @@
-import streamlit as st
-import pandas as pd
-from fpdf import FPDF
-import arabic_reshaper
-from bidi.algorithm import get_display
-import os
-import zipfile
-import io
-from datetime import datetime
-import time
+# app.py
+# ------------------------------------------------------------
+# تطبيق: مساعد مدير الفرع الذكي – للمؤسسات المالية والبنوك
+# المطور: سالم التريمي – 2026
+# ملاحظة: المساعد الذكي يعمل عبر Groq API السحابي فقط.
+# ------------------------------------------------------------
 
-# --- أول أمر: إعدادات الصفحة ---
+import streamlit as st
 st.set_page_config(
     page_title="مساعد مدير الفرع الذكي",
     page_icon="🏦",
@@ -17,242 +13,275 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- استيراد مكتبات LangChain و Groq ---
-try:
-    from langchain_experimental.agents import create_pandas_dataframe_agent
-    from langchain_groq import ChatGroq
-    langchain_available = True
-except ImportError:
-    langchain_available = False
+import pandas as pd
+import numpy as np
+import os
+from io import BytesIO
+import zipfile
+from datetime import date
 
-# --- دوال معالجة اللغة العربية ---
-def process_arabic_text(text):
-    reshaped_text = arabic_reshaper.reshape(text)
-    bidi_text = get_display(reshaped_text)
-    return bidi_text
+from fpdf import FPDF
+import arabic_reshaper
+from bidi.algorithm import get_display
 
-class ArabicPDF(FPDF):
-    def header(self):
-        self.set_font('Arial', 'B', 16)
-        header_text = process_arabic_text("البنك الأهلي - إشعار تحويل راتب")
-        self.cell(0, 10, header_text, 0, 1, 'C')
-        self.ln(5)
+import plotly.express as px
+import plotly.graph_objects as go
 
-    def footer(self):
-        self.set_y(-15)
-        self.set_font('Arial', 'I', 8)
-        footer_text = process_arabic_text(f"تم الإنشاء تلقائياً - {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-        self.cell(0, 10, footer_text, 0, 0, 'C')
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score
 
-def create_salary_letter(employee_name, account_number, salary_amount, month_name):
-    pdf = ArabicPDF()
-    pdf.add_page()
-    pdf.set_font('Arial', '', 12)
-    date_text = process_arabic_text(f"التاريخ: {datetime.now().strftime('%Y/%m/%d')}")
-    pdf.cell(0, 10, date_text, 0, 1, 'R')
-    pdf.ln(10)
-    pdf.set_font('Arial', 'B', 14)
-    greeting = process_arabic_text(f"السيد/ {employee_name}")
-    pdf.cell(0, 10, greeting, 0, 1, 'R')
-    pdf.ln(5)
-    pdf.set_font('Arial', '', 12)
-    message = f"تم تحويل راتبك لشهر {month_name} وقدره {salary_amount:,.2f} ريال إلى حسابك رقم {account_number}."
-    arabic_message = process_arabic_text(message)
-    pdf.multi_cell(0, 10, arabic_message, 0, 'R')
-    pdf.ln(15)
-    pdf.set_font('Arial', '', 12)
-    signature = process_arabic_text("مع أطيب التحيات،")
-    pdf.cell(0, 10, signature, 0, 1, 'R')
-    pdf.cell(0, 10, process_arabic_text("مدير الفرع"), 0, 1, 'R')
-    return pdf
-
-# --- تهيئة حالة الجلسة ---
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "groq_agent" not in st.session_state:
-    st.session_state.groq_agent = None
+# ----------------- إعداد قاعدة بيانات الجلسة ----------------
 if "df" not in st.session_state:
-    st.session_state.df = None
+    st.session_state.df = pd.DataFrame(columns=["الاسم", "رقم_الحساب", "الراتب", "القسم"])
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
-# --- واجهة المستخدم الرئيسية ---
-st.title("🏦 مساعد مدير الفرع الذكي")
-st.markdown("---")
+# ----------------- أنماط CSS المخصصة ------------------------
+def apply_custom_css():
+    st.markdown("""
+    <style>
+        .stApp { background-color: #0a1929; }
+        h1, h2, h3, h4, h5, h6 { color: #ffd700 !important; font-family: 'Segoe UI', sans-serif; }
+        .stButton > button {
+            background: linear-gradient(135deg, #b8860b 0%, #ffd700 100%);
+            color: #0a1929; font-weight: bold; border: none; border-radius: 8px;
+            padding: 0.5rem 1.5rem; transition: all 0.3s ease;
+        }
+        .stButton > button:hover {
+            background: linear-gradient(135deg, #ffd700 0%, #b8860b 100%);
+            color: white; transform: scale(1.02); box-shadow: 0 4px 15px rgba(255,215,0,0.4);
+        }
+        .metric-card {
+            background: linear-gradient(135deg, #132f4c 0%, #0a1929 100%);
+            border: 1px solid #ffd700; border-radius: 12px; padding: 20px;
+            text-align: center; color: #ffd700; font-size: 1.3rem; font-weight: bold;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        .metric-card:hover { transform: translateY(-5px); box-shadow: 0 10px 25px rgba(255,215,0,0.3); }
+        .metric-card .label { font-size: 0.9rem; color: #b8860b; margin-bottom: 10px; }
+        [data-testid="stSidebar"] { background-color: #0d2137; }
+        .stTextInput > div > div > input { background-color: #132f4c; color: white; border: 1px solid #ffd700; }
+        .stDataFrame { background: #0d2137; color: white; }
+        .stDataFrame table { background: #0d2137; color: white; }
+        .footer {
+            position: fixed; bottom: 0; left: 0; width: 100%; background: #0a1929;
+            color: #ffd700; text-align: center; padding: 10px; font-size: 0.9rem;
+            border-top: 2px solid #ffd700;
+        }
+    </style>
+    """, unsafe_allow_html=True)
 
-# --- الشريط الجانبي ---
-with st.sidebar:
-    st.header("⚙️ إعدادات النظام")
-    
-    months = [
-        "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
-        "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"
+apply_custom_css()
+
+# ----------------- دوال مساعدة ----------------------------
+def arabic_text(text):
+    reshaped = arabic_reshaper.reshape(text)
+    return get_display(reshaped)
+
+def generate_salary_slip(employee, month, year=date.today().year):
+    pdf = FPDF(orientation='P', unit='mm', format='A4')
+    pdf.add_page()
+    font_path = os.path.join(os.path.dirname(__file__), 'DejaVuSans.ttf')
+    try:
+        pdf.add_font('DejaVu', '', font_path, uni=True)
+        pdf.set_font('DejaVu', '', 14)
+        use_unicode = True
+    except:
+        st.warning("⚠️ خط DejaVuSans.ttf غير موجود. قد لا تظهر العربية بشكل صحيح في PDF.")
+        pdf.set_font('Helvetica', '', 14)
+        use_unicode = False
+
+    pdf.image('https://upload.wikimedia.org/wikipedia/commons/thumb/5/5e/Bank_Performance_Logo.png', x=10, y=8, w=33)
+    pdf.ln(20)
+
+    title = arabic_text(f"كشف راتب شهر {month} - {year}")
+    if use_unicode: pdf.set_font('DejaVu', '', 18)
+    pdf.cell(0, 10, txt=title, ln=True, align='C')
+    pdf.ln(10)
+
+    data_lines = [
+        f"الاسم: {employee['الاسم']}",
+        f"رقم الحساب: {employee['رقم_الحساب']}",
+        f"القسم: {employee['القسم']}",
+        f"المبلغ المستحق: {employee['الراتب']:,} ريال"
     ]
-    selected_month = st.selectbox("اختر الشهر:", months)
+    for line in data_lines:
+        ar_line = arabic_text(line)
+        if use_unicode: pdf.set_font('DejaVu', '', 14)
+        pdf.cell(0, 10, txt=ar_line, ln=True, align='R' if use_unicode else 'L')
+        pdf.ln(5)
+    pdf.ln(20)
+    footer = arabic_text("هذا المستند صادر آلياً من مساعد مدير الفرع الذكي - 2026")
+    pdf.set_font('DejaVu', '', 10) if use_unicode else pdf.set_font('Helvetica', '', 10)
+    pdf.cell(0, 10, txt=footer, ln=True, align='C')
 
-    sample_data = pd.DataFrame({
-        'الاسم': ['أحمد محمد', 'فاطمة علي', 'عمر خالد'],
-        'رقم الحساب': ['SA1234567890', 'SA0987654321', 'SA1122334455'],
-        'الراتب': [15000, 12000, 18000]
-    })
-    csv = sample_data.to_csv(index=False).encode('utf-8-sig')
-    st.download_button(
-        label="📥 تحميل نموذج Excel",
-        data=csv,
-        file_name="نموذج_الرواتب.csv",
-        mime="text/csv",
-        use_container_width=True
-    )
-    
-    st.markdown("---")
-    st.header("🤖 مساعد Groq الذكي")
-    
-    if not langchain_available:
-        st.warning("⚠️ مكتبات LangChain و Groq غير مثبتة. يرجى تشغيل `pip install -r requirements.txt`")
-    else:
-        groq_api_key = st.text_input("أدخل مفتاح Groq API:", type="password")
-        model_name = st.selectbox(
-            "اختر نموذج Groq:",
-            ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768", "gemma2-9b-it"]
-        )
-        temperature = st.slider("الإبداعية (Temperature):", min_value=0.0, max_value=1.0, value=0.0, step=0.1)
+    return pdf.output(dest='S').encode('latin-1')
 
-        if st.session_state.df is not None:
-            st.success("✅ البيانات جاهزة للمحادثة")
-            if st.button("🚀 تفعيل المساعد الذكي", use_container_width=True):
-                if groq_api_key:
-                    with st.spinner("جاري تهيئة مساعد Groq..."):
-                        try:
-                            llm = ChatGroq(groq_api_key=groq_api_key, model_name=model_name, temperature=temperature)
-                            agent = create_pandas_dataframe_agent(
-                                llm, st.session_state.df, agent_type="tool-calling", verbose=False,
-                                allow_dangerous_code=True, max_iterations=5, handle_parsing_errors=True
-                            )
-                            st.session_state.groq_agent = agent
-                            st.success("🎉 المساعد الذكي جاهز!")
-                        except Exception as e:
-                            st.error(f"❌ فشل في تهيئة المساعد: {str(e)}")
-                else:
-                    st.warning("⚠️ يرجى إدخال مفتاح Groq API أولاً.")
-        else:
-            st.info("⬆️ يرجى رفع ملف البيانات أولاً لاستخدام المساعد الذكي.")
+def create_zip_with_slips(df, month):
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for _, row in df.iterrows():
+            emp = row.to_dict()
+            pdf_bytes = generate_salary_slip(emp, month)
+            file_name = f"{emp['الاسم']}_{emp['رقم_الحساب']}.pdf"
+            zf.writestr(file_name, pdf_bytes)
+    zip_buffer.seek(0)
+    return zip_buffer
 
-# --- المنطقة الرئيسية ---
-col1, col2 = st.columns([2, 1])
-with col1:
-    st.header("📁 رفع الملف")
-    uploaded_file = st.file_uploader("اختر ملف Excel يحتوي على بيانات الموظفين", type=['xlsx', 'xls', 'csv'])
-with col2:
-    if uploaded_file is not None:
-        st.success("✅ تم رفع الملف بنجاح")
-    else:
-        st.info("⏳ في انتظار رفع الملف...")
+# ----------------- الشريط الجانبي --------------------------
+st.sidebar.markdown("# 🏦 مساعد مدير الفرع الذكي")
+st.sidebar.markdown("---")
 
-# --- معالجة الملف المرفوع ---
+uploaded_file = st.sidebar.file_uploader("📁 ارفع ملف Excel (xlsx/csv)", type=["xlsx", "csv"])
 if uploaded_file is not None:
     try:
-        if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file, encoding='utf-8-sig')
+        df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
+        required_cols = ["الاسم", "رقم_الحساب", "الراتب", "القسم"]
+        if all(col in df.columns for col in required_cols):
+            st.session_state.df = df
+            st.sidebar.success(f"✅ تم تحميل {len(df)} سجل")
         else:
-            df = pd.read_excel(uploaded_file)
-        st.session_state.df = df
-
-        st.header("📊 معاينة البيانات")
-        required_columns = ['الاسم', 'رقم الحساب', 'الراتب']
-        missing_columns = [col for col in required_columns if col not in df.columns]
-
-        if missing_columns:
-            st.error(f"❌ الأعمدة التالية مفقودة: {', '.join(missing_columns)}")
-            st.info("الرجاء التأكد من أن الملف يحتوي على: الاسم، رقم الحساب، الراتب")
-            st.session_state.groq_agent = None
-        else:
-            st.dataframe(df, use_container_width=True)
-
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("عدد الموظفين", len(df))
-            with col2:
-                st.metric("مجموع الرواتب", f"{df['الراتب'].sum():,.0f} ريال")
-            with col3:
-                st.metric("متوسط الراتب", f"{df['الراتب'].mean():,.0f} ريال")
-
-            if st.button("🚀 إنشاء رسائل تحويل الرواتب", type="primary"):
-                with st.spinner("جاري إنشاء رسائل PDF..."):
-                    pdf_files = []
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-
-                    for index, row in df.iterrows():
-                        progress = (index + 1) / len(df)
-                        progress_bar.progress(progress)
-                        status_text.text(f"جاري إنشاء رسالة للموظف: {row['الاسم']}")
-                        pdf = create_salary_letter(row['الاسم'], str(row['رقم الحساب']), float(row['الراتب']), selected_month)
-                        pdf_content = pdf.output(dest='S').encode('latin-1')
-                        pdf_files.append({'name': f"{row['الاسم']}_{selected_month}.pdf", 'content': pdf_content})
-
-                    progress_bar.empty()
-                    status_text.empty()
-
-                    zip_buffer = io.BytesIO()
-                    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                        for pdf_file in pdf_files:
-                            zip_file.writestr(pdf_file['name'], pdf_file['content'])
-                    zip_buffer.seek(0)
-
-                    st.success(f"✅ تم إنشاء {len(pdf_files)} رسالة PDF بنجاح!")
-                    st.download_button(
-                        label=f"📥 تحميل جميع الرسائل ({len(pdf_files)} ملف PDF)",
-                        data=zip_buffer,
-                        file_name=f"رسائل_الرواتب_{selected_month}.zip",
-                        mime="application/zip",
-                        use_container_width=True
-                    )
-                    with st.expander("📋 عرض قائمة الملفات التي تم إنشاؤها"):
-                        for pdf_file in pdf_files:
-                            st.write(f"📄 {pdf_file['name']}")
-
+            st.sidebar.error("❌ يجب أن يحتوي الملف على: الاسم، رقم_الحساب، الراتب، القسم")
     except Exception as e:
-        st.error(f"❌ حدث خطأ أثناء معالجة الملف: {str(e)}")
-        st.session_state.df = None
-        st.session_state.groq_agent = None
+        st.sidebar.error(f"فشل قراءة الملف: {e}")
 
-# --- واجهة المحادثة ---
-if st.session_state.df is not None and st.session_state.groq_agent is not None:
+# نموذج فارغ
+empty_df = pd.DataFrame(columns=["الاسم", "رقم_حساب", "الراتب", "القسم"])
+output = BytesIO()
+with pd.ExcelWriter(output, engine='openpyxl') as writer:
+    empty_df.to_excel(writer, index=False, sheet_name='Sheet1')
+output.seek(0)
+st.sidebar.download_button(
+    label="📥 تحميل نموذج Excel فارغ",
+    data=output,
+    file_name="نموذج_الرواتب.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+months = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
+          "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"]
+selected_month = st.sidebar.selectbox("📅 اختر الشهر", months, index=date.today().month-1)
+
+groq_api_key = st.sidebar.text_input("🔑 مفتاح Groq API (للمساعد الذكي)", type="password")
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("☁️ المساعد الذكي يعمل حصراً عبر Groq API السحابي.")
+
+# ----------------- الصفحة الرئيسية -------------------------
+st.title("🏦 مساعد مدير الفرع الذكي")
+st.markdown("### لوحة تحكم شاملة لإدارة رواتب الموظفين وتحليلات مالية متقدمة")
+
+if not st.session_state.df.empty:
+    st.dataframe(st.session_state.df, use_container_width=True)
+else:
+    st.info("الرجاء رفع ملف Excel من الشريط الجانبي لبدء التحليل.")
+
+if not st.session_state.df.empty:
+    df = st.session_state.df
+    col1, col2, col3 = st.columns(3)
+    total_employees = df.shape[0]
+    total_salary = df['الراتب'].sum()
+    avg_salary = df['الراتب'].mean()
+
+    col1.markdown(f"""<div class="metric-card"><div class="label">👥 عدد الموظفين</div>{total_employees}</div>""", unsafe_allow_html=True)
+    col2.markdown(f"""<div class="metric-card"><div class="label">💰 مجموع الرواتب</div>{total_salary:,.0f} ريال</div>""", unsafe_allow_html=True)
+    col3.markdown(f"""<div class="metric-card"><div class="label">📊 متوسط الراتب</div>{avg_salary:,.0f} ريال</div>""", unsafe_allow_html=True)
+
     st.markdown("---")
-    st.header("💬 تحدث مع مساعد البيانات الذكي")
-    
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-    
-    if prompt := st.chat_input("اسأل أي سؤال عن بيانات الموظفين والرواتب..."):
-        st.session_state.messages.append({"role": "user", "content": prompt})
+    st.subheader("📊 توزيع الرواتب حسب الأقسام")
+    dept_salary = df.groupby("القسم")["الراتب"].sum().reset_index()
+    fig_pie = px.pie(dept_salary, names='القسم', values='الراتب', color_discrete_sequence=px.colors.sequential.Blugrn, hole=0.3)
+    fig_pie.update_layout(paper_bgcolor='#0a1929', font=dict(color='#ffd700'), title_font=dict(color='#ffd700'))
+    st.plotly_chart(fig_pie, use_container_width=True)
+
+    with st.expander("📈 تحليلات تنبؤية (Trend Line)"):
+        df_forecast = df.copy()
+        df_forecast['index'] = np.arange(len(df_forecast))
+        X = df_forecast[['index']]
+        y = df_forecast['الراتب']
+        lin_reg = LinearRegression()
+        lin_reg.fit(X, y)
+        y_pred = lin_reg.predict(X)
+
+        fig_trend = go.Figure()
+        fig_trend.add_trace(go.Scatter(x=X['index'], y=y, mode='markers+lines', name='الراتب الفعلي', marker=dict(color='#ffd700')))
+        fig_trend.add_trace(go.Scatter(x=X['index'], y=y_pred, mode='lines', name='خط الاتجاه', line=dict(color='#b8860b', dash='dash')))
+        fig_trend.update_layout(paper_bgcolor='#0a1929', plot_bgcolor='#0a1929', font=dict(color='#ffd700'),
+                                xaxis_title="الترتيب الإداري", yaxis_title="الراتب (ريال)")
+        st.plotly_chart(fig_trend, use_container_width=True)
+        st.metric("معامل التحديد (R²)", f"{r2_score(y, y_pred):.2%}")
+
+    st.markdown("---")
+    st.subheader("📄 إنشاء كشوف الرواتب الشهرية")
+    if st.button("🚀 توليد كشوف PDF لكل الموظفين وتحميل ZIP"):
+        with st.spinner("جارٍ إنشاء الملفات..."):
+            try:
+                zip_data = create_zip_with_slips(df, selected_month)
+                st.success(f"تم إنشاء {len(df)} كشف راتب بنجاح!")
+                st.download_button(
+                    label="⬇️ تحميل ملف ZIP",
+                    data=zip_data,
+                    file_name=f"كشوف_رواتب_{selected_month}_{date.today().year}.zip",
+                    mime="application/zip"
+                )
+            except Exception as e:
+                st.error(f"حدث خطأ: {e}")
+
+# ----------------- المساعد الذكي (Groq API) ----------------
+st.markdown("---")
+st.subheader("🤖 المساعد الذكي للبيانات (Groq)")
+
+llm_available = False
+agent = None
+try:
+    from langchain_groq import ChatGroq
+    from langchain_experimental.agents import create_pandas_dataframe_agent
+
+    if groq_api_key and not st.session_state.df.empty:
+        llm = ChatGroq(
+            temperature=0,
+            groq_api_key=groq_api_key,
+            model_name="llama3-70b-8192"
+        )
+        agent = create_pandas_dataframe_agent(
+            llm,
+            st.session_state.df,
+            verbose=True,
+            allow_dangerous_code=True,
+            handle_parsing_errors=True
+        )
+        llm_available = True
+        st.success("🧠 المساعد الذكي مفعل وجاهز لتحليل البيانات")
+    elif not groq_api_key:
+        st.warning("⚠️ أدخل مفتاح Groq API في الشريط الجانبي لتفعيل المساعد الذكي.")
+    else:
+        st.info("📭 لا توجد بيانات لتحليلها. ارفع ملف Excel أولاً.")
+except ImportError:
+    st.warning("⚠️ مكتبات LangChain/Groq غير مثبتة. تم تعطيل المساعد الذكي.")
+except Exception as e:
+    st.error(f"❌ فشل تهيئة المساعد: {e}")
+
+if llm_available and agent:
+    for msg in st.session_state.chat_history:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    if prompt := st.chat_input("اسأل عن البيانات (مثال: ما هو مجموع الرواتب حسب القسم؟)"):
+        st.session_state.chat_history.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
-
         with st.chat_message("assistant"):
-            message_placeholder = st.empty()
-            full_response = ""
-            with st.spinner("جاري التفكير..."):
+            with st.spinner("🤔 جاري التحليل..."):
                 try:
-                    result = st.session_state.groq_agent.invoke({"input": prompt})
-                    full_response = result['output']
-                    message_placeholder.markdown(full_response)
+                    response = agent.run(prompt)
+                    st.markdown(response)
+                    st.session_state.chat_history.append({"role": "assistant", "content": response})
                 except Exception as e:
-                    full_response = f"عذراً، حدث خطأ: {str(e)}"
-                    message_placeholder.error(full_response)
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
+                    st.error(f"فشل في الحصول على رد: {e}")
 
-    if st.button("🗑️ مسح المحادثة"):
-        st.session_state.messages = []
-        st.rerun()
-else:
-    if st.session_state.df is not None and st.session_state.groq_agent is None and langchain_available:
-        st.info("👈 اذهب إلى الشريط الجانبي وأدخل مفتاح Groq API، ثم اضغط على 'تفعيل المساعد الذكي'.")
-    elif st.session_state.df is None:
-        st.info("⬆️ يرجى رفع ملف بيانات الموظفين أولاً.")
-
-# --- تذييل الصفحة ---
-st.markdown("---")
-st.markdown(
-    "<p style='text-align: center; color: gray;'>تم التطوير بواسطة مساعد مدير الفرع الذكي v2.0 (مدعوم بـ Groq)</p>",
-    unsafe_allow_html=True
-    )
+# ----------------- التذييل --------------------------------
+st.markdown("""
+<div class="footer">
+    🏦 تم التطوير بواسطة <strong>سالم التريمي</strong> - 2026 | مساعد مدير الفرع الذكي
+</div>
+""", unsafe_allow_html=True)
