@@ -1,10 +1,9 @@
 streamlit
 pandas
-fpdf
+fpdf2
 arabic-reshaper
 python-bidi
 openpyxl
 langchain
-langchain-groq
 langchain-experimental
-tabulate
+langchain-groq
