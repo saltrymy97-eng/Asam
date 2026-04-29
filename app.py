@@ -2,7 +2,7 @@
 # ------------------------------------------------------------
 # تطبيق: مساعد مدير الفرع الذكي – للمؤسسات المالية والبنوك
 # المطور: سالم التريمي – 2026
-# ملاحظة: المساعد الذكي يعمل عبر Groq API السحابي فقط.
+# يدعم أعمدة عربية وإنجليزية بمرونة تامة
 # ------------------------------------------------------------
 
 import streamlit as st
@@ -73,9 +73,55 @@ def apply_custom_css():
 
 apply_custom_css()
 
+# ----------------- دالة تحويل الأعمدة تلقائياً -------------
+def normalize_columns(df):
+    """
+    تتعرف على الأعمدة مهما كانت تسميتها (عربي/إنجليزي) وتوحدها إلى:
+    الاسم, رقم_الحساب, الراتب, القسم
+    """
+    # تنظيف أسماء الأعمدة (إزالة مسافات، توحيد الحالات)
+    df.columns = df.columns.str.strip().str.replace('  ', ' ')
+    
+    # قاموس التطابق (مفتاح: اسم موحد، قيمة: قائمة بالاحتمالات)
+    mapping = {
+        "الاسم": [
+            "name", "اسم", "الموظف", "employee", "full name", "full_name",
+            "الاسم الكامل", "موظف", "staff", "staff name"
+        ],
+        "رقم_الحساب": [
+            "account", "account number", "account_number", "رقم الحساب",
+            "رقم حساب", "حساب", "acc", "acc_no", "account no", "iban"
+        ],
+        "الراتب": [
+            "salary", "basic salary", "basic_salary", "راتب", "الراتب الاساسي",
+            "الراتب الأساسي", "أجر", "اجر", "pay", "wage", "income"
+        ],
+        "القسم": [
+            "department", "dept", "قسم", "الادارة", "الإدارة", "ادارة", "إدارة",
+            "branch", "unit", "وحدة", "division"
+        ]
+    }
+    
+    new_columns = {}
+    found_cols = set()
+    
+    for target, aliases in mapping.items():
+        for col in df.columns:
+            if col.lower() in [a.lower() for a in aliases]:
+                new_columns[col] = target
+                found_cols.add(target)
+                break
+    
+    # إعادة تسمية الأعمدة الموجودة فقط
+    df = df.rename(columns=new_columns)
+    
+    # التأكد من وجود جميع الأعمدة المطلوبة
+    missing = set(mapping.keys()) - found_cols
+    return df, list(missing)
+
 # ----------------- دوال مساعدة ----------------------------
 def arabic_text(text):
-    reshaped = arabic_reshaper.reshape(text)
+    reshaped = arabic_reshaper.reshape(str(text))
     return get_display(reshaped)
 
 def generate_salary_slip(employee, month, year=date.today().year):
@@ -132,16 +178,33 @@ def create_zip_with_slips(df, month):
 st.sidebar.markdown("# 🏦 مساعد مدير الفرع الذكي")
 st.sidebar.markdown("---")
 
-uploaded_file = st.sidebar.file_uploader("📁 ارفع ملف Excel (xlsx/csv)", type=["xlsx", "csv"])
+uploaded_file = st.sidebar.file_uploader("📁 ارفع ملف Excel أو CSV", type=["xlsx", "csv", "xls"])
 if uploaded_file is not None:
     try:
-        df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
-        required_cols = ["الاسم", "رقم_الحساب", "الراتب", "القسم"]
-        if all(col in df.columns for col in required_cols):
-            st.session_state.df = df
-            st.sidebar.success(f"✅ تم تحميل {len(df)} سجل")
+        # قراءة الملف
+        if uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file)
         else:
-            st.sidebar.error("❌ يجب أن يحتوي الملف على: الاسم، رقم_الحساب، الراتب، القسم")
+            df = pd.read_excel(uploaded_file)
+        
+        # تحويل الأعمدة تلقائياً
+        df, missing_cols = normalize_columns(df)
+        
+        if not missing_cols:
+            st.session_state.df = df
+            st.sidebar.success(f"✅ تم تحميل {len(df)} سجل بنجاح")
+            with st.sidebar.expander("🔍 عرض الأعمدة الأصلية"):
+                st.write(list(uploaded_file.name))
+        else:
+            st.sidebar.error(f"❌ تعذر العثور على: {', '.join(missing_cols)}")
+            st.sidebar.info("💡 الأعمدة المتوقعة (أي من هذه المسميات):")
+            st.sidebar.markdown("""
+            - **الاسم**: Name, Employee, الموظف...
+            - **رقم_الحساب**: Account, IBAN, رقم الحساب...
+            - **الراتب**: Salary, Basic Salary, أجر...
+            - **القسم**: Department, قسم, الإدارة...
+            """)
+            
     except Exception as e:
         st.sidebar.error(f"فشل قراءة الملف: {e}")
 
@@ -174,7 +237,14 @@ st.markdown("### لوحة تحكم شاملة لإدارة رواتب الموظ
 if not st.session_state.df.empty:
     st.dataframe(st.session_state.df, use_container_width=True)
 else:
-    st.info("الرجاء رفع ملف Excel من الشريط الجانبي لبدء التحليل.")
+    st.info("الرجاء رفع ملف Excel/CSV من الشريط الجانبي لبدء التحليل.")
+    st.markdown("""
+    **الأعمدة المدعومة تلقائياً (أي مسمى):**
+    - الاسم: `Name`, `Employee`, `الموظف`, `Full Name`...
+    - رقم الحساب: `Account`, `IBAN`, `رقم الحساب`, `Account Number`...
+    - الراتب: `Salary`, `Basic Salary`, `أجر`, `راتب`...
+    - القسم: `Department`, `Dept`, `قسم`, `الإدارة`...
+    """)
 
 if not st.session_state.df.empty:
     df = st.session_state.df
