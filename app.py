@@ -1,8 +1,8 @@
 # app.py
 # ------------------------------------------------------------
-# تطبيق: مساعد مدير الفرع الذكي – المؤسسات المالية والبنوك
+# تطبيق: مساعد مدير الفرع الذكي – للمؤسسات المالية والبنوك
 # المطور: سالم التريمي – 2026
-# يدعم اكتشاف الأعمدة عبر قواعد ثابتة + ذكاء Groq الاصطناعي
+# يدعم أي تنسيق أعمدة + معالج ذكي بالذكاء الاصطناعي
 # ------------------------------------------------------------
 
 import streamlit as st
@@ -17,6 +17,7 @@ import pandas as pd
 import numpy as np
 import os
 import json
+import re
 from io import BytesIO
 import zipfile
 from datetime import date
@@ -37,7 +38,7 @@ if "df" not in st.session_state:
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-# ----------------- أنماط CSS المخصصة ------------------------
+# ----------------- أنماط CSS --------------------------------
 def apply_custom_css():
     st.markdown("""
     <style>
@@ -62,8 +63,6 @@ def apply_custom_css():
         .metric-card .label { font-size: 0.9rem; color: #b8860b; margin-bottom: 10px; }
         [data-testid="stSidebar"] { background-color: #0d2137; }
         .stTextInput > div > div > input { background-color: #132f4c; color: white; border: 1px solid #ffd700; }
-        .stDataFrame { background: #0d2137; color: white; }
-        .stDataFrame table { background: #0d2137; color: white; }
         .footer {
             position: fixed; bottom: 0; left: 0; width: 100%; background: #0a1929;
             color: #ffd700; text-align: center; padding: 10px; font-size: 0.9rem;
@@ -74,40 +73,57 @@ def apply_custom_css():
 
 apply_custom_css()
 
-# ----------------- دالة التعرف الذكي (قواعد + AI) ----------
+# ----------------- دوال التعرف على الأعمدة ------------------
 def normalize_columns(df):
-    """محاولة التعرف على الأعمدة عبر القواعد الثابتة"""
+    """محاولة التعرف على الأعمدة بالقواعد الثابتة الموسعة"""
     df.columns = df.columns.str.strip()
     mapping = {
-        "الاسم": ["name", "اسم", "الموظف", "employee", "full name", "full_name",
-                  "الاسم الكامل", "موظف", "staff", "staff name", "الموظفين"],
-        "رقم_الحساب": ["account", "account number", "account_number", "رقم الحساب",
-                       "رقم حساب", "حساب", "acc", "acc_no", "account no", "iban",
-                       "رقم_حساب", "رقم_الحساب", "رقم_الحساب_المصرفي", "الحساب"],
-        "الراتب": ["salary", "basic salary", "basic_salary", "راتب", "الراتب الاساسي",
-                   "الراتب الأساسي", "أجر", "اجر", "pay", "wage", "income",
-                   "الراتب_الشهري", "basic", "gross salary"],
-        "القسم": ["department", "dept", "قسم", "الادارة", "الإدارة", "ادارة", "إدارة",
-                  "branch", "unit", "وحدة", "division", "الفرع", "الدائرة", "دائرة"]
+        "الاسم": [
+            "name", "اسم", "الموظف", "employee", "full name", "full_name",
+            "الاسم الكامل", "موظف", "staff", "staff name", "الموظفين"
+        ],
+        "رقم_الحساب": [
+            "account", "account number", "account_number", "رقم الحساب",
+            "رقم حساب", "رقم_حساب", "رقم_الحساب", "حساب", "acc", "acc_no",
+            "account no", "iban", "رقم الحساب", "رقم_الحساب_المصرفي", "الحساب"
+        ],
+        "الراتب": [
+            "salary", "basic salary", "basic_salary", "راتب", "الراتب الاساسي",
+            "الراتب الأساسي", "أجر", "اجر", "pay", "wage", "income",
+            "الراتب_الشهري", "basic", "gross salary"
+        ],
+        "القسم": [
+            "department", "dept", "قسم", "الادارة", "الإدارة", "ادارة", "إدارة",
+            "branch", "unit", "وحدة", "division", "الفرع", "الدائرة", "دائرة"
+        ]
     }
+
     new_columns = {}
     found_cols = set()
     for target, aliases in mapping.items():
         for col in df.columns:
+            # إزالة المسافات والشرطات السفلية للمقارنة
             col_clean = col.lower().replace(' ', '').replace('_', '')
-            if any(col_clean == alias.lower().replace(' ', '').replace('_', '') for alias in aliases):
-                new_columns[col] = target
-                found_cols.add(target)
+            for alias in aliases:
+                alias_clean = alias.lower().replace(' ', '').replace('_', '')
+                if col_clean == alias_clean:
+                    new_columns[col] = target
+                    found_cols.add(target)
+                    break
+            if target in found_cols:
                 break
+
     df = df.rename(columns=new_columns)
     missing = set(mapping.keys()) - found_cols
     return df, list(missing)
 
 def ai_normalize_columns(df, api_key):
-    """
-    يستخدم Groq LLM لتحليل أسماء الأعمدة وإرجاع DataFrame موحد.
-    """
-    from langchain_groq import ChatGroq
+    """يستخدم Groq LLM لتحليل أسماء الأعمدة وإرجاع DataFrame موحد"""
+    try:
+        from langchain_groq import ChatGroq
+    except ImportError:
+        st.error("مكتبة langchain-groq غير مثبتة.")
+        return df, ["الاسم", "رقم_الحساب", "الراتب", "القسم"]
 
     llm = ChatGroq(
         temperature=0,
@@ -117,45 +133,37 @@ def ai_normalize_columns(df, api_key):
 
     columns_list = list(df.columns)
     prompt = f"""
-    You are a helpful assistant. I have a dataframe with these columns:
-    {columns_list}
-
-    I need to map them to these standard names (in Arabic):
-    - الاسم (employee name)
+    You are a data mapping assistant. I have dataframe columns: {columns_list}
+    Map each to one of these standard Arabic names if possible:
+    - الاسم (name)
     - رقم_الحساب (account number)
     - الراتب (salary)
     - القسم (department)
 
-    Please return ONLY a JSON object mapping the original column names to the standard ones.
-    If a column doesn't match any, omit it. Example:
+    Return ONLY a JSON object. Example:
     {{"Staff Name": "الاسم", "Acc No": "رقم_الحساب", "Basic Pay": "الراتب", "Branch": "القسم"}}
-
-    Return JSON only, no extra text.
+    If a column doesn't match, don't include it. No extra text.
     """
     try:
         response = llm.invoke(prompt)
-        # استخراج JSON من الرد (قد يكون بين علامات تنصيص)
         content = response.content.strip()
-        # محاولة تنظيف الرد إذا كان محاطًا بـ ```json ... ```
-        if content.startswith("```json"):
-            content = content[7:]
-        if content.endswith("```"):
-            content = content[:-3]
+        # إزالة علامات Markdown إن وجدت
+        content = re.sub(r'```json|```', '', content).strip()
         mapping = json.loads(content)
 
-        # إعادة تسمية الأعمدة حسب التعيين
+        # تطبيق التعيين
         df_renamed = df.rename(columns=mapping)
-        # التأكد من وجود الأعمدة الأربعة
+        # التحقق من وجود الأعمدة المطلوبة
         required = ["الاسم", "رقم_الحساب", "الراتب", "القسم"]
         missing = [col for col in required if col not in df_renamed.columns]
         if missing:
-            return df, missing  # إذا فشل، نرجع الأصل
+            return df, missing
         return df_renamed, []
     except Exception as e:
-        st.error(f"فشل تحليل AI: {e}")
-        return df, ["الاسم", "رقم_الحساب", "الراتب", "القسم"]  # نفترض الفشل
+        st.error(f"AI analysis failed: {e}")
+        return df, ["الاسم", "رقم_الحساب", "الراتب", "القسم"]
 
-# ----------------- دوال PDF ----------------------------
+# ----------------- دوال PDF ---------------------------------
 def arabic_text(text):
     reshaped = arabic_reshaper.reshape(str(text))
     return get_display(reshaped)
@@ -229,22 +237,23 @@ if uploaded_file is not None:
 
         # الخطوة 2: إذا فشل وكان مفتاح Groq متاحًا، استخدم الذكاء الاصطناعي
         if missing and groq_api_key:
-            with st.spinner("🧠 الذكاء الاصطناعي يحلل أسماء الأعمدة... Please wait"):
+            with st.spinner("🧠 الذكاء الاصطناعي يحلل أسماء الأعمدة... انتظر لحظة"):
                 df_ai, missing_ai = ai_normalize_columns(df, groq_api_key)
             if not missing_ai:
                 df_normalized = df_ai
                 missing = []
                 st.sidebar.success("✅ تم التعرف على الأعمدة بواسطة الذكاء الاصطناعي!")
             else:
-                st.sidebar.warning("⚠️ الذكاء الاصطناعي لم يستطع تحديد بعض الأعمدة.")
+                st.sidebar.warning(f"⚠️ الذكاء الاصطناعي لم يستطع تحديد: {', '.join(missing_ai)}")
+        elif missing and not groq_api_key:
+            st.sidebar.info("💡 أدخل مفتاح Groq API ليحلل النظام الأعمدة تلقائياً.")
 
         if not missing:
             st.session_state.df = df_normalized
             st.sidebar.success(f"✅ تم تحميل {len(df_normalized)} سجل بنجاح")
         else:
             st.sidebar.error(f"❌ تعذر العثور على: {', '.join(missing)}")
-            st.sidebar.info("💡 أدخل مفتاح Groq API لتحليل الملف آلياً أو تأكد من أسماء الأعمدة.")
-
+            st.sidebar.info("تأكد من أسماء الأعمدة أو استخدم مفتاح Groq للتحليل الذكي.")
     except Exception as e:
         st.sidebar.error(f"فشل قراءة الملف: {e}")
 
@@ -277,12 +286,12 @@ if not st.session_state.df.empty:
 else:
     st.info("الرجاء رفع ملف Excel/CSV من الشريط الجانبي لبدء التحليل.")
     st.markdown("""
-    **الأعمدة المدعومة تلقائياً (أي مسمى):**
-    - الاسم: Name, Employee, الموظف, Full Name...
-    - رقم الحساب: Account, IBAN, رقم الحساب, Account Number...
-    - الراتب: Salary, Basic Salary, أجر, راتب...
-    - القسم: Department, Dept, قسم, الإدارة...
-    > 🔮 **أو استخدم الذكاء الاصطناعي** (أدخل مفتاح Groq) ليفهم أي تسمية!
+    **الأعمدة المدعومة تلقائياً:**
+    - الاسم: Name, Employee, الموظف...
+    - رقم الحساب: Account, IBAN, رقم الحساب...
+    - الراتب: Salary, Basic Salary, أجر...
+    - القسم: Department, Dept, قسم...
+    > 🔮 **أدخل مفتاح Groq ليفهم النظام أي تسمية غريبة!**
     """)
 
 if not st.session_state.df.empty:
@@ -336,7 +345,7 @@ if not st.session_state.df.empty:
             except Exception as e:
                 st.error(f"حدث خطأ: {e}")
 
-# ----------------- المساعد الذكي للدردشة (Groq) ----------------
+# ----------------- المساعد الذكي للدردشة --------------------
 st.markdown("---")
 st.subheader("🤖 المساعد الذكي للبيانات (Groq)")
 
