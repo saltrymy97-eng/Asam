@@ -1,8 +1,8 @@
 # app.py
 # ------------------------------------------------------------
-# تطبيق: مساعد مدير الفرع الذكي – للمؤسسات المالية والبنوك
+# تطبيق: مساعد مدير الفرع الذكي – المؤسسات المالية والبنوك
 # المطور: سالم التريمي – 2026
-# يدعم أعمدة عربية وإنجليزية بمرونة تامة
+# يدعم اكتشاف الأعمدة عبر قواعد ثابتة + ذكاء Groq الاصطناعي
 # ------------------------------------------------------------
 
 import streamlit as st
@@ -16,6 +16,7 @@ st.set_page_config(
 import pandas as pd
 import numpy as np
 import os
+import json
 from io import BytesIO
 import zipfile
 from datetime import date
@@ -73,53 +74,88 @@ def apply_custom_css():
 
 apply_custom_css()
 
-# ----------------- دالة تحويل الأعمدة تلقائياً -------------
+# ----------------- دالة التعرف الذكي (قواعد + AI) ----------
 def normalize_columns(df):
-    """
-    تتعرف على الأعمدة مهما كانت تسميتها (عربي/إنجليزي) وتوحدها إلى:
-    الاسم, رقم_الحساب, الراتب, القسم
-    """
-    # تنظيف أسماء الأعمدة (إزالة مسافات، توحيد الحالات)
-    df.columns = df.columns.str.strip().str.replace('  ', ' ')
-    
-    # قاموس التطابق (مفتاح: اسم موحد، قيمة: قائمة بالاحتمالات)
+    """محاولة التعرف على الأعمدة عبر القواعد الثابتة"""
+    df.columns = df.columns.str.strip()
     mapping = {
-        "الاسم": [
-            "name", "اسم", "الموظف", "employee", "full name", "full_name",
-            "الاسم الكامل", "موظف", "staff", "staff name"
-        ],
-        "رقم_الحساب": [
-            "account", "account number", "account_number", "رقم الحساب",
-            "رقم حساب", "حساب", "acc", "acc_no", "account no", "iban"
-        ],
-        "الراتب": [
-            "salary", "basic salary", "basic_salary", "راتب", "الراتب الاساسي",
-            "الراتب الأساسي", "أجر", "اجر", "pay", "wage", "income"
-        ],
-        "القسم": [
-            "department", "dept", "قسم", "الادارة", "الإدارة", "ادارة", "إدارة",
-            "branch", "unit", "وحدة", "division"
-        ]
+        "الاسم": ["name", "اسم", "الموظف", "employee", "full name", "full_name",
+                  "الاسم الكامل", "موظف", "staff", "staff name", "الموظفين"],
+        "رقم_الحساب": ["account", "account number", "account_number", "رقم الحساب",
+                       "رقم حساب", "حساب", "acc", "acc_no", "account no", "iban",
+                       "رقم_حساب", "رقم_الحساب", "رقم_الحساب_المصرفي", "الحساب"],
+        "الراتب": ["salary", "basic salary", "basic_salary", "راتب", "الراتب الاساسي",
+                   "الراتب الأساسي", "أجر", "اجر", "pay", "wage", "income",
+                   "الراتب_الشهري", "basic", "gross salary"],
+        "القسم": ["department", "dept", "قسم", "الادارة", "الإدارة", "ادارة", "إدارة",
+                  "branch", "unit", "وحدة", "division", "الفرع", "الدائرة", "دائرة"]
     }
-    
     new_columns = {}
     found_cols = set()
-    
     for target, aliases in mapping.items():
         for col in df.columns:
-            if col.lower() in [a.lower() for a in aliases]:
+            col_clean = col.lower().replace(' ', '').replace('_', '')
+            if any(col_clean == alias.lower().replace(' ', '').replace('_', '') for alias in aliases):
                 new_columns[col] = target
                 found_cols.add(target)
                 break
-    
-    # إعادة تسمية الأعمدة الموجودة فقط
     df = df.rename(columns=new_columns)
-    
-    # التأكد من وجود جميع الأعمدة المطلوبة
     missing = set(mapping.keys()) - found_cols
     return df, list(missing)
 
-# ----------------- دوال مساعدة ----------------------------
+def ai_normalize_columns(df, api_key):
+    """
+    يستخدم Groq LLM لتحليل أسماء الأعمدة وإرجاع DataFrame موحد.
+    """
+    from langchain_groq import ChatGroq
+
+    llm = ChatGroq(
+        temperature=0,
+        groq_api_key=api_key,
+        model_name="llama3-70b-8192"
+    )
+
+    columns_list = list(df.columns)
+    prompt = f"""
+    You are a helpful assistant. I have a dataframe with these columns:
+    {columns_list}
+
+    I need to map them to these standard names (in Arabic):
+    - الاسم (employee name)
+    - رقم_الحساب (account number)
+    - الراتب (salary)
+    - القسم (department)
+
+    Please return ONLY a JSON object mapping the original column names to the standard ones.
+    If a column doesn't match any, omit it. Example:
+    {{"Staff Name": "الاسم", "Acc No": "رقم_الحساب", "Basic Pay": "الراتب", "Branch": "القسم"}}
+
+    Return JSON only, no extra text.
+    """
+    try:
+        response = llm.invoke(prompt)
+        # استخراج JSON من الرد (قد يكون بين علامات تنصيص)
+        content = response.content.strip()
+        # محاولة تنظيف الرد إذا كان محاطًا بـ ```json ... ```
+        if content.startswith("```json"):
+            content = content[7:]
+        if content.endswith("```"):
+            content = content[:-3]
+        mapping = json.loads(content)
+
+        # إعادة تسمية الأعمدة حسب التعيين
+        df_renamed = df.rename(columns=mapping)
+        # التأكد من وجود الأعمدة الأربعة
+        required = ["الاسم", "رقم_الحساب", "الراتب", "القسم"]
+        missing = [col for col in required if col not in df_renamed.columns]
+        if missing:
+            return df, missing  # إذا فشل، نرجع الأصل
+        return df_renamed, []
+    except Exception as e:
+        st.error(f"فشل تحليل AI: {e}")
+        return df, ["الاسم", "رقم_الحساب", "الراتب", "القسم"]  # نفترض الفشل
+
+# ----------------- دوال PDF ----------------------------
 def arabic_text(text):
     reshaped = arabic_reshaper.reshape(str(text))
     return get_display(reshaped)
@@ -179,36 +215,40 @@ st.sidebar.markdown("# 🏦 مساعد مدير الفرع الذكي")
 st.sidebar.markdown("---")
 
 uploaded_file = st.sidebar.file_uploader("📁 ارفع ملف Excel أو CSV", type=["xlsx", "csv", "xls"])
+groq_api_key = st.sidebar.text_input("🔑 مفتاح Groq API (للمساعد الذكي وتحليل الملفات)", type="password")
+
 if uploaded_file is not None:
     try:
-        # قراءة الملف
         if uploaded_file.name.endswith('.csv'):
             df = pd.read_csv(uploaded_file)
         else:
             df = pd.read_excel(uploaded_file)
-        
-        # تحويل الأعمدة تلقائياً
-        df, missing_cols = normalize_columns(df)
-        
-        if not missing_cols:
-            st.session_state.df = df
-            st.sidebar.success(f"✅ تم تحميل {len(df)} سجل بنجاح")
-            with st.sidebar.expander("🔍 عرض الأعمدة الأصلية"):
-                st.write(list(uploaded_file.name))
+
+        # الخطوة 1: التعرف بالقواعد
+        df_normalized, missing = normalize_columns(df)
+
+        # الخطوة 2: إذا فشل وكان مفتاح Groq متاحًا، استخدم الذكاء الاصطناعي
+        if missing and groq_api_key:
+            with st.spinner("🧠 الذكاء الاصطناعي يحلل أسماء الأعمدة... Please wait"):
+                df_ai, missing_ai = ai_normalize_columns(df, groq_api_key)
+            if not missing_ai:
+                df_normalized = df_ai
+                missing = []
+                st.sidebar.success("✅ تم التعرف على الأعمدة بواسطة الذكاء الاصطناعي!")
+            else:
+                st.sidebar.warning("⚠️ الذكاء الاصطناعي لم يستطع تحديد بعض الأعمدة.")
+
+        if not missing:
+            st.session_state.df = df_normalized
+            st.sidebar.success(f"✅ تم تحميل {len(df_normalized)} سجل بنجاح")
         else:
-            st.sidebar.error(f"❌ تعذر العثور على: {', '.join(missing_cols)}")
-            st.sidebar.info("💡 الأعمدة المتوقعة (أي من هذه المسميات):")
-            st.sidebar.markdown("""
-            - **الاسم**: Name, Employee, الموظف...
-            - **رقم_الحساب**: Account, IBAN, رقم الحساب...
-            - **الراتب**: Salary, Basic Salary, أجر...
-            - **القسم**: Department, قسم, الإدارة...
-            """)
-            
+            st.sidebar.error(f"❌ تعذر العثور على: {', '.join(missing)}")
+            st.sidebar.info("💡 أدخل مفتاح Groq API لتحليل الملف آلياً أو تأكد من أسماء الأعمدة.")
+
     except Exception as e:
         st.sidebar.error(f"فشل قراءة الملف: {e}")
 
-# نموذج فارغ
+# نموذج Excel فارغ
 empty_df = pd.DataFrame(columns=["الاسم", "رقم_حساب", "الراتب", "القسم"])
 output = BytesIO()
 with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -225,8 +265,6 @@ months = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "�
           "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"]
 selected_month = st.sidebar.selectbox("📅 اختر الشهر", months, index=date.today().month-1)
 
-groq_api_key = st.sidebar.text_input("🔑 مفتاح Groq API (للمساعد الذكي)", type="password")
-
 st.sidebar.markdown("---")
 st.sidebar.markdown("☁️ المساعد الذكي يعمل حصراً عبر Groq API السحابي.")
 
@@ -240,10 +278,11 @@ else:
     st.info("الرجاء رفع ملف Excel/CSV من الشريط الجانبي لبدء التحليل.")
     st.markdown("""
     **الأعمدة المدعومة تلقائياً (أي مسمى):**
-    - الاسم: `Name`, `Employee`, `الموظف`, `Full Name`...
-    - رقم الحساب: `Account`, `IBAN`, `رقم الحساب`, `Account Number`...
-    - الراتب: `Salary`, `Basic Salary`, `أجر`, `راتب`...
-    - القسم: `Department`, `Dept`, `قسم`, `الإدارة`...
+    - الاسم: Name, Employee, الموظف, Full Name...
+    - رقم الحساب: Account, IBAN, رقم الحساب, Account Number...
+    - الراتب: Salary, Basic Salary, أجر, راتب...
+    - القسم: Department, Dept, قسم, الإدارة...
+    > 🔮 **أو استخدم الذكاء الاصطناعي** (أدخل مفتاح Groq) ليفهم أي تسمية!
     """)
 
 if not st.session_state.df.empty:
@@ -297,7 +336,7 @@ if not st.session_state.df.empty:
             except Exception as e:
                 st.error(f"حدث خطأ: {e}")
 
-# ----------------- المساعد الذكي (Groq API) ----------------
+# ----------------- المساعد الذكي للدردشة (Groq) ----------------
 st.markdown("---")
 st.subheader("🤖 المساعد الذكي للبيانات (Groq)")
 
