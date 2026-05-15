@@ -500,7 +500,7 @@ with st.expander("➕ إضافة منتج جديد", expanded=False):
                     st.error(str(e))
 
 if products:
-    st.subheader("قائمة ا
+    st.subheader("قائمة المنتجات")
 def add_sale_with_customer(product_name, qty, total, customer_id=None):
     conn = get_conn()
     try:
