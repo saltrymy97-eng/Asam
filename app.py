@@ -461,9 +461,7 @@ def get_all_journal_entries():
         return list(entries.values())
     finally:
         conn.close()
-import streamlit as st
-from database import init_db, add_product, get_all_products, update_product, delete_product, update_stock, get_low_stock
-
+import streamlit as s
 init_db()
 
 if 'editing_product' not in st.session_state:
