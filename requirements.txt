@@ -1,11 +1,3 @@
 streamlit
 pandas
-fpdf2
-arabic-reshaper
-python-bidi
-openpyxl
-plotly
-scikit-learn
-langchain
-langchain-experimental
-langchain-groq
+matplotlib
