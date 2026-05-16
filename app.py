@@ -438,7 +438,7 @@ elif menu == "🏚️ المستودعات":
         finally:
             conn.close()
     
-    # تأكد من وجود جدول warehouse_stock و warehouse_transfers
+    # تأكد من وجود جداول المستودعات
     conn = get_conn()
     conn.execute("CREATE TABLE IF NOT EXISTS warehouse_stock (id INTEGER PRIMARY KEY AUTOINCREMENT, warehouse_id INTEGER, product_name TEXT, stock INTEGER DEFAULT 0, UNIQUE(warehouse_id, product_name))")
     conn.execute("CREATE TABLE IF NOT EXISTS warehouse_transfers (id INTEGER PRIMARY KEY AUTOINCREMENT, from_warehouse_id INTEGER, to_warehouse_id INTEGER, product_name TEXT, qty INTEGER, transfer_date TEXT DEFAULT CURRENT_TIMESTAMP, notes TEXT)")
@@ -553,7 +553,7 @@ elif menu == "👨‍💼 الموارد البشرية":
         else:
             st.info("لا يوجد موظفون. أضف موظفاً أولاً.")
 
-# ============================== الإنتاج (BOM) (تعمل بالكامل) ==============================
+# ============================== الإنتاج (BOM) (تعمل بالكامل - معدلة بدون أخطاء) ==============================
 elif menu == "🏭 الإنتاج (BOM)":
     st.markdown("<div class='section-title'>🏭 قوائم المكونات (BOM) وأوامر الإنتاج</div>", unsafe_allow_html=True)
     
@@ -591,24 +591,31 @@ elif menu == "🏭 الإنتاج (BOM)":
     
     def get_production_orders():
         conn = get_conn()
-        orders = conn.execute("SELECT * FROM production_orders ORDER BY created_at DESC").fetchall()
+        orders = conn.execute("SELECT id, order_number, product_name, quantity, status, created_at, completion_date FROM production_orders ORDER BY created_at DESC").fetchall()
         conn.close()
         return [dict(o) for o in orders]
+    
+    def update_production_order_status(order_id, status, completion_date=None):
+        conn = get_conn()
+        if completion_date:
+            conn.execute("UPDATE production_orders SET status=?, completion_date=? WHERE id=?", (status, completion_date, order_id))
+        else:
+            conn.execute("UPDATE production_orders SET status=? WHERE id=?", (status, order_id))
+        conn.commit()
+        conn.close()
     
     def complete_production_order(order_id):
         conn = get_conn()
         order = conn.execute("SELECT product_name, quantity FROM production_orders WHERE id=?", (order_id,)).fetchone()
         if order:
-            # زيادة المخزون للمنتج النهائي
             update_stock(order['product_name'], order['quantity'], 'in', f'إنتاج أمر {order_id}')
-            conn.execute("UPDATE production_orders SET status='completed', completion_date=? WHERE id=?", (date.today().isoformat(), order_id))
-            conn.commit()
+            update_production_order_status(order_id, 'completed', date.today().isoformat())
         conn.close()
     
-    # تهيئة جداول BOM وأوامر الإنتاج (إذا لم تكن موجودة)
+    # تهيئة جداول BOM وأوامر الإنتاج
     conn = get_conn()
     conn.execute("CREATE TABLE IF NOT EXISTS bom (id INTEGER PRIMARY KEY AUTOINCREMENT, product_name TEXT, component_name TEXT, quantity REAL)")
-    conn.execute("CREATE TABLE IF NOT EXISTS production_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, order_number TEXT, product_name TEXT, quantity INTEGER, status TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, completion_date TEXT)")
+    conn.execute("CREATE TABLE IF NOT EXISTS production_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, order_number TEXT, product_name TEXT, quantity INTEGER, status TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, completion_date TEXT, start_date TEXT)")
     conn.commit()
     conn.close()
     
@@ -617,12 +624,12 @@ elif menu == "🏭 الإنتاج (BOM)":
     with tab1:
         bom_products = get_all_bom_products()
         if bom_products:
-            sel_prod = st.selectbox("اختر منتجاً نهائياً", bom_products)
+            sel_prod = st.selectbox("اختر منتجاً نهائياً", bom_products, key="bom_select")
             bom_items = get_bom(sel_prod)
             if bom_items:
                 st.dataframe(bom_items)
-                for item in bom_items:
-                    if st.button(f"❌ حذف {item['component_name']}", key=f"del_bom_{sel_prod}_{item['component_name']}"):
+                for idx, item in enumerate(bom_items):
+                    if st.button(f"❌ حذف {item['component_name']}", key=f"del_bom_{sel_prod}_{idx}"):
                         delete_bom(sel_prod, item['component_name'])
                         st.rerun()
             else:
@@ -635,9 +642,9 @@ elif menu == "🏭 الإنتاج (BOM)":
         if len(products) >= 2:
             product_names = [p['name'] for p in products]
             with st.form("add_bom"):
-                final_product = st.selectbox("المنتج النهائي", product_names)
-                component = st.selectbox("المكون (مادة خام)", [p for p in product_names if p != final_product])
-                qty = st.number_input("الكمية لكل وحدة", min_value=0.1, step=0.1)
+                final_product = st.selectbox("المنتج النهائي", product_names, key="final_prod")
+                component = st.selectbox("المكون (مادة خام)", [p for p in product_names if p != final_product], key="component")
+                qty = st.number_input("الكمية لكل وحدة", min_value=0.1, step=0.1, key="bom_qty")
                 if st.form_submit_button("إضافة إلى BOM"):
                     add_bom(final_product, component, qty)
                     st.rerun()
@@ -650,8 +657,8 @@ elif menu == "🏭 الإنتاج (BOM)":
         if products:
             prod_names = [p['name'] for p in products]
             with st.form("new_order"):
-                prod_to_produce = st.selectbox("المنتج المراد إنتاجه", prod_names)
-                order_qty = st.number_input("الكمية المطلوبة", min_value=1, step=1)
+                prod_to_produce = st.selectbox("المنتج المراد إنتاجه", prod_names, key="prod_to_produce")
+                order_qty = st.number_input("الكمية المطلوبة", min_value=1, step=1, key="order_qty")
                 if st.form_submit_button("إنشاء أمر إنتاج"):
                     create_production_order(prod_to_produce, order_qty)
                     st.rerun()
@@ -663,8 +670,10 @@ elif menu == "🏭 الإنتاج (BOM)":
                 with st.expander(f"📌 {o['order_number']} - {o['product_name']} - {o['quantity']} قطعة - الحالة: {o['status']}"):
                     if o['status'] == 'planned':
                         if st.button(f"بدء الإنتاج", key=f"start_{o['id']}"):
+                            update_production_order_status(o['id'], 'in_progress', None)
+                            # يمكن إضافة start_date
                             conn = get_conn()
-                            conn.execute("UPDATE production_orders SET status='in_progress', start_date=? WHERE id=?", (date.today().isoformat(), o['id']))
+                            conn.execute("UPDATE production_orders SET start_date=? WHERE id=?", (date.today().isoformat(), o['id']))
                             conn.commit()
                             conn.close()
                             st.rerun()
