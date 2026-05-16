@@ -253,7 +253,17 @@ def get_all_products():
     conn = get_conn()
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT id, name, price, stock, vat_rate FROM products ORDER BY name")
+        # تحقق من وجود العمود vat_rate
+try:
+    cursor.execute("SELECT id, name, price, stock, vat_rate FROM products ORDER BY name")
+except sqlite3.OperationalError:
+    # العمود غير موجود، استخدم الاستعلام القديم
+    cursor.execute("SELECT id, name, price, stock FROM products ORDER BY name")
+    rows = cursor.fetchall()
+    # أضف vat_rate بقيمة 0 لكل صف
+    return [dict(row, vat_rate=0.0) for row in rows]
+else:
+    return [dict(row) for row in cursor.fetchall()]
         return [dict(row) for row in cursor.fetchall()]
     finally:
         conn.close()
