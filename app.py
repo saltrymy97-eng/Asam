@@ -1,6 +1,6 @@
 import streamlit as st
 from datetime import date, datetime
-from database import init_db, get_all_products, get_all_customers, get_all_suppliers, get_low_stock, get_sales_summary
+from database import init_db, upgrade_database, get_all_products, get_all_customers, get_all_suppliers, get_low_stock, get_sales_summary
 from database import add_product, delete_product, update_stock
 from database import add_customer, get_customer_statement, receive_payment
 from database import add_supplier, add_purchase
@@ -10,28 +10,174 @@ from database import get_vat_settings, update_vat_settings
 from database import get_all_sales_invoices, process_return, get_conn
 from auth import authenticate
 
+# تهيئة قاعدة البيانات مع الترقية التلقائية
 init_db()
+upgrade_database()
 
 st.set_page_config(page_title="المتكامل - نظام ERP", page_icon="🎭", layout="wide")
 
+# ========== CSS الاحترافي ==========
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap');
-    html, body, .stApp { font-family: 'Cairo', sans-serif; background: linear-gradient(135deg, #f5f7fc 0%, #eef2f7 100%); }
-    [data-testid="stSidebar"] { background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%); border-radius: 0 30px 30px 0; }
-    [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] .stSelectbox label { color: #f1f5f9 !important; }
-    .metric-card { background: white; border-radius: 28px; padding: 25px 15px; text-align: center; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05); transition: transform 0.25s ease; border: 1px solid rgba(106, 13, 173, 0.1); }
-    .metric-card:hover { transform: translateY(-6px); box-shadow: 0 20px 35px -10px rgba(106, 13, 173, 0.2); border-color: #8b5cf6; }
-    .metric-card h3 { font-size: 2.3rem; font-weight: 800; margin: 12px 0; background: linear-gradient(135deg, #6a0dad, #8b5cf6); background-clip: text; -webkit-background-clip: text; color: transparent; }
-    .metric-card p { font-size: 1rem; font-weight: 600; color: #334155; margin: 0; }
-    .stButton > button { background: linear-gradient(135deg, #6a0dad, #8b5cf6); color: white; border-radius: 40px; border: none; padding: 10px 24px; font-weight: 600; transition: all 0.2s ease; width: 100%; }
-    .stButton > button:hover { transform: scale(1.02); box-shadow: 0 8px 20px rgba(106, 13, 173, 0.4); }
-    .dataframe { border-radius: 20px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
-    .dataframe th { background: linear-gradient(135deg, #6a0dad, #8b5cf6); color: white; padding: 12px; }
-    .stTabs [data-baseweb="tab"] { background: white; border-radius: 40px; padding: 8px 28px; font-weight: 600; color: #334155; border: 1px solid #e2e8f0; }
-    .stTabs [aria-selected="true"] { background: linear-gradient(135deg, #6a0dad, #8b5cf6); color: white; border: none; }
-    .section-title { font-size: 1.8rem; font-weight: 700; margin-bottom: 30px; border-right: 5px solid #6a0dad; padding-right: 20px; color: #1e293b; display: inline-block; }
-    .footer { text-align: center; margin-top: 55px; padding: 20px; background: white; border-radius: 50px; color: #64748b; font-size: 0.85rem; }
+    
+    * {
+        font-family: 'Cairo', sans-serif;
+    }
+    
+    .stApp {
+        background: linear-gradient(135deg, #f5f7fc 0%, #eef2f7 100%);
+    }
+    
+    /* الشريط الجانبي */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+        border-radius: 0 35px 35px 0;
+        box-shadow: 5px 0 20px rgba(0,0,0,0.1);
+    }
+    
+    [data-testid="stSidebar"] .stMarkdown, 
+    [data-testid="stSidebar"] .stSelectbox label {
+        color: #f1f5f9 !important;
+    }
+    
+    [data-testid="stSidebar"] .stSelectbox > div > div {
+        background-color: #334155;
+        border-radius: 30px;
+        color: white;
+        border: 1px solid #475569;
+    }
+    
+    /* البطاقات الإحصائية */
+    .metric-card {
+        background: white;
+        border-radius: 28px;
+        padding: 25px 15px;
+        text-align: center;
+        box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05);
+        transition: all 0.3s ease;
+        border: 1px solid rgba(106, 13, 173, 0.1);
+    }
+    
+    .metric-card:hover {
+        transform: translateY(-6px);
+        box-shadow: 0 20px 35px -10px rgba(106, 13, 173, 0.2);
+        border-color: #8b5cf6;
+    }
+    
+    .metric-card h3 {
+        font-size: 2.3rem;
+        font-weight: 800;
+        margin: 12px 0;
+        background: linear-gradient(135deg, #6a0dad, #8b5cf6);
+        background-clip: text;
+        -webkit-background-clip: text;
+        color: transparent;
+    }
+    
+    .metric-card p {
+        font-size: 1rem;
+        font-weight: 600;
+        color: #334155;
+        margin: 0;
+    }
+    
+    /* الأزرار */
+    .stButton > button {
+        background: linear-gradient(135deg, #6a0dad, #8b5cf6);
+        color: white;
+        border-radius: 40px;
+        border: none;
+        padding: 10px 24px;
+        font-weight: 600;
+        transition: all 0.2s ease;
+        width: 100%;
+        font-size: 0.95rem;
+    }
+    
+    .stButton > button:hover {
+        transform: scale(1.02);
+        box-shadow: 0 8px 20px rgba(106, 13, 173, 0.4);
+        background: linear-gradient(135deg, #5a0c9e, #7c3aed);
+    }
+    
+    /* الجداول */
+    .dataframe {
+        border-radius: 20px;
+        overflow: hidden;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+    }
+    
+    .dataframe th {
+        background: linear-gradient(135deg, #6a0dad, #8b5cf6);
+        color: white;
+        font-weight: 600;
+        padding: 12px;
+    }
+    
+    .dataframe td {
+        padding: 10px;
+        border-bottom: 1px solid #e2e8f0;
+    }
+    
+    /* التبويبات */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 12px;
+        background: transparent;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        background: white;
+        border-radius: 40px;
+        padding: 8px 28px;
+        font-weight: 600;
+        color: #334155;
+        border: 1px solid #e2e8f0;
+        transition: 0.2s;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, #6a0dad, #8b5cf6);
+        color: white;
+        border: none;
+        box-shadow: 0 4px 12px rgba(106,13,173,0.2);
+    }
+    
+    /* العناوين */
+    .section-title {
+        font-size: 1.8rem;
+        font-weight: 700;
+        margin-bottom: 30px;
+        border-right: 5px solid #6a0dad;
+        padding-right: 20px;
+        color: #1e293b;
+        display: inline-block;
+    }
+    
+    /* التذييل */
+    .footer {
+        text-align: center;
+        margin-top: 55px;
+        padding: 20px;
+        background: white;
+        border-radius: 50px;
+        color: #64748b;
+        font-size: 0.85rem;
+        box-shadow: 0 -2px 10px rgba(0,0,0,0.02);
+    }
+    
+    /* رسائل التنبيه */
+    .stAlert {
+        border-radius: 20px;
+        border-left-width: 6px;
+    }
+    
+    /* توسيعات */
+    .streamlit-expanderHeader {
+        font-weight: 600;
+        background-color: #f8fafc;
+        border-radius: 20px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -60,6 +206,7 @@ if not st.session_state.authenticated:
             st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
+# ========== القائمة الجانبية ==========
 with st.sidebar:
     st.markdown("<div style='text-align: center; margin-top: 20px;'><h2 style='color: white;'>🎭 المتكامل</h2></div>", unsafe_allow_html=True)
     st.markdown(f"<div style='text-align: center; color: #a5b4fc; margin-bottom: 20px;'>👋 مرحباً {st.session_state.username}</div>", unsafe_allow_html=True)
@@ -111,7 +258,7 @@ if menu == "🏠 لوحة التحكم":
     with col4: st.markdown(f"<div class='metric-card'><p>👥 العملاء</p><h3>{len(customers)}</h3></div>", unsafe_allow_html=True)
     
     if low_stock:
-        st.warning("⚠️ المنتجات منخفضة المخزون: " + ", ".join([p['name'] for p in low_stock]))
+        st.warning("⚠️ المنتجات منخفضة المخزون (≤5): " + ", ".join([p['name'] for p in low_stock]))
     else:
         st.success("✅ جميع المنتجات بمخزون جيد")
 
@@ -334,7 +481,7 @@ elif menu == "💰 الضريبة (VAT)":
         update_vat_settings(rate, enabled)
         st.rerun()
 
-# ============================== الأصول الثابتة (تعمل بالكامل) ==============================
+# ============================== الأصول الثابتة ==============================
 elif menu == "🏭 الأصول الثابتة":
     st.markdown("<div class='section-title'>🏭 الأصول الثابتة والإهلاك</div>", unsafe_allow_html=True)
     
@@ -390,7 +537,7 @@ elif menu == "🏭 الأصول الثابتة":
         else:
             st.info("لا توجد أصول ثابتة مضافة")
 
-# ============================== المستودعات (تعمل بالكامل) ==============================
+# ============================== المستودعات ==============================
 elif menu == "🏚️ المستودعات":
     st.markdown("<div class='section-title'>🏚️ إدارة المستودعات المتعددة</div>", unsafe_allow_html=True)
     
@@ -498,7 +645,7 @@ elif menu == "🏚️ المستودعات":
         else:
             st.warning("يلزم وجود مستودعين على الأقل لإجراء نقل")
 
-# ============================== الموارد البشرية (تعمل بالكامل) ==============================
+# ============================== الموارد البشرية ==============================
 elif menu == "👨‍💼 الموارد البشرية":
     st.markdown("<div class='section-title'>👨‍💼 إدارة الموظفين</div>", unsafe_allow_html=True)
     
@@ -553,7 +700,7 @@ elif menu == "👨‍💼 الموارد البشرية":
         else:
             st.info("لا يوجد موظفون. أضف موظفاً أولاً.")
 
-# ============================== الإنتاج (BOM) (تعمل بالكامل - معدلة بدون أخطاء) ==============================
+# ============================== الإنتاج (BOM) ==============================
 elif menu == "🏭 الإنتاج (BOM)":
     st.markdown("<div class='section-title'>🏭 قوائم المكونات (BOM) وأوامر الإنتاج</div>", unsafe_allow_html=True)
     
@@ -671,7 +818,6 @@ elif menu == "🏭 الإنتاج (BOM)":
                     if o['status'] == 'planned':
                         if st.button(f"بدء الإنتاج", key=f"start_{o['id']}"):
                             update_production_order_status(o['id'], 'in_progress', None)
-                            # يمكن إضافة start_date
                             conn = get_conn()
                             conn.execute("UPDATE production_orders SET start_date=? WHERE id=?", (date.today().isoformat(), o['id']))
                             conn.commit()
