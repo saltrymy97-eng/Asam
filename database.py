@@ -34,6 +34,11 @@ def upgrade_database():
         cursor.execute("ALTER TABLE products ADD COLUMN vat_rate REAL DEFAULT 0.0")
     except:
         pass
+    # إضافة حقل المستودع إلى حركات المخزون إذا لم يكن موجوداً
+    try:
+        cursor.execute("ALTER TABLE inventory_movements ADD COLUMN warehouse_id INTEGER REFERENCES warehouses(id)")
+    except:
+        pass
     conn.commit()
     conn.close()
 
@@ -57,6 +62,7 @@ def init_db():
         product_name TEXT NOT NULL,
         qty INTEGER NOT NULL,
         movement_type TEXT NOT NULL,
+        warehouse_id INTEGER REFERENCES warehouses(id),
         date_time TEXT NOT NULL DEFAULT (datetime('now','localtime')),
         notes TEXT)''')
     
@@ -266,12 +272,29 @@ def update_stock(product_name, qty_change, movement_type, notes=""):
     record_movement(product_name, qty_change, movement_type, notes)
     conn.close()
 
-# ========== الدالة الصحيحة لتسجيل حركة المخزون ==========
-def record_movement(product_name, qty, movement_type, notes=""):
+# ========== الدوال المساعدة للمستودعات ==========
+def _get_default_warehouse_id():
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO inventory_movements (product_name, qty, movement_type, notes) VALUES (?,?,?,?)",
-                   (product_name, qty, movement_type, notes))
+    # محاولة جلب المستودع الرئيسي
+    cursor.execute("SELECT id FROM warehouses WHERE is_main=1 LIMIT 1")
+    wh = cursor.fetchone()
+    if wh is None:
+        cursor.execute("SELECT id FROM warehouses LIMIT 1")
+        wh = cursor.fetchone()
+    conn.close()
+    if wh is None:
+        raise RuntimeError("لا يوجد أي مستودع في النظام. يجب إضافة مستودع أولاً.")
+    return wh['id']
+
+# ========== الدالة الصحيحة لتسجيل حركة المخزون ==========
+def record_movement(product_name, qty, movement_type, notes="", warehouse_id=None):
+    conn = get_conn()
+    cursor = conn.cursor()
+    if warehouse_id is None:
+        warehouse_id = _get_default_warehouse_id()
+    cursor.execute("INSERT INTO inventory_movements (product_name, qty, movement_type, notes, warehouse_id) VALUES (?,?,?,?,?)",
+                   (product_name, qty, movement_type, notes, warehouse_id))
     conn.commit()
     conn.close()
 
@@ -379,6 +402,10 @@ def add_purchase(supplier_id, items):
     cursor.execute("SELECT id FROM suppliers WHERE id=?", (supplier_id,))
     if cursor.fetchone() is None:
         raise ValueError("Supplier not found")
+
+    # الحصول على معرف المستودع الافتراضي
+    warehouse_id = _get_default_warehouse_id()
+
     cursor.execute("INSERT INTO purchases (supplier_id, total) VALUES (?,?)", (supplier_id, total))
     purchase_id = cursor.lastrowid
     for item in items:
@@ -389,7 +416,8 @@ def add_purchase(supplier_id, items):
         cursor.execute("INSERT INTO purchase_items (purchase_id, product_name, qty, unit_cost) VALUES (?,?,?,?)",
                        (purchase_id, pname, qty, cost))
         cursor.execute("UPDATE products SET stock = stock + ? WHERE name=?", (qty, pname))
-        record_movement(pname, qty, 'in', f'شراء فاتورة {purchase_id}')
+        # تسجيل الحركة مع المستودع
+        record_movement(pname, qty, 'in', f'شراء فاتورة {purchase_id}', warehouse_id)
     cursor.execute("UPDATE suppliers SET balance = balance + ? WHERE id=?", (total, supplier_id))
     conn.commit()
     post_entry(datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
