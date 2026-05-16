@@ -135,10 +135,10 @@ def delete_user(user_id):
     conn.close()
 
 # ============================================================
-# 4. الواجهة الرئيسية (تعرض عند استدعاء الملف)
+# 4. الواجهة الرئيسية مع التصميم الجديد
 # ============================================================
-st.title("🛠️ الأدوات المتقدمة")
-st.caption("تقارير مالية - سجل تدقيق - إدارة المستخدمين")
+st.markdown("<div class='section-title'>🛠️ الأدوات المتقدمة</div>", unsafe_allow_html=True)
+st.caption("تقارير مالية متكاملة | سجل تدقيق شامل | إدارة المستخدمين")
 
 tab1, tab2, tab3 = st.tabs(["📊 التقارير المالية", "📜 سجل التدقيق", "👥 إدارة المستخدمين"])
 
@@ -151,8 +151,9 @@ with tab1:
         tb = get_trial_balance()
         if not tb.empty:
             st.dataframe(tb, use_container_width=True)
-            st.metric("مجموع المديـن", f"{tb['مدين'].sum():,.2f}")
-            st.metric("مجموع الدائن", f"{tb['دائن'].sum():,.2f}")
+            col1, col2 = st.columns(2)
+            with col1: st.metric("مجموع المديـن", f"{tb['مدين'].sum():,.2f}")
+            with col2: st.metric("مجموع الدائن", f"{tb['دائن'].sum():,.2f}")
         else:
             st.info("لا توجد أرصدة")
     
@@ -188,7 +189,7 @@ with tab1:
             st.dataframe(equity, use_container_width=True)
             st.metric("الإجمالي", f"{total_e:,.2f}")
         st.divider()
-        st.success(f"تحقق: الأصول ({total_a:,.2f}) = الخصوم ({total_l:,.2f}) + حقوق الملكية ({total_e:,.2f})")
+        st.success(f"✅ التحقق: الأصول ({total_a:,.2f}) = الخصوم ({total_l:,.2f}) + حقوق الملكية ({total_e:,.2f})")
 
 # ---------- التبويب الثاني: سجل التدقيق ----------
 with tab2:
@@ -206,7 +207,7 @@ with tab2:
         table = st.text_input("اسم الجدول", value="products")
         record_id = st.number_input("معرف السجل", min_value=1, step=1, value=1)
         details = st.text_area("تفاصيل إضافية")
-        if st.button("تسجيل حدث"):
+        if st.button("📝 تسجيل حدث"):
             log_action(username, action, table, record_id, details)
             st.success("تم التسجيل")
             st.rerun()
@@ -214,7 +215,7 @@ with tab2:
 # ---------- التبويب الثالث: إدارة المستخدمين ----------
 with tab3:
     if "role" not in st.session_state or st.session_state.role != "admin":
-        st.error("عذراً، هذه الصفحة مخصصة للمسؤولين فقط.")
+        st.error("🔒 عذراً، هذه الصفحة مخصصة للمسؤولين فقط.")
     else:
         user_tab1, user_tab2 = st.tabs(["📋 قائمة المستخدمين", "➕ إضافة مستخدم"])
         with user_tab1:
