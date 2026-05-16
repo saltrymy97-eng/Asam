@@ -21,7 +21,7 @@ st.markdown("""
     }
     
     .main {
-        background: linear-gradient(135deg, #f5f7fa 0%, #e9edf2 100%);
+        background: linear-gradient(135deg, #f8f9fc 0%, #f0f2f6 100%);
     }
     
     h1, h2, h3, .stMarkdown h1, .stMarkdown h2 {
@@ -32,27 +32,31 @@ st.markdown("""
     /* البطاقات */
     .metric-card {
         background: white;
-        border-radius: 25px;
-        padding: 20px 15px;
-        box-shadow: 0 8px 20px rgba(0,0,0,0.05);
+        border-radius: 28px;
+        padding: 22px 15px;
+        box-shadow: 0 8px 25px rgba(0,0,0,0.05);
         text-align: center;
-        transition: transform 0.2s, box-shadow 0.2s;
+        transition: all 0.3s ease;
         border: 1px solid rgba(106, 13, 173, 0.1);
     }
     .metric-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 15px 30px rgba(0,0,0,0.1);
+        transform: translateY(-6px);
+        box-shadow: 0 20px 35px rgba(106, 13, 173, 0.15);
         border-color: #6a0dad;
     }
     .metric-card h3 {
-        font-size: 2rem;
-        margin: 10px 0;
-        color: #4a1d8c;
+        font-size: 2.2rem;
+        margin: 12px 0;
+        background: linear-gradient(135deg, #6a0dad, #8b5cf6);
+        background-clip: text;
+        -webkit-background-clip: text;
+        color: transparent;
     }
     .metric-card p {
         color: #4a5568;
+        font-weight: 600;
         margin: 0;
-        font-weight: 500;
+        font-size: 1rem;
     }
     
     /* الأزرار */
@@ -65,63 +69,97 @@ st.markdown("""
         font-weight: 600;
         transition: all 0.3s ease;
         width: 100%;
+        font-size: 0.9rem;
     }
     .stButton > button:hover {
         transform: translateY(-2px);
-        box-shadow: 0 8px 20px rgba(106, 13, 173, 0.3);
+        box-shadow: 0 10px 25px rgba(106, 13, 173, 0.3);
         background: linear-gradient(135deg, #5a0c9e, #7c3aed);
     }
     
     /* الشريط الجانبي */
     .css-1d391kg {
-        background: linear-gradient(180deg, #1a1a2e, #16213e);
-        border-radius: 0 30px 30px 0;
+        background: linear-gradient(180deg, #0f0f1f, #1a1a2e);
+        border-radius: 0 35px 35px 0;
     }
     .css-1d391kg .stMarkdown, .css-1d391kg .stSelectbox label {
         color: #f0f0f0;
+    }
+    .css-1d391kg .stSelectbox > div > div {
+        background-color: rgba(255,255,255,0.1);
+        border-radius: 30px;
+        color: white;
     }
     
     /* الجداول */
     .dataframe {
         border-radius: 20px;
         overflow: hidden;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        box-shadow: 0 8px 20px rgba(0,0,0,0.05);
+        border: none;
+    }
+    .dataframe th {
+        background: linear-gradient(135deg, #6a0dad, #8b5cf6);
+        color: white;
+        font-weight: 600;
+        padding: 12px;
+    }
+    .dataframe td {
+        padding: 10px;
+        border-bottom: 1px solid #e2e8f0;
     }
     
     /* التبويبات */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
+        gap: 10px;
+        background: transparent;
     }
     .stTabs [data-baseweb="tab"] {
-        background-color: white;
-        border-radius: 30px;
-        padding: 8px 20px;
+        background: white;
+        border-radius: 40px;
+        padding: 8px 24px;
         font-weight: 600;
         color: #4a5568;
+        border: 1px solid #e2e8f0;
+        transition: 0.2s;
     }
     .stTabs [aria-selected="true"] {
         background: linear-gradient(135deg, #6a0dad, #8b5cf6);
         color: white;
+        border: none;
+        box-shadow: 0 4px 12px rgba(106,13,173,0.2);
     }
     
     /* العناوين */
     .section-title {
-        font-size: 1.8rem;
+        font-size: 2rem;
         font-weight: 700;
-        margin-bottom: 25px;
-        border-right: 5px solid #6a0dad;
-        padding-right: 15px;
+        margin-bottom: 30px;
+        border-right: 6px solid #6a0dad;
+        padding-right: 20px;
         color: #1a1a2e;
+        display: inline-block;
+    }
+    
+    /* الكاردات الداخلية */
+    .info-card {
+        background: white;
+        border-radius: 25px;
+        padding: 18px;
+        margin: 10px 0;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.03);
+        border: 1px solid #e9edf2;
     }
     
     .footer {
         text-align: center;
-        margin-top: 50px;
-        padding: 20px;
+        margin-top: 55px;
+        padding: 22px;
         background: white;
         border-radius: 50px;
         color: #4a5568;
-        font-size: 0.9rem;
+        font-size: 0.85rem;
+        box-shadow: 0 -3px 15px rgba(0,0,0,0.02);
     }
     </style>
 """, unsafe_allow_html=True)
@@ -142,7 +180,7 @@ def upgrade_database():
     try:
         cursor.execute("ALTER TABLE products ADD COLUMN vat_rate REAL DEFAULT 0.0")
     except sqlite3.OperationalError:
-        pass  # العمود موجود
+        pass
     try:
         cursor.execute("ALTER TABLE sales ADD COLUMN vat_amount REAL DEFAULT 0")
     except:
@@ -315,7 +353,6 @@ def get_all_products():
     conn = get_conn()
     try:
         cursor = conn.cursor()
-        # محاولة جلب مع VAT، وإذا فشل نستخدم الاستعلام القديم
         try:
             cursor.execute("SELECT id, name, price, stock, vat_rate FROM products ORDER BY name")
         except sqlite3.OperationalError:
@@ -324,15 +361,6 @@ def get_all_products():
             return [dict(row, vat_rate=0.0) for row in rows]
         else:
             return [dict(row) for row in cursor.fetchall()]
-    finally:
-        conn.close()
-
-def update_product(product_id, name, price):
-    conn = get_conn()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("UPDATE products SET name=?, price=? WHERE id=?", (name, price, product_id))
-        conn.commit()
     finally:
         conn.close()
 
@@ -527,7 +555,38 @@ def get_accounts_tree():
     finally:
         conn.close()
 
-# دالة التقارير المتقدمة
+def get_all_journal_entries():
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT je.id, je.date, je.description, je.reference_type, je.reference_id,
+               a.name as account_name, jd.debit, jd.credit
+        FROM journal_entries je
+        JOIN journal_details jd ON je.id = jd.entry_id
+        JOIN accounts a ON jd.account_id = a.id
+        ORDER BY je.date DESC, je.id DESC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    
+    # تجميع القيود لعرضها بشكل أفضل
+    entries = {}
+    for row in rows:
+        eid = row['id']
+        if eid not in entries:
+            entries[eid] = {
+                'date': row['date'],
+                'description': row['description'],
+                'reference': f"{row['reference_type']} - {row['reference_id']}" if row['reference_id'] else '',
+                'details': []
+            }
+        entries[eid]['details'].append({
+            'account': row['account_name'],
+            'debit': row['debit'],
+            'credit': row['credit']
+        })
+    return entries
+
 def advanced_report():
     conn = get_conn()
     sales_df = pd.read_sql("SELECT date_time, total FROM sales", conn)
@@ -535,7 +594,8 @@ def advanced_report():
     if not sales_df.empty:
         sales_df['date'] = pd.to_datetime(sales_df['date_time']).dt.date
         daily = sales_df.groupby('date')['total'].sum().reset_index()
-        fig = px.line(daily, x='date', y='total', title='المبيعات اليومية', markers=True)
+        fig = px.line(daily, x='date', y='total', title='المبيعات اليومية', markers=True, color_discrete_sequence=['#6a0dad'])
+        fig.update_layout(plot_bgcolor='white', title_font_color='#1a1a2e')
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("لا توجد بيانات مبيعات")
@@ -544,7 +604,7 @@ def advanced_report():
 #                         واجهة المستخدم
 # ============================================================
 
-st.sidebar.markdown("<h2 style='text-align:center; color:white;'>🎭 المسرحية المحاسبية</h2>", unsafe_allow_html=True)
+st.sidebar.markdown("<h2 style='text-align:center; color:white; margin-top:10px;'>🎭 المسرحية المحاسبية</h2>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
 menu = st.sidebar.radio("القائمة الرئيسية",
@@ -577,7 +637,7 @@ if menu == "🏠 لوحة التحكم":
     if low_stock:
         st.warning("⚠️ المنتجات منخفضة المخزون (≤5): " + ", ".join([p['name'] for p in low_stock]))
     else:
-        st.success("جميع المنتجات بمخزون جيد ✅")
+        st.success("✅ جميع المنتجات بمخزون جيد")
 
 # ---------- المنتجات ----------
 elif menu == "📦 المنتجات":
@@ -660,10 +720,10 @@ elif menu == "🛒 الكاشير":
         else:
             st.info("السلة فارغة")
 
-# باقي الأقسام بنفس الاختصار الجميل
+# ---------- العملاء ----------
 elif menu == "👥 العملاء":
     st.markdown("<div class='section-title'>👥 العملاء والديون</div>", unsafe_allow_html=True)
-    tab1, tab2 = st.tabs(["القائمة", "إضافة عميل"])
+    tab1, tab2 = st.tabs(["📋 قائمة العملاء", "➕ إضافة عميل"])
     with tab1:
         for c in get_all_customers():
             with st.expander(f"{c['name']} - الرصيد: {c['balance']:.2f}"):
@@ -680,9 +740,10 @@ elif menu == "👥 العملاء":
                 add_customer(name, phone, address)
                 st.rerun()
 
+# ---------- الموردين ----------
 elif menu == "📦 الموردين":
     st.markdown("<div class='section-title'>📦 الموردين والمشتريات</div>", unsafe_allow_html=True)
-    tab1, tab2 = st.tabs(["الموردين", "فاتورة شراء"])
+    tab1, tab2 = st.tabs(["📋 الموردين", "➕ فاتورة شراء"])
     with tab1:
         for s in get_all_suppliers():
             st.write(f"**{s['name']}** - 📞 {s['phone']} - الرصيد: {s['balance']:.2f}")
@@ -718,18 +779,33 @@ elif menu == "📦 الموردين":
         else:
             st.warning("لا يوجد موردون")
 
+# ---------- المحاسبة (محسّنة) ----------
 elif menu == "📊 المحاسبة":
-    st.markdown("<div class='section-title'>📊 دليل الحسابات والقيود</div>", unsafe_allow_html=True)
-    tab1, tab2 = st.tabs(["الحسابات", "القيود"])
+    st.markdown("<div class='section-title'>📊 دليل الحسابات والقيود اليومية</div>", unsafe_allow_html=True)
+    tab1, tab2 = st.tabs(["📒 دليل الحسابات", "📜 القيود اليومية"])
     with tab1:
         accs = get_accounts_tree()
         if accs:
+            data = []
             for a in accs:
                 bal = get_account_balance(a['id'])
-                st.write(f"**{a['code']} - {a['name']}** ({a['type']}) : الرصيد {bal:.2f}")
+                data.append({"الكود": a['code'], "اسم الحساب": a['name'], "النوع": a['type'], "الرصيد": f"{bal:,.2f}"})
+            st.dataframe(pd.DataFrame(data), use_container_width=True)
+        else:
+            st.info("لا توجد حسابات")
     with tab2:
-        st.info("عرض القيود اليومية (يمكن إضافة واجهة متكاملة لاحقاً)")
+        entries = get_all_journal_entries()
+        if entries:
+            for entry_id, entry in entries.items():
+                with st.expander(f"📌 {entry['date']} - {entry['description']} {entry['reference']}"):
+                    details_df = pd.DataFrame(entry['details'])
+                    details_df['debit'] = details_df['debit'].apply(lambda x: f"{x:,.2f}" if x>0 else "")
+                    details_df['credit'] = details_df['credit'].apply(lambda x: f"{x:,.2f}" if x>0 else "")
+                    st.dataframe(details_df, use_container_width=True)
+        else:
+            st.info("✨ لا توجد قيود محاسبية مسجلة حتى الآن. قم بإجراء عمليات بيع أو شراء لتظهر هنا.")
 
+# ---------- الضريبة ----------
 elif menu == "💰 الضريبة (VAT)":
     st.markdown("<div class='section-title'>💰 إعدادات الضريبة</div>", unsafe_allow_html=True)
     conn = get_conn()
@@ -744,6 +820,7 @@ elif menu == "💰 الضريبة (VAT)":
         conn.close()
         st.success("تم الحفظ")
 
+# ---------- الأصول الثابتة ----------
 elif menu == "🏭 الأصول الثابتة":
     st.markdown("<div class='section-title'>🏭 الأصول الثابتة والإهلاك</div>", unsafe_allow_html=True)
     with st.form("add_asset"):
@@ -762,6 +839,7 @@ elif menu == "🏭 الأصول الثابتة":
     for a in assets:
         st.write(f"**{a['name']}** - التكلفة: {a['purchase_cost']} - القيمة الحالية: {a['current_value']}")
 
+# ---------- المستودعات ----------
 elif menu == "🏚️ المستودعات":
     st.markdown("<div class='section-title'>🏚️ إدارة المستودعات</div>", unsafe_allow_html=True)
     with st.form("add_wh"):
@@ -778,6 +856,7 @@ elif menu == "🏚️ المستودعات":
     for w in whs:
         st.write(f"**{w['name']}** - {w['location']}")
 
+# ---------- الموارد البشرية ----------
 elif menu == "👨‍💼 الموارد البشرية":
     st.markdown("<div class='section-title'>👨‍💼 الموظفون</div>", unsafe_allow_html=True)
     with st.form("add_emp"):
@@ -798,6 +877,7 @@ elif menu == "👨‍💼 الموارد البشرية":
     for e in emps:
         st.write(f"**{e['name']}** - {e['position']} - الراتب: {e['salary']}")
 
+# ---------- الإنتاج ----------
 elif menu == "🏭 الإنتاج (BOM)":
     st.markdown("<div class='section-title'>🏭 قوائم المكونات والإنتاج</div>", unsafe_allow_html=True)
     prods = get_all_products()
@@ -827,6 +907,7 @@ elif menu == "🏭 الإنتاج (BOM)":
     for o in orders:
         st.write(f"**{o['order_number']}** - {o['product_name']} - {o['quantity']} قطعة - الحالة: {o['status']}")
 
+# ---------- التقارير المتقدمة ----------
 elif menu == "📈 التقارير المتقدمة":
     st.markdown("<div class='section-title'>📈 التحليلات والتقارير المتقدمة</div>", unsafe_allow_html=True)
     advanced_report()
