@@ -51,16 +51,13 @@ def get_conn():
     return conn
 
 def upgrade_database():
-    """إضافة أعمدة جديدة للجداول الموجودة"""
     conn = get_conn()
     cursor = conn.cursor()
-    # إضافة أعمدة لجدول sales إذا لم تكن موجودة
     for col in ['vat_rate', 'vat_amount', 'returned_qty']:
         try:
             cursor.execute(f"ALTER TABLE sales ADD COLUMN {col} REAL DEFAULT 0")
         except:
             pass
-    # إضافة عمود vat_rate لجدول products
     try:
         cursor.execute("ALTER TABLE products ADD COLUMN vat_rate REAL DEFAULT 0.0")
     except:
@@ -72,7 +69,7 @@ def init_db():
     conn = get_conn()
     cursor = conn.cursor()
     
-    # جداول النظام الأساسية (مع IF NOT EXISTS)
+    # جداول النظام الأساسية
     cursor.execute('''CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
@@ -154,13 +151,11 @@ def init_db():
         debit REAL NOT NULL DEFAULT 0,
         credit REAL NOT NULL DEFAULT 0)''')
     
-    # جدول إعدادات الضريبة (تم إنشاؤه بشكل آمن)
     cursor.execute('''CREATE TABLE IF NOT EXISTS vat_settings (
         id INTEGER PRIMARY KEY,
         default_rate REAL DEFAULT 0.15,
         is_enabled INTEGER DEFAULT 1)''')
     
-    # إدراج البيانات الافتراضية فقط إذا كان الجدول فارغاً
     cursor.execute("SELECT COUNT(*) FROM vat_settings")
     if cursor.fetchone()[0] == 0:
         cursor.execute("INSERT INTO vat_settings (id, default_rate, is_enabled) VALUES (1, 0.15, 1)")
@@ -207,14 +202,12 @@ def init_db():
         status TEXT DEFAULT 'planned',
         created_at TEXT DEFAULT (datetime('now','localtime')))''')
     
-    # جدول المستخدمين (للصلاحيات)
     cursor.execute('''CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
         role TEXT NOT NULL)''')
     
-    # إضافة المستخدمين الافتراضيين إذا لم يوجد أي مستخدم
     cursor.execute("SELECT COUNT(*) FROM users")
     if cursor.fetchone()[0] == 0:
         admin_hash = hashlib.sha256("admin123".encode()).hexdigest()
@@ -230,7 +223,6 @@ def init_db():
     upgrade_database()
 
 def create_default_accounts():
-    """إنشاء الحسابات الافتراضية إذا لم تكن موجودة"""
     defaults = [(1, 'الصندوق', 'asset'), (2, 'العملاء', 'asset'),
                 (3, 'المخزون', 'asset'), (4, 'المبيعات', 'revenue'),
                 (5, 'الموردين', 'liability'), (6, 'رأس المال', 'equity'),
@@ -242,7 +234,6 @@ def create_default_accounts():
     conn.commit()
     conn.close()
 
-# تهيئة قاعدة البيانات (ستُنشأ فقط إذا لم تكن موجودة)
 init_db()
 
 # ============================================================
@@ -311,7 +302,7 @@ def generate_invoice_image(sale_id, customer_name, items, total):
     return img_bytes
 
 # ============================================================
-#                         الدوال الأساسية (مختصرة)
+#                         الدوال الأساسية
 # ============================================================
 def add_product(name, price, stock, vat_rate=0.0):
     conn = get_conn()
@@ -611,7 +602,6 @@ if not st.session_state.authenticated:
             st.error("بيانات غير صحيحة")
     st.stop()
 
-# الشريط الجانبي
 st.sidebar.markdown("<h2 style='text-align:center; color:white;'>🎭 المسرحية المحاسبية</h2>", unsafe_allow_html=True)
 st.sidebar.markdown(f"**مرحباً {st.session_state.role}**")
 st.sidebar.markdown("---")
@@ -620,14 +610,14 @@ menu_options = ["🏠 لوحة التحكم", "📦 المنتجات", "🛒 ا�
                 "📊 المحاسبة", "💰 الضريبة (VAT)", "🏭 الأصول الثابتة", "🏚️ المستودعات",
                 "👨‍💼 الموارد البشرية", "🏭 الإنتاج (BOM)", "📈 التقارير المتقدمة", "🔄 مرتجعات المبيعات", "⚙️ إعدادات النظام"]
 
-# تصفية القائمة حسب الصلاحيات
-allowed = []
 if st.session_state.role == 'admin':
     allowed = menu_options
 elif st.session_state.role == 'cashier':
     allowed = ["🏠 لوحة التحكم", "📦 المنتجات", "🛒 الكاشير", "📈 التقارير المتقدمة", "🔄 مرتجعات المبيعات"]
 elif st.session_state.role == 'accountant':
     allowed = ["🏠 لوحة التحكم", "👥 العملاء", "📦 الموردين", "📊 المحاسبة", "💰 الضريبة (VAT)", "🏭 الأصول الثابتة", "📈 التقارير المتقدمة"]
+else:
+    allowed = ["🏠 لوحة التحكم"]
 
 menu = st.sidebar.radio("القائمة الرئيسية", allowed)
 st.sidebar.markdown("---")
@@ -636,7 +626,7 @@ if st.sidebar.button("تسجيل الخروج"):
     st.rerun()
 st.sidebar.caption("© 2025 - جميع الحقوق محفوظة")
 
-# ========== الأقسام الرئيسية ==========
+# ========== الأقسام ==========
 if menu == "🏠 لوحة التحكم":
     st.markdown("<div class='section-title'>🏠 لوحة القيادة</div>", unsafe_allow_html=True)
     products = get_all_products()
@@ -767,39 +757,62 @@ elif menu == "👥 العملاء":
 
 elif menu == "📦 الموردين":
     st.markdown("<div class='section-title'>📦 الموردين والمشتريات</div>", unsafe_allow_html=True)
-    tab1, tab2 = st.tabs(["📋 الموردين", "➕ فاتورة شراء"])
+    tab1, tab2, tab3 = st.tabs(["➕ إضافة مورد", "📋 قائمة الموردين", "➕ فاتورة شراء"])
+    
     with tab1:
-        for s in get_all_suppliers():
-            st.write(f"**{s['name']}** - 📞 {s['phone']} - الرصيد: {s['balance']:.2f}")
+        with st.form("add_supplier_form"):
+            sup_name = st.text_input("اسم المورد")
+            sup_phone = st.text_input("رقم الجوال")
+            if st.form_submit_button("إضافة مورد"):
+                if sup_name.strip():
+                    add_supplier(sup_name, sup_phone)
+                    st.success(f"تم إضافة المورد {sup_name}")
+                    st.rerun()
+                else:
+                    st.error("الاسم مطلوب")
+    
     with tab2:
+        suppliers = get_all_suppliers()
+        if suppliers:
+            for s in suppliers:
+                st.write(f"**{s['name']}** - 📞 {s['phone']} - الرصيد: {s['balance']:.2f}")
+        else:
+            st.info("لا يوجد موردون حالياً. أضف مورداً من التبويب الأول.")
+    
+    with tab3:
         suppliers = get_all_suppliers()
         if suppliers:
             sup_map = {s['id']: s['name'] for s in suppliers}
             sup = st.selectbox("المورد", list(sup_map.keys()), format_func=lambda x: sup_map[x])
-            if 'purchase_items' not in st.session_state: st.session_state.purchase_items = []
+            if 'purchase_items' not in st.session_state:
+                st.session_state.purchase_items = []
             prods = get_all_products()
-            pnames = [p['name'] for p in prods]
-            col1, col2, col3 = st.columns(3)
-            with col1: pn = st.selectbox("المنتج", pnames)
-            with col2: qt = st.number_input("الكمية", min_value=1, step=1)
-            with col3: cost = st.number_input("سعر الشراء", min_value=0.01, step=0.01)
-            if st.button("➕ إضافة صنف"):
-                st.session_state.purchase_items.append({"product_name": pn, "qty": qt, "unit_cost": cost})
-                st.rerun()
-            if st.session_state.purchase_items:
-                tot = 0
-                for idx, it in enumerate(st.session_state.purchase_items):
-                    st.write(f"{it['product_name']} - {it['qty']} × {it['unit_cost']} = {it['qty']*it['unit_cost']}")
-                    if st.button(f"❌ حذف", key=f"del_{idx}"):
-                        st.session_state.purchase_items.pop(idx)
-                        st.rerun()
-                    tot += it['qty']*it['unit_cost']
-                st.metric("إجمالي الفاتورة", f"{tot:.2f}")
-                if st.button("💾 حفظ الفاتورة"):
-                    add_purchase(sup, st.session_state.purchase_items)
-                    st.session_state.purchase_items = []
+            if not prods:
+                st.warning("لا توجد منتجات لإضافتها. أضف منتجاً أولاً من قسم المنتجات.")
+            else:
+                pnames = [p['name'] for p in prods]
+                col1, col2, col3 = st.columns(3)
+                with col1: pn = st.selectbox("المنتج", pnames)
+                with col2: qt = st.number_input("الكمية", min_value=1, step=1)
+                with col3: cost = st.number_input("سعر الشراء", min_value=0.01, step=0.01)
+                if st.button("➕ إضافة صنف"):
+                    st.session_state.purchase_items.append({"product_name": pn, "qty": qt, "unit_cost": cost})
                     st.rerun()
-        else: st.warning("لا يوجد موردون")
+                if st.session_state.purchase_items:
+                    tot = 0
+                    for idx, it in enumerate(st.session_state.purchase_items):
+                        st.write(f"{it['product_name']} - {it['qty']} × {it['unit_cost']} = {it['qty']*it['unit_cost']}")
+                        if st.button(f"❌ حذف", key=f"del_{idx}"):
+                            st.session_state.purchase_items.pop(idx)
+                            st.rerun()
+                        tot += it['qty']*it['unit_cost']
+                    st.metric("إجمالي الفاتورة", f"{tot:.2f}")
+                    if st.button("💾 حفظ الفاتورة"):
+                        add_purchase(sup, st.session_state.purchase_items)
+                        st.session_state.purchase_items = []
+                        st.rerun()
+        else:
+            st.warning("لا يوجد موردون. أضف مورداً أولاً من التبويب الأول.")
 
 elif menu == "📊 المحاسبة":
     st.markdown("<div class='section-title'>📊 دليل الحسابات والقيود اليومية</div>", unsafe_allow_html=True)
