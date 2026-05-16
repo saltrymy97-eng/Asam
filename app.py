@@ -24,12 +24,6 @@ st.markdown("""
         background: linear-gradient(135deg, #f8f9fc 0%, #f0f2f6 100%);
     }
     
-    h1, h2, h3, .stMarkdown h1, .stMarkdown h2 {
-        color: #1a1a2e;
-        font-weight: 700;
-    }
-    
-    /* البطاقات */
     .metric-card {
         background: white;
         border-radius: 28px;
@@ -56,10 +50,8 @@ st.markdown("""
         color: #4a5568;
         font-weight: 600;
         margin: 0;
-        font-size: 1rem;
     }
     
-    /* الأزرار */
     .stButton > button {
         background: linear-gradient(135deg, #6a0dad, #8b5cf6);
         color: white;
@@ -69,15 +61,12 @@ st.markdown("""
         font-weight: 600;
         transition: all 0.3s ease;
         width: 100%;
-        font-size: 0.9rem;
     }
     .stButton > button:hover {
         transform: translateY(-2px);
         box-shadow: 0 10px 25px rgba(106, 13, 173, 0.3);
-        background: linear-gradient(135deg, #5a0c9e, #7c3aed);
     }
     
-    /* الشريط الجانبي */
     .css-1d391kg {
         background: linear-gradient(180deg, #0f0f1f, #1a1a2e);
         border-radius: 0 35px 35px 0;
@@ -85,35 +74,18 @@ st.markdown("""
     .css-1d391kg .stMarkdown, .css-1d391kg .stSelectbox label {
         color: #f0f0f0;
     }
-    .css-1d391kg .stSelectbox > div > div {
-        background-color: rgba(255,255,255,0.1);
-        border-radius: 30px;
-        color: white;
-    }
     
-    /* الجداول */
     .dataframe {
         border-radius: 20px;
         overflow: hidden;
         box-shadow: 0 8px 20px rgba(0,0,0,0.05);
-        border: none;
     }
     .dataframe th {
         background: linear-gradient(135deg, #6a0dad, #8b5cf6);
         color: white;
-        font-weight: 600;
         padding: 12px;
     }
-    .dataframe td {
-        padding: 10px;
-        border-bottom: 1px solid #e2e8f0;
-    }
     
-    /* التبويبات */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 10px;
-        background: transparent;
-    }
     .stTabs [data-baseweb="tab"] {
         background: white;
         border-radius: 40px;
@@ -121,16 +93,12 @@ st.markdown("""
         font-weight: 600;
         color: #4a5568;
         border: 1px solid #e2e8f0;
-        transition: 0.2s;
     }
     .stTabs [aria-selected="true"] {
         background: linear-gradient(135deg, #6a0dad, #8b5cf6);
         color: white;
-        border: none;
-        box-shadow: 0 4px 12px rgba(106,13,173,0.2);
     }
     
-    /* العناوين */
     .section-title {
         font-size: 2rem;
         font-weight: 700;
@@ -141,16 +109,6 @@ st.markdown("""
         display: inline-block;
     }
     
-    /* الكاردات الداخلية */
-    .info-card {
-        background: white;
-        border-radius: 25px;
-        padding: 18px;
-        margin: 10px 0;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.03);
-        border: 1px solid #e9edf2;
-    }
-    
     .footer {
         text-align: center;
         margin-top: 55px;
@@ -159,7 +117,6 @@ st.markdown("""
         border-radius: 50px;
         color: #4a5568;
         font-size: 0.85rem;
-        box-shadow: 0 -3px 15px rgba(0,0,0,0.02);
     }
     </style>
 """, unsafe_allow_html=True)
@@ -174,21 +131,20 @@ def get_conn():
     return conn
 
 def upgrade_database():
-    """تحديث قاعدة البيانات بإضافة الأعمدة الجديدة إذا لم تكن موجودة"""
     conn = get_conn()
     cursor = conn.cursor()
     try:
         cursor.execute("ALTER TABLE products ADD COLUMN vat_rate REAL DEFAULT 0.0")
-    except sqlite3.OperationalError:
-        pass
+    except: pass
     try:
         cursor.execute("ALTER TABLE sales ADD COLUMN vat_amount REAL DEFAULT 0")
-    except:
-        pass
+    except: pass
     try:
         cursor.execute("ALTER TABLE sales ADD COLUMN vat_rate REAL DEFAULT 0")
-    except:
-        pass
+    except: pass
+    try:
+        cursor.execute("ALTER TABLE sales ADD COLUMN returned_qty INTEGER DEFAULT 0")
+    except: pass
     conn.commit()
     conn.close()
 
@@ -196,7 +152,6 @@ def init_db():
     conn = get_conn()
     try:
         cursor = conn.cursor()
-        # الجداول الأساسية
         cursor.execute('''CREATE TABLE IF NOT EXISTS products (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE,
@@ -217,6 +172,7 @@ def init_db():
             total REAL NOT NULL,
             vat_amount REAL DEFAULT 0,
             vat_rate REAL DEFAULT 0,
+            returned_qty INTEGER DEFAULT 0,
             date_time TEXT NOT NULL DEFAULT (datetime('now','localtime')))''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS customers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -323,7 +279,8 @@ def init_db():
 def create_default_accounts():
     defaults = [(1, 'الصندوق', 'asset'), (2, 'العملاء', 'asset'),
                 (3, 'المخزون', 'asset'), (4, 'المبيعات', 'revenue'),
-                (5, 'الموردين', 'liability'), (6, 'رأس المال', 'equity')]
+                (5, 'الموردين', 'liability'), (6, 'رأس المال', 'equity'),
+                (7, 'مردودات المبيعات', 'revenue')]
     conn = get_conn()
     try:
         cursor = conn.cursor()
@@ -336,139 +293,122 @@ def create_default_accounts():
 init_db()
 
 # ============================================================
-#                         الدوال الأساسية
+#                         الدوال الأساسية (سابقة)
 # ============================================================
 
 def add_product(name, price, stock, vat_rate=0.0):
     conn = get_conn()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO products (name, price, stock, vat_rate) VALUES (?,?,?,?)", (name, price, stock, vat_rate))
-        conn.commit()
-        record_movement(name, stock, 'in', 'مخزون أولي')
-    finally:
-        conn.close()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO products (name, price, stock, vat_rate) VALUES (?,?,?,?)", (name, price, stock, vat_rate))
+    conn.commit()
+    record_movement(name, stock, 'in', 'مخزون أولي')
+    conn.close()
 
 def get_all_products():
     conn = get_conn()
+    cursor = conn.cursor()
     try:
-        cursor = conn.cursor()
-        try:
-            cursor.execute("SELECT id, name, price, stock, vat_rate FROM products ORDER BY name")
-        except sqlite3.OperationalError:
-            cursor.execute("SELECT id, name, price, stock FROM products ORDER BY name")
-            rows = cursor.fetchall()
-            return [dict(row, vat_rate=0.0) for row in rows]
-        else:
-            return [dict(row) for row in cursor.fetchall()]
-    finally:
+        cursor.execute("SELECT id, name, price, stock, vat_rate FROM products ORDER BY name")
+    except:
+        cursor.execute("SELECT id, name, price, stock FROM products ORDER BY name")
+        rows = cursor.fetchall()
         conn.close()
+        return [dict(row, vat_rate=0.0) for row in rows]
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 def delete_product(product_id):
     conn = get_conn()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM products WHERE id=?", (product_id,))
-        row = cursor.fetchone()
-        if row:
-            pname = row['name']
-            cursor.execute("DELETE FROM inventory_movements WHERE product_name=?", (pname,))
-            cursor.execute("DELETE FROM sales WHERE product_name=?", (pname,))
-            cursor.execute("DELETE FROM products WHERE id=?", (product_id,))
-            conn.commit()
-    finally:
-        conn.close()
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM products WHERE id=?", (product_id,))
+    row = cursor.fetchone()
+    if row:
+        pname = row['name']
+        cursor.execute("DELETE FROM inventory_movements WHERE product_name=?", (pname,))
+        cursor.execute("DELETE FROM sales WHERE product_name=?", (pname,))
+        cursor.execute("DELETE FROM products WHERE id=?", (product_id,))
+        conn.commit()
+    conn.close()
 
 def update_stock(product_name, qty_change, movement_type, notes=""):
     conn = get_conn()
-    try:
-        cursor = conn.cursor()
-        if movement_type == 'in':
-            cursor.execute("UPDATE products SET stock = stock + ? WHERE name=?", (qty_change, product_name))
-        else:
-            cursor.execute("UPDATE products SET stock = stock - ? WHERE name=?", (qty_change, product_name))
-        conn.commit()
-        record_movement(product_name, qty_change, movement_type, notes)
-    finally:
-        conn.close()
+    cursor = conn.cursor()
+    if movement_type == 'in':
+        cursor.execute("UPDATE products SET stock = stock + ? WHERE name=?", (qty_change, product_name))
+    else:
+        cursor.execute("UPDATE products SET stock = stock - ? WHERE name=?", (qty_change, product_name))
+    conn.commit()
+    record_movement(product_name, qty_change, movement_type, notes)
+    conn.close()
 
 def record_movement(product_name, qty, movement_type, notes=""):
     conn = get_conn()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO inventory_movements (product_name, qty, movement_type, notes) VALUES (?,?,?,?)", (product_name, qty, movement_type, notes))
-        conn.commit()
-    finally:
-        conn.close()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO inventory_movements (product_name, qty, movement_type, notes) VALUES (?,?,?,?)", (product_name, qty, movement_type, notes))
+    conn.commit()
+    conn.close()
 
 def add_sale(product_name, qty, total, vat_amount=0, vat_rate=0):
     conn = get_conn()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO sales (product_name, qty, total, vat_amount, vat_rate) VALUES (?,?,?,?,?)", (product_name, qty, total, vat_amount, vat_rate))
-        conn.commit()
-        return cursor.lastrowid
-    finally:
-        conn.close()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO sales (product_name, qty, total, vat_amount, vat_rate) VALUES (?,?,?,?,?)", (product_name, qty, total, vat_amount, vat_rate))
+    conn.commit()
+    sale_id = cursor.lastrowid
+    conn.close()
+    return sale_id
 
 def get_low_stock(threshold=5):
     conn = get_conn()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, name, price, stock FROM products WHERE stock <= ? ORDER BY stock", (threshold,))
-        return [dict(row) for row in cursor.fetchall()]
-    finally:
-        conn.close()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, price, stock FROM products WHERE stock <= ? ORDER BY stock", (threshold,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 def get_sales_summary():
     conn = get_conn()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) as total_sales, COALESCE(SUM(total),0) as total_revenue FROM sales")
-        row = cursor.fetchone()
-        return {'total_sales': row['total_sales'], 'total_revenue': row['total_revenue']}
-    finally:
-        conn.close()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) as total_sales, COALESCE(SUM(total),0) as total_revenue FROM sales")
+    row = cursor.fetchone()
+    conn.close()
+    return {'total_sales': row['total_sales'], 'total_revenue': row['total_revenue']}
 
 def add_customer(name, phone, address):
     conn = get_conn()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO customers (name, phone, address, balance) VALUES (?,?,?,0)", (name, phone, address))
-        conn.commit()
-    finally:
-        conn.close()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO customers (name, phone, address, balance) VALUES (?,?,?,0)", (name, phone, address))
+    conn.commit()
+    conn.close()
 
 def get_all_customers():
     conn = get_conn()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, name, phone, address, balance FROM customers ORDER BY name")
-        return [dict(row) for row in cursor.fetchall()]
-    finally:
-        conn.close()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, phone, address, balance FROM customers ORDER BY name")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 def get_customer_statement(customer_id):
     conn = get_conn()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT date, type, amount, notes FROM customer_transactions WHERE customer_id=? ORDER BY date DESC", (customer_id,))
-        return [dict(row) for row in cursor.fetchall()]
-    finally:
-        conn.close()
+    cursor = conn.cursor()
+    cursor.execute("SELECT date, type, amount, notes FROM customer_transactions WHERE customer_id=? ORDER BY date DESC", (customer_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 def add_customer_transaction(customer_id, type_, amount, reference_id=None, notes=""):
     conn = get_conn()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO customer_transactions (customer_id, type, amount, reference_id, notes) VALUES (?,?,?,?,?)", (customer_id, type_, amount, reference_id, notes))
-        if type_ == 'sale':
-            cursor.execute("UPDATE customers SET balance = balance + ? WHERE id=?", (amount, customer_id))
-        else:
-            cursor.execute("UPDATE customers SET balance = balance - ? WHERE id=?", (amount, customer_id))
-        conn.commit()
-    finally:
-        conn.close()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO customer_transactions (customer_id, type, amount, reference_id, notes) VALUES (?,?,?,?,?)", (customer_id, type_, amount, reference_id, notes))
+    if type_ == 'sale':
+        cursor.execute("UPDATE customers SET balance = balance + ? WHERE id=?", (amount, customer_id))
+    elif type_ == 'return':
+        cursor.execute("UPDATE customers SET balance = balance - ? WHERE id=?", (amount, customer_id))
+    else:
+        cursor.execute("UPDATE customers SET balance = balance - ? WHERE id=?", (amount, customer_id))
+    conn.commit()
+    conn.close()
 
 def receive_payment(customer_id, amount, notes=""):
     add_customer_transaction(customer_id, 'payment', amount, None, notes)
@@ -477,41 +417,36 @@ def receive_payment(customer_id, amount, notes=""):
 
 def add_supplier(name, phone):
     conn = get_conn()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO suppliers (name, phone, balance) VALUES (?,?,0)", (name, phone))
-        conn.commit()
-    finally:
-        conn.close()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO suppliers (name, phone, balance) VALUES (?,?,0)", (name, phone))
+    conn.commit()
+    conn.close()
 
 def get_all_suppliers():
     conn = get_conn()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, name, phone, balance FROM suppliers ORDER BY name")
-        return [dict(row) for row in cursor.fetchall()]
-    finally:
-        conn.close()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, phone, balance FROM suppliers ORDER BY name")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 def add_purchase(supplier_id, items):
     total = sum(item['qty'] * item['unit_cost'] for item in items)
     conn = get_conn()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO purchases (supplier_id, total) VALUES (?,?)", (supplier_id, total))
-        purchase_id = cursor.lastrowid
-        for item in items:
-            pname, qty, cost = item['product_name'], item['qty'], item['unit_cost']
-            cursor.execute("INSERT INTO purchase_items (purchase_id, product_name, qty, unit_cost) VALUES (?,?,?,?)", (purchase_id, pname, qty, cost))
-            cursor.execute("UPDATE products SET stock = stock + ? WHERE name=?", (qty, pname))
-            record_movement(pname, qty, 'in', f'شراء فاتورة {purchase_id}')
-        cursor.execute("UPDATE suppliers SET balance = balance + ? WHERE id=?", (total, supplier_id))
-        conn.commit()
-        post_entry(datetime.now().strftime('%Y-%m-%d %H:%M:%S'), f"فاتورة شراء رقم {purchase_id}", 'purchase', purchase_id,
-                   [{'account_id': 3, 'debit': total, 'credit': 0}, {'account_id': 5, 'debit': 0, 'credit': total}])
-        return purchase_id
-    finally:
-        conn.close()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO purchases (supplier_id, total) VALUES (?,?)", (supplier_id, total))
+    purchase_id = cursor.lastrowid
+    for item in items:
+        pname, qty, cost = item['product_name'], item['qty'], item['unit_cost']
+        cursor.execute("INSERT INTO purchase_items (purchase_id, product_name, qty, unit_cost) VALUES (?,?,?,?)", (purchase_id, pname, qty, cost))
+        cursor.execute("UPDATE products SET stock = stock + ? WHERE name=?", (qty, pname))
+        record_movement(pname, qty, 'in', f'شراء فاتورة {purchase_id}')
+    cursor.execute("UPDATE suppliers SET balance = balance + ? WHERE id=?", (total, supplier_id))
+    conn.commit()
+    post_entry(datetime.now().strftime('%Y-%m-%d %H:%M:%S'), f"فاتورة شراء رقم {purchase_id}", 'purchase', purchase_id,
+               [{'account_id': 3, 'debit': total, 'credit': 0}, {'account_id': 5, 'debit': 0, 'credit': total}])
+    conn.close()
+    return purchase_id
 
 def add_sale_with_customer(product_name, qty, total, vat_amount, vat_rate, customer_id=None):
     sale_id = add_sale(product_name, qty, total, vat_amount, vat_rate)
@@ -527,33 +462,29 @@ def add_sale_with_customer(product_name, qty, total, vat_amount, vat_rate, custo
 
 def post_entry(date, description, ref_type, ref_id, details):
     conn = get_conn()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO journal_entries (date, description, reference_type, reference_id) VALUES (?,?,?,?)", (date, description, ref_type, ref_id))
-        entry_id = cursor.lastrowid
-        for d in details:
-            cursor.execute("INSERT INTO journal_details (entry_id, account_id, debit, credit) VALUES (?,?,?,?)", (entry_id, d['account_id'], d['debit'], d['credit']))
-        conn.commit()
-    finally:
-        conn.close()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO journal_entries (date, description, reference_type, reference_id) VALUES (?,?,?,?)", (date, description, ref_type, ref_id))
+    entry_id = cursor.lastrowid
+    for d in details:
+        cursor.execute("INSERT INTO journal_details (entry_id, account_id, debit, credit) VALUES (?,?,?,?)", (entry_id, d['account_id'], d['debit'], d['credit']))
+    conn.commit()
+    conn.close()
 
 def get_account_balance(account_id):
     conn = get_conn()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT COALESCE(SUM(debit),0) - COALESCE(SUM(credit),0) FROM journal_details WHERE account_id=?", (account_id,))
-        return cursor.fetchone()[0]
-    finally:
-        conn.close()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COALESCE(SUM(debit),0) - COALESCE(SUM(credit),0) FROM journal_details WHERE account_id=?", (account_id,))
+    bal = cursor.fetchone()[0]
+    conn.close()
+    return bal
 
 def get_accounts_tree():
     conn = get_conn()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, code, name, type FROM accounts ORDER BY code")
-        return [dict(row) for row in cursor.fetchall()]
-    finally:
-        conn.close()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, code, name, type FROM accounts ORDER BY code")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 def get_all_journal_entries():
     conn = get_conn()
@@ -568,23 +499,12 @@ def get_all_journal_entries():
     """)
     rows = cursor.fetchall()
     conn.close()
-    
-    # تجميع القيود لعرضها بشكل أفضل
     entries = {}
     for row in rows:
         eid = row['id']
         if eid not in entries:
-            entries[eid] = {
-                'date': row['date'],
-                'description': row['description'],
-                'reference': f"{row['reference_type']} - {row['reference_id']}" if row['reference_id'] else '',
-                'details': []
-            }
-        entries[eid]['details'].append({
-            'account': row['account_name'],
-            'debit': row['debit'],
-            'credit': row['credit']
-        })
+            entries[eid] = {'date': row['date'], 'description': row['description'], 'reference': f"{row['reference_type']} - {row['reference_id']}" if row['reference_id'] else '', 'details': []}
+        entries[eid]['details'].append({'account': row['account_name'], 'debit': row['debit'], 'credit': row['credit']})
     return entries
 
 def advanced_report():
@@ -595,22 +515,116 @@ def advanced_report():
         sales_df['date'] = pd.to_datetime(sales_df['date_time']).dt.date
         daily = sales_df.groupby('date')['total'].sum().reset_index()
         fig = px.line(daily, x='date', y='total', title='المبيعات اليومية', markers=True, color_discrete_sequence=['#6a0dad'])
-        fig.update_layout(plot_bgcolor='white', title_font_color='#1a1a2e')
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("لا توجد بيانات مبيعات")
 
 # ============================================================
+#                         مرتجعات المبيعات
+# ============================================================
+
+def get_all_sales_invoices():
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT s.id, s.date_time, s.product_name, s.qty, s.total, s.returned_qty,
+               c.name as customer_name
+        FROM sales s
+        LEFT JOIN customer_transactions ct ON s.id = ct.reference_id AND ct.type='sale'
+        LEFT JOIN customers c ON ct.customer_id = c.id
+        ORDER BY s.date_time DESC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    invoices = {}
+    for row in rows:
+        inv_id = row['id']
+        if inv_id not in invoices:
+            invoices[inv_id] = {
+                'id': inv_id,
+                'date': row['date_time'],
+                'customer': row['customer_name'] or 'نقدي',
+                'items': []
+            }
+        invoices[inv_id]['items'].append({
+            'product': row['product_name'],
+            'qty': row['qty'],
+            'returned': row['returned_qty'],
+            'total': row['total']
+        })
+    return list(invoices.values())
+
+def process_return(sale_id, product_name, return_qty):
+    conn = get_conn()
+    try:
+        cursor = conn.cursor()
+        # جلب تفاصيل البيع
+        cursor.execute("SELECT qty, total, vat_amount, vat_rate FROM sales WHERE id=? AND product_name=?", (sale_id, product_name))
+        sale = cursor.fetchone()
+        if not sale:
+            raise ValueError("البيع غير موجود")
+        if return_qty <= 0:
+            raise ValueError("كمية المرتجع يجب أن تكون أكبر من صفر")
+        if return_qty > sale['qty']:
+            raise ValueError("كمية المرتجع أكبر من الكمية المباعة")
+        
+        # تحديث returned_qty في جدول sales
+        cursor.execute("UPDATE sales SET returned_qty = returned_qty + ? WHERE id=? AND product_name=?", (return_qty, sale_id, product_name))
+        
+        # حساب المبلغ المسترد (نسبة من إجمالي البيع)
+        refund_amount = (return_qty / sale['qty']) * sale['total']
+        
+        # إعادة الكمية إلى المخزون
+        cursor.execute("UPDATE products SET stock = stock + ? WHERE name=?", (return_qty, product_name))
+        record_movement(product_name, return_qty, 'return', f'مرتجع من فاتورة {sale_id}')
+        
+        # القيد المحاسبي العكسي
+        # التحقق إذا كان البيع آجل أم نقدي
+        cursor.execute("""
+            SELECT ct.customer_id FROM customer_transactions ct 
+            WHERE ct.reference_id=? AND ct.type='sale' LIMIT 1
+        """, (sale_id,))
+        cust_row = cursor.fetchone()
+        if cust_row:
+            # بيع آجل: تحديث رصيد العميل (نقصان)
+            cursor.execute("UPDATE customers SET balance = balance - ? WHERE id=?", (refund_amount, cust_row['customer_id']))
+            # تسجيل معاملة عكسية للعميل
+            cursor.execute("INSERT INTO customer_transactions (customer_id, type, amount, reference_id, notes) VALUES (?,?,?,?,?)",
+                           (cust_row['customer_id'], 'return', refund_amount, sale_id, f'مرتجع فاتورة {sale_id}'))
+            # قيد محاسبي: من ح/ مردودات المبيعات إلى ح/ العملاء
+            post_entry(datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                       f"مرتجع مبيعات من فاتورة {sale_id}",
+                       'sales_return', sale_id,
+                       [{'account_id': 7, 'debit': refund_amount, 'credit': 0},
+                        {'account_id': 2, 'debit': 0, 'credit': refund_amount}])
+        else:
+            # بيع نقدي: قيد من ح/ مردودات المبيعات إلى ح/ الصندوق
+            post_entry(datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                       f"مرتجع مبيعات نقدي من فاتورة {sale_id}",
+                       'sales_return', sale_id,
+                       [{'account_id': 7, 'debit': refund_amount, 'credit': 0},
+                        {'account_id': 1, 'debit': 0, 'credit': refund_amount}])
+        
+        conn.commit()
+        return refund_amount
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
+
+# ============================================================
 #                         واجهة المستخدم
 # ============================================================
 
-st.sidebar.markdown("<h2 style='text-align:center; color:white; margin-top:10px;'>🎭 المسرحية المحاسبية</h2>", unsafe_allow_html=True)
+st.sidebar.markdown("<h2 style='text-align:center; color:white;'>🎭 المسرحية المحاسبية</h2>", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 
-menu = st.sidebar.radio("القائمة الرئيسية",
-    ["🏠 لوحة التحكم", "📦 المنتجات", "🛒 الكاشير", "👥 العملاء", "📦 الموردين",
-     "📊 المحاسبة", "💰 الضريبة (VAT)", "🏭 الأصول الثابتة", "🏚️ المستودعات",
-     "👨‍💼 الموارد البشرية", "🏭 الإنتاج (BOM)", "📈 التقارير المتقدمة"])
+menu_options = ["🏠 لوحة التحكم", "📦 المنتجات", "🛒 الكاشير", "👥 العملاء", "📦 الموردين",
+                "📊 المحاسبة", "💰 الضريبة (VAT)", "🏭 الأصول الثابتة", "🏚️ المستودعات",
+                "👨‍💼 الموارد البشرية", "🏭 الإنتاج (BOM)", "📈 التقارير المتقدمة", "🔄 مرتجعات المبيعات"]
+
+menu = st.sidebar.radio("القائمة الرئيسية", menu_options)
 
 st.sidebar.markdown("---")
 st.sidebar.caption("© 2025 - جميع الحقوق محفوظة")
@@ -655,8 +669,6 @@ elif menu == "📦 المنتجات":
     products = get_all_products()
     if products:
         df = pd.DataFrame(products)
-        df['السعر'] = df['price'].apply(lambda x: f"{x:,.2f}")
-        df['الضريبة'] = df['vat_rate'].apply(lambda x: f"{x*100:.0f}%")
         st.dataframe(df[['name', 'price', 'stock', 'vat_rate']], use_container_width=True)
         for p in products:
             cols = st.columns([3,1,1])
@@ -731,6 +743,11 @@ elif menu == "👥 العملاء":
                 if st.button(f"📜 كشف حساب", key=f"stmt_{c['id']}"):
                     stmt = get_customer_statement(c['id'])
                     st.dataframe(stmt)
+                # إضافة زر تحصيل دفعة سريع
+                amt = st.number_input("مبلغ التحصيل", key=f"pay_{c['id']}", min_value=0.01, step=100.0)
+                if st.button(f"💰 تحصيل", key=f"rec_{c['id']}"):
+                    receive_payment(c['id'], amt, "تحصيل يدوي")
+                    st.rerun()
     with tab2:
         with st.form("add_cust"):
             name = st.text_input("الاسم")
@@ -779,7 +796,7 @@ elif menu == "📦 الموردين":
         else:
             st.warning("لا يوجد موردون")
 
-# ---------- المحاسبة (محسّنة) ----------
+# ---------- المحاسبة ----------
 elif menu == "📊 المحاسبة":
     st.markdown("<div class='section-title'>📊 دليل الحسابات والقيود اليومية</div>", unsafe_allow_html=True)
     tab1, tab2 = st.tabs(["📒 دليل الحسابات", "📜 القيود اليومية"])
@@ -791,21 +808,16 @@ elif menu == "📊 المحاسبة":
                 bal = get_account_balance(a['id'])
                 data.append({"الكود": a['code'], "اسم الحساب": a['name'], "النوع": a['type'], "الرصيد": f"{bal:,.2f}"})
             st.dataframe(pd.DataFrame(data), use_container_width=True)
-        else:
-            st.info("لا توجد حسابات")
     with tab2:
         entries = get_all_journal_entries()
         if entries:
-            for entry_id, entry in entries.items():
+            for entry in entries.values():
                 with st.expander(f"📌 {entry['date']} - {entry['description']} {entry['reference']}"):
-                    details_df = pd.DataFrame(entry['details'])
-                    details_df['debit'] = details_df['debit'].apply(lambda x: f"{x:,.2f}" if x>0 else "")
-                    details_df['credit'] = details_df['credit'].apply(lambda x: f"{x:,.2f}" if x>0 else "")
-                    st.dataframe(details_df, use_container_width=True)
+                    st.dataframe(pd.DataFrame(entry['details']), use_container_width=True)
         else:
-            st.info("✨ لا توجد قيود محاسبية مسجلة حتى الآن. قم بإجراء عمليات بيع أو شراء لتظهر هنا.")
+            st.info("لا توجد قيود محاسبية بعد")
 
-# ---------- الضريبة ----------
+# ---------- بقية الوحدات (اختصاراً) ----------
 elif menu == "💰 الضريبة (VAT)":
     st.markdown("<div class='section-title'>💰 إعدادات الضريبة</div>", unsafe_allow_html=True)
     conn = get_conn()
@@ -820,7 +832,6 @@ elif menu == "💰 الضريبة (VAT)":
         conn.close()
         st.success("تم الحفظ")
 
-# ---------- الأصول الثابتة ----------
 elif menu == "🏭 الأصول الثابتة":
     st.markdown("<div class='section-title'>🏭 الأصول الثابتة والإهلاك</div>", unsafe_allow_html=True)
     with st.form("add_asset"):
@@ -839,7 +850,6 @@ elif menu == "🏭 الأصول الثابتة":
     for a in assets:
         st.write(f"**{a['name']}** - التكلفة: {a['purchase_cost']} - القيمة الحالية: {a['current_value']}")
 
-# ---------- المستودعات ----------
 elif menu == "🏚️ المستودعات":
     st.markdown("<div class='section-title'>🏚️ إدارة المستودعات</div>", unsafe_allow_html=True)
     with st.form("add_wh"):
@@ -856,7 +866,6 @@ elif menu == "🏚️ المستودعات":
     for w in whs:
         st.write(f"**{w['name']}** - {w['location']}")
 
-# ---------- الموارد البشرية ----------
 elif menu == "👨‍💼 الموارد البشرية":
     st.markdown("<div class='section-title'>👨‍💼 الموظفون</div>", unsafe_allow_html=True)
     with st.form("add_emp"):
@@ -877,7 +886,6 @@ elif menu == "👨‍💼 الموارد البشرية":
     for e in emps:
         st.write(f"**{e['name']}** - {e['position']} - الراتب: {e['salary']}")
 
-# ---------- الإنتاج ----------
 elif menu == "🏭 الإنتاج (BOM)":
     st.markdown("<div class='section-title'>🏭 قوائم المكونات والإنتاج</div>", unsafe_allow_html=True)
     prods = get_all_products()
@@ -907,10 +915,44 @@ elif menu == "🏭 الإنتاج (BOM)":
     for o in orders:
         st.write(f"**{o['order_number']}** - {o['product_name']} - {o['quantity']} قطعة - الحالة: {o['status']}")
 
-# ---------- التقارير المتقدمة ----------
 elif menu == "📈 التقارير المتقدمة":
     st.markdown("<div class='section-title'>📈 التحليلات والتقارير المتقدمة</div>", unsafe_allow_html=True)
     advanced_report()
+
+# ---------- مرتجعات المبيعات ----------
+elif menu == "🔄 مرتجعات المبيعات":
+    st.markdown("<div class='section-title'>🔄 مرتجعات المبيعات</div>", unsafe_allow_html=True)
+    invoices = get_all_sales_invoices()
+    if not invoices:
+        st.info("لا توجد فواتير بيع مسجلة بعد")
+    else:
+        invoice_options = {inv['id']: f"{inv['date']} - {inv['customer']} ({len(inv['items'])} منتج)" for inv in invoices}
+        selected_inv_id = st.selectbox("اختر فاتورة البيع", list(invoice_options.keys()), format_func=lambda x: invoice_options[x])
+        selected_inv = next((inv for inv in invoices if inv['id'] == selected_inv_id), None)
+        if selected_inv:
+            st.subheader("تفاصيل الفاتورة")
+            for item in selected_inv['items']:
+                st.write(f"**{item['product']}** - الكمية المباعة: {item['qty']} - المرتجع سابقاً: {item.get('returned',0)} - الإجمالي: {item['total']:.2f}")
+            
+            # اختيار منتج للمرتجع
+            product_names = [item['product'] for item in selected_inv['items'] if item['qty'] > item.get('returned',0)]
+            if not product_names:
+                st.warning("جميع منتجات هذه الفاتورة تم استردادها بالكامل")
+            else:
+                selected_product = st.selectbox("المنتج المراد استرداده", product_names)
+                # جلب تفاصيل المنتج
+                item_info = next((it for it in selected_inv['items'] if it['product'] == selected_product), None)
+                if item_info:
+                    remaining_qty = item_info['qty'] - item_info.get('returned',0)
+                    st.write(f"الكمية المتبقية القابلة للاسترداد: {remaining_qty}")
+                    return_qty = st.number_input("كمية المرتجع", min_value=1, max_value=remaining_qty, step=1)
+                    if st.button("تنفيذ المرتجع"):
+                        try:
+                            refund = process_return(selected_inv_id, selected_product, return_qty)
+                            st.success(f"تم استرداد {return_qty} من {selected_product} بنجاح. المبلغ المسترد: {refund:.2f}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"خطأ: {e}")
 
 # ============================================================
 #                         تذييل الصفحة
