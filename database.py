@@ -11,6 +11,44 @@ def get_conn():
     conn.row_factory = sqlite3.Row
     return conn
 
+def upgrade_database():
+    """تحديث هيكل قاعدة البيانات القديمة إلى الهيكل الجديد"""
+    conn = get_conn()
+    cursor = conn.cursor()
+    
+    # إضافة أعمدة مفقودة في جدول inventory_movements
+    try:
+        cursor.execute("ALTER TABLE inventory_movements ADD COLUMN movement_type TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE inventory_movements ADD COLUMN notes TEXT")
+    except sqlite3.OperationalError:
+        pass
+    
+    # إضافة أعمدة مفقودة في جدول sales
+    try:
+        cursor.execute("ALTER TABLE sales ADD COLUMN vat_amount REAL DEFAULT 0")
+    except:
+        pass
+    try:
+        cursor.execute("ALTER TABLE sales ADD COLUMN vat_rate REAL DEFAULT 0")
+    except:
+        pass
+    try:
+        cursor.execute("ALTER TABLE sales ADD COLUMN returned_qty INTEGER DEFAULT 0")
+    except:
+        pass
+    
+    # إضافة عمود vat_rate في products إذا لم يكن موجوداً
+    try:
+        cursor.execute("ALTER TABLE products ADD COLUMN vat_rate REAL DEFAULT 0.0")
+    except:
+        pass
+    
+    conn.commit()
+    conn.close()
+
 def init_db():
     conn = get_conn()
     cursor = conn.cursor()
@@ -229,7 +267,8 @@ def update_stock(product_name, qty_change, movement_type, notes=""):
 def record_movement(product_name, qty, movement_type, notes=""):
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO inventory_movements (product_name, qty, movement_type, notes) VALUES (?,?,?,?)", (product_name, qty, movement_type, notes))
+    cursor.execute("INSERT INTO inventory_movements (product_name, qty, movement_type, notes) VALUES (?,?,?,?)",
+                   (product_name, qty, movement_type, notes))
     conn.commit()
     conn.close()
 
@@ -279,7 +318,8 @@ def get_customer_statement(customer_id):
 def add_customer_transaction(customer_id, type_, amount, reference_id=None, notes=""):
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO customer_transactions (customer_id, type, amount, reference_id, notes) VALUES (?,?,?,?,?)", (customer_id, type_, amount, reference_id, notes))
+    cursor.execute("INSERT INTO customer_transactions (customer_id, type, amount, reference_id, notes) VALUES (?,?,?,?,?)",
+                   (customer_id, type_, amount, reference_id, notes))
     if type_ == 'sale':
         cursor.execute("UPDATE customers SET balance = balance + ? WHERE id=?", (amount, customer_id))
     else:
@@ -319,7 +359,11 @@ def add_purchase(supplier_id, items):
     purchase_id = cursor.lastrowid
     for item in items:
         pname, qty, cost = item['product_name'], item['qty'], item['unit_cost']
-        cursor.execute("INSERT INTO purchase_items (purchase_id, product_name, qty, unit_cost) VALUES (?,?,?,?)", (purchase_id, pname, qty, cost))
+        cursor.execute("SELECT name FROM products WHERE name=?", (pname,))
+        if cursor.fetchone() is None:
+            raise ValueError(f"Product '{pname}' not found")
+        cursor.execute("INSERT INTO purchase_items (purchase_id, product_name, qty, unit_cost) VALUES (?,?,?,?)",
+                       (purchase_id, pname, qty, cost))
         cursor.execute("UPDATE products SET stock = stock + ? WHERE name=?", (qty, pname))
         record_movement(pname, qty, 'in', f'شراء فاتورة {purchase_id}')
     cursor.execute("UPDATE suppliers SET balance = balance + ? WHERE id=?", (total, supplier_id))
@@ -330,12 +374,20 @@ def add_purchase(supplier_id, items):
     return purchase_id
 
 def pay_supplier(supplier_id, amount, notes=""):
+    if amount <= 0:
+        raise ValueError("Amount must be positive")
     conn = get_conn()
     cursor = conn.cursor()
+    cursor.execute("SELECT id, balance FROM suppliers WHERE id=?", (supplier_id,))
+    row = cursor.fetchone()
+    if row is None:
+        raise ValueError("Supplier not found")
+    if amount > row['balance']:
+        raise ValueError("المبلغ أكبر من الرصيد")
     cursor.execute("UPDATE suppliers SET balance = balance - ? WHERE id=?", (amount, supplier_id))
     conn.commit()
     conn.close()
-    post_entry(datetime.now().strftime('%Y-%m-%d %H:%M:%S'), f"دفع للمورد {supplier_id}", 'supplier_payment', supplier_id,
+    post_entry(datetime.now().strftime('%Y-%m-%d %H:%M:%S'), f"دفع للمورد {supplier_id} - {notes}", 'supplier_payment', supplier_id,
                [{'account_id': 5, 'debit': amount, 'credit': 0}, {'account_id': 1, 'debit': 0, 'credit': amount}])
 
 # ============================================================
@@ -345,7 +397,8 @@ def pay_supplier(supplier_id, amount, notes=""):
 def add_sale(product_name, qty, total, vat_amount=0, vat_rate=0):
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO sales (product_name, qty, total, vat_amount, vat_rate) VALUES (?,?,?,?,?)", (product_name, qty, total, vat_amount, vat_rate))
+    cursor.execute("INSERT INTO sales (product_name, qty, total, vat_amount, vat_rate) VALUES (?,?,?,?,?)",
+                   (product_name, qty, total, vat_amount, vat_rate))
     conn.commit()
     sale_id = cursor.lastrowid
     conn.close()
@@ -364,12 +417,20 @@ def add_sale_with_customer(product_name, qty, total, vat_amount, vat_rate, custo
     return sale_id
 
 def post_entry(date, description, ref_type, ref_id, details):
+    if not details:
+        raise ValueError("تفاصيل مطلوبة")
+    total_debit = sum(d['debit'] for d in details)
+    total_credit = sum(d['credit'] for d in details)
+    if abs(total_debit - total_credit) > 0.001:
+        raise ValueError("القيد غير متوازن")
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO journal_entries (date, description, reference_type, reference_id) VALUES (?,?,?,?)", (date, description, ref_type, ref_id))
+    cursor.execute("INSERT INTO journal_entries (date, description, reference_type, reference_id) VALUES (?,?,?,?)",
+                   (date, description, ref_type, ref_id))
     entry_id = cursor.lastrowid
     for d in details:
-        cursor.execute("INSERT INTO journal_details (entry_id, account_id, debit, credit) VALUES (?,?,?,?)", (entry_id, d['account_id'], d['debit'], d['credit']))
+        cursor.execute("INSERT INTO journal_details (entry_id, account_id, debit, credit) VALUES (?,?,?,?)",
+                       (entry_id, d['account_id'], d['debit'], d['credit']))
     conn.commit()
     conn.close()
 
@@ -406,7 +467,9 @@ def get_all_journal_entries():
     for row in rows:
         eid = row['id']
         if eid not in entries:
-            entries[eid] = {'date': row['date'], 'description': row['description'], 'reference': f"{row['reference_type']} - {row['reference_id']}" if row['reference_id'] else '', 'details': []}
+            entries[eid] = {'date': row['date'], 'description': row['description'],
+                           'reference': f"{row['reference_type']} - {row['reference_id']}" if row['reference_id'] else '',
+                           'details': []}
         entries[eid]['details'].append({'account': row['account_name'], 'debit': row['debit'], 'credit': row['credit']})
     return entries
 
@@ -448,7 +511,8 @@ def get_all_sales_invoices():
         inv_id = row['id']
         if inv_id not in invoices:
             invoices[inv_id] = {'id': inv_id, 'date': row['date_time'], 'customer': row['customer_name'] or 'نقدي', 'items': []}
-        invoices[inv_id]['items'].append({'product': row['product_name'], 'qty': row['qty'], 'returned': row['returned_qty'] or 0, 'total': row['total']})
+        invoices[inv_id]['items'].append({'product': row['product_name'], 'qty': row['qty'],
+                                         'returned': row['returned_qty'] or 0, 'total': row['total']})
     return list(invoices.values())
 
 def process_return(sale_id, product_name, return_qty):
