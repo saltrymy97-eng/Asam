@@ -1,5 +1,7 @@
 import streamlit as st
 from datetime import date, datetime
+import os  # للتعامل مع الملفات
+
 from database import init_db, get_all_products, get_all_customers, get_all_suppliers, get_low_stock, get_sales_summary
 from database import add_product, delete_product, update_stock
 from database import add_customer, get_customer_statement, receive_payment
@@ -10,7 +12,12 @@ from database import get_vat_settings, update_vat_settings
 from database import get_all_sales_invoices, process_return, get_conn
 from auth import authenticate
 
-# ========== دالة ترقية مدمجة (آمنة حتى لو كانت الدالة غير موجودة في database.py) ==========
+# ========== حذف قاعدة البيانات القديمة لضمان هيكل سليم ==========
+if os.path.exists('erp.db'):
+    os.remove('erp.db')
+    # بعد الحذف، سينشئ init_db() قاعدة بيانات جديدة بالهيكل الحديث
+
+# ========== دالة ترقية مدمجة (آمنة) ==========
 def safe_upgrade():
     """تحديث هيكل الجداول القديمة إلى الجديد"""
     conn = get_conn()
@@ -38,7 +45,7 @@ safe_upgrade()
 
 st.set_page_config(page_title="المتكامل - نظام ERP", page_icon="🎭", layout="wide")
 
-# ========== CSS الاحترافي (تم تعديله لإزالة المستطيل الأبيض في شاشة الدخول) ==========
+# ========== CSS الاحترافي (إزالة المستطيل الأبيض) ==========
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap');
@@ -55,7 +62,7 @@ st.markdown("""
     .section-title { font-size: 1.8rem; font-weight: 700; margin-bottom: 30px; border-right: 5px solid #6a0dad; padding-right: 20px; color: #1e293b; }
     .footer { text-align: center; margin-top: 55px; padding: 20px; background: white; border-radius: 50px; color: #64748b; }
 
-    /* === إزالة المستطيل الأبيض في شاشة الدخول === */
+    /* شاشة الدخول بدون مستطيل أبيض */
     .login-container {
         background: rgba(15, 23, 42, 0.7);
         backdrop-filter: blur(15px);
@@ -67,7 +74,6 @@ st.markdown("""
     }
     .login-container h1 { color: white; margin-bottom: 10px; }
     .login-container p { color: #a5b4fc; margin-bottom: 25px; }
-    /* جعل حقول الإدخال داخل شاشة الدخول شفافة */
     .login-container div[data-baseweb="input"] input {
         background-color: rgba(255,255,255,0.1) !important;
         border: 1px solid rgba(255,255,255,0.3) !important;
@@ -75,9 +81,7 @@ st.markdown("""
         border-radius: 15px !important;
         padding: 10px 15px !important;
     }
-    .login-container label {
-        color: #cbd5e0 !important;
-    }
+    .login-container label { color: #cbd5e0 !important; }
     .login-container .stButton>button {
         background: linear-gradient(135deg, #8b5cf6, #6a0dad);
         margin-top: 20px;
@@ -91,7 +95,6 @@ if "authenticated" not in st.session_state:
     st.session_state.role = None
 
 if not st.session_state.authenticated:
-    # شاشة الدخول المحسّنة بدون مستطيل أبيض
     st.markdown("<div style='display: flex; justify-content: center; align-items: center; min-height: 80vh;'>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -350,6 +353,7 @@ elif menu == "📦 الموردين":
                     if st.button("💾 حفظ الفاتورة"):
                         add_purchase(sup, st.session_state.purchase_items)
                         st.session_state.purchase_items = []
+                        st.success("تم حفظ فاتورة الشراء بنجاح")
                         st.rerun()
             else:
                 st.warning("لا توجد منتجات لإضافتها")
@@ -389,7 +393,7 @@ elif menu == "💰 الضريبة (VAT)":
         update_vat_settings(rate, enabled)
         st.rerun()
 
-# ============================== الأصول الثابتة (تعمل بالكامل) ==============================
+# ============================== الأصول الثابتة ==============================
 elif menu == "🏭 الأصول الثابتة":
     st.markdown("<div class='section-title'>🏭 الأصول الثابتة والإهلاك</div>", unsafe_allow_html=True)
     
@@ -445,7 +449,7 @@ elif menu == "🏭 الأصول الثابتة":
         else:
             st.info("لا توجد أصول ثابتة مضافة")
 
-# ============================== المستودعات (تعمل بالكامل) ==============================
+# ============================== المستودعات ==============================
 elif menu == "🏚️ المستودعات":
     st.markdown("<div class='section-title'>🏚️ إدارة المستودعات المتعددة</div>", unsafe_allow_html=True)
     
@@ -493,7 +497,6 @@ elif menu == "🏚️ المستودعات":
         finally:
             conn.close()
     
-    # إنشاء الجداول إذا لم تكن موجودة
     conn = get_conn()
     conn.execute("CREATE TABLE IF NOT EXISTS warehouse_stock (id INTEGER PRIMARY KEY AUTOINCREMENT, warehouse_id INTEGER, product_name TEXT, stock INTEGER DEFAULT 0, UNIQUE(warehouse_id, product_name))")
     conn.execute("CREATE TABLE IF NOT EXISTS warehouse_transfers (id INTEGER PRIMARY KEY AUTOINCREMENT, from_warehouse_id INTEGER, to_warehouse_id INTEGER, product_name TEXT, qty INTEGER, transfer_date TEXT DEFAULT CURRENT_TIMESTAMP, notes TEXT)")
@@ -553,7 +556,7 @@ elif menu == "🏚️ المستودعات":
         else:
             st.warning("يلزم وجود مستودعين على الأقل لإجراء نقل")
 
-# ============================== الموارد البشرية (تعمل بالكامل) ==============================
+# ============================== الموارد البشرية ==============================
 elif menu == "👨‍💼 الموارد البشرية":
     st.markdown("<div class='section-title'>👨‍💼 إدارة الموظفين</div>", unsafe_allow_html=True)
     
@@ -608,7 +611,7 @@ elif menu == "👨‍💼 الموارد البشرية":
         else:
             st.info("لا يوجد موظفون. أضف موظفاً أولاً.")
 
-# ============================== الإنتاج (BOM) (تعمل بالكامل) ==============================
+# ============================== الإنتاج (BOM) ==============================
 elif menu == "🏭 الإنتاج (BOM)":
     st.markdown("<div class='section-title'>🏭 قوائم المكونات (BOM) وأوامر الإنتاج</div>", unsafe_allow_html=True)
     
@@ -667,7 +670,6 @@ elif menu == "🏭 الإنتاج (BOM)":
             update_production_order_status(order_id, 'completed', date.today().isoformat())
         conn.close()
     
-    # إنشاء الجداول إذا لم تكن موجودة
     conn = get_conn()
     conn.execute("CREATE TABLE IF NOT EXISTS bom (id INTEGER PRIMARY KEY AUTOINCREMENT, product_name TEXT, component_name TEXT, quantity REAL)")
     conn.execute("CREATE TABLE IF NOT EXISTS production_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, order_number TEXT, product_name TEXT, quantity INTEGER, status TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, completion_date TEXT, start_date TEXT)")
