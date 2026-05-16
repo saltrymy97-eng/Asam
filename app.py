@@ -38,7 +38,7 @@ safe_upgrade()
 
 st.set_page_config(page_title="المتكامل - نظام ERP", page_icon="🎭", layout="wide")
 
-# ========== CSS الاحترافي (مختصر للاختصار) ==========
+# ========== CSS الاحترافي (تم تعديله لإزالة المستطيل الأبيض في شاشة الدخول) ==========
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap');
@@ -54,6 +54,34 @@ st.markdown("""
     .stTabs [aria-selected="true"] { background: linear-gradient(135deg, #6a0dad, #8b5cf6); color: white; }
     .section-title { font-size: 1.8rem; font-weight: 700; margin-bottom: 30px; border-right: 5px solid #6a0dad; padding-right: 20px; color: #1e293b; }
     .footer { text-align: center; margin-top: 55px; padding: 20px; background: white; border-radius: 50px; color: #64748b; }
+
+    /* === إزالة المستطيل الأبيض في شاشة الدخول === */
+    .login-container {
+        background: rgba(15, 23, 42, 0.7);
+        backdrop-filter: blur(15px);
+        padding: 40px 30px;
+        border-radius: 40px;
+        box-shadow: 0 15px 35px rgba(0,0,0,0.3);
+        border: 1px solid rgba(255,255,255,0.15);
+        text-align: center;
+    }
+    .login-container h1 { color: white; margin-bottom: 10px; }
+    .login-container p { color: #a5b4fc; margin-bottom: 25px; }
+    /* جعل حقول الإدخال داخل شاشة الدخول شفافة */
+    .login-container div[data-baseweb="input"] input {
+        background-color: rgba(255,255,255,0.1) !important;
+        border: 1px solid rgba(255,255,255,0.3) !important;
+        color: white !important;
+        border-radius: 15px !important;
+        padding: 10px 15px !important;
+    }
+    .login-container label {
+        color: #cbd5e0 !important;
+    }
+    .login-container .stButton>button {
+        background: linear-gradient(135deg, #8b5cf6, #6a0dad);
+        margin-top: 20px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -63,23 +91,28 @@ if "authenticated" not in st.session_state:
     st.session_state.role = None
 
 if not st.session_state.authenticated:
-    st.markdown("<div style='text-align: center; margin-top: 15vh;'><h1>🎭 المتكامل</h1><p style='margin-bottom: 30px;'>نظام ERP متكامل</p></div>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns([1,2,1])
+    # شاشة الدخول المحسّنة بدون مستطيل أبيض
+    st.markdown("<div style='display: flex; justify-content: center; align-items: center; min-height: 80vh;'>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        with st.container():
-            st.markdown("<div style='background: white; padding: 30px; border-radius: 30px; box-shadow: 0 8px 25px rgba(0,0,0,0.1);'>", unsafe_allow_html=True)
-            username = st.text_input("👤 اسم المستخدم")
-            password = st.text_input("🔒 كلمة المرور", type="password")
-            if st.button("🚪 دخول", use_container_width=True):
-                role = authenticate(username, password)
-                if role:
-                    st.session_state.authenticated = True
-                    st.session_state.role = role
-                    st.session_state.username = username
-                    st.rerun()
-                else:
-                    st.error("❌ بيانات غير صحيحة")
-            st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("""
+        <div class='login-container'>
+            <h1>🎭 المتكامل</h1>
+            <p>نظام ERP متكامل</p>
+        """, unsafe_allow_html=True)
+        username = st.text_input("👤 اسم المستخدم")
+        password = st.text_input("🔒 كلمة المرور", type="password")
+        if st.button("🚪 دخول", use_container_width=True):
+            role = authenticate(username, password)
+            if role:
+                st.session_state.authenticated = True
+                st.session_state.role = role
+                st.session_state.username = username
+                st.rerun()
+            else:
+                st.error("❌ بيانات غير صحيحة")
+        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
 with st.sidebar:
@@ -116,7 +149,7 @@ with st.sidebar:
     if st.button("🚪 تسجيل الخروج", use_container_width=True):
         st.session_state.authenticated = False
         st.rerun()
-    st.caption("© 2025 - جميع الحقوق محفوظة")
+    st.caption("© 2026 - جميع الحقوق محفوظة")
 
 # ============================== لوحة التحكم ==============================
 if menu == "🏠 لوحة التحكم":
