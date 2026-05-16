@@ -287,12 +287,24 @@ def _get_default_warehouse_id():
         raise RuntimeError("لا يوجد أي مستودع في النظام. يجب إضافة مستودع أولاً.")
     return wh['id']
 
-# ========== الدالة الصحيحة لتسجيل حركة المخزون ==========
+# ========== الدالة الذكية لتسجيل حركة المخزون (تُصلح نفسها تلقائياً) ==========
 def record_movement(product_name, qty, movement_type, notes="", warehouse_id=None):
     conn = get_conn()
     cursor = conn.cursor()
+    # تأكد من وجود عمود notes (في حالة قواعد البيانات القديمة جداً)
+    try:
+        cursor.execute("ALTER TABLE inventory_movements ADD COLUMN notes TEXT")
+    except:
+        pass
+    # تأكد من وجود عمود warehouse_id
+    try:
+        cursor.execute("ALTER TABLE inventory_movements ADD COLUMN warehouse_id INTEGER REFERENCES warehouses(id)")
+    except:
+        pass
+
     if warehouse_id is None:
         warehouse_id = _get_default_warehouse_id()
+
     cursor.execute("INSERT INTO inventory_movements (product_name, qty, movement_type, notes, warehouse_id) VALUES (?,?,?,?,?)",
                    (product_name, qty, movement_type, notes, warehouse_id))
     conn.commit()
@@ -416,7 +428,7 @@ def add_purchase(supplier_id, items):
         cursor.execute("INSERT INTO purchase_items (purchase_id, product_name, qty, unit_cost) VALUES (?,?,?,?)",
                        (purchase_id, pname, qty, cost))
         cursor.execute("UPDATE products SET stock = stock + ? WHERE name=?", (qty, pname))
-        # تسجيل الحركة مع المستودع
+        # تسجيل الحركة مع المستودع (ستضيف الأعمدة تلقائياً إن لزم)
         record_movement(pname, qty, 'in', f'شراء فاتورة {purchase_id}', warehouse_id)
     cursor.execute("UPDATE suppliers SET balance = balance + ? WHERE id=?", (total, supplier_id))
     conn.commit()
