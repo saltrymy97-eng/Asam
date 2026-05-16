@@ -16,40 +16,24 @@ def get_conn():
 # ============================================================
 
 def upgrade_database():
-    """تحديث هيكل الجداول القديمة إلى الهيكل الجديد (آمن للتشغيل عدة مرات)"""
+    """تحديث هيكل الجداول القديمة إلى الجديد (آمن للتشغيل عدة مرات)"""
     conn = get_conn()
     cursor = conn.cursor()
     
-    # إضافة أعمدة مفقودة في جدول inventory_movements
-    try:
-        cursor.execute("ALTER TABLE inventory_movements ADD COLUMN movement_type TEXT")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        cursor.execute("ALTER TABLE inventory_movements ADD COLUMN notes TEXT")
-    except sqlite3.OperationalError:
-        pass
-    
-    # إضافة أعمدة مفقودة في جدول sales
-    try:
-        cursor.execute("ALTER TABLE sales ADD COLUMN vat_amount REAL DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        cursor.execute("ALTER TABLE sales ADD COLUMN vat_rate REAL DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        cursor.execute("ALTER TABLE sales ADD COLUMN returned_qty INTEGER DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-    
-    # إضافة عمود vat_rate في products إذا لم يكن موجوداً
+    for col in ['movement_type', 'notes']:
+        try:
+            cursor.execute(f"ALTER TABLE inventory_movements ADD COLUMN {col} TEXT")
+        except:
+            pass
+    for col in ['vat_amount', 'vat_rate', 'returned_qty']:
+        try:
+            cursor.execute(f"ALTER TABLE sales ADD COLUMN {col} REAL DEFAULT 0")
+        except:
+            pass
     try:
         cursor.execute("ALTER TABLE products ADD COLUMN vat_rate REAL DEFAULT 0.0")
-    except sqlite3.OperationalError:
+    except:
         pass
-    
     conn.commit()
     conn.close()
 
@@ -61,7 +45,6 @@ def init_db():
     conn = get_conn()
     cursor = conn.cursor()
     
-    # جداول النظام
     cursor.execute('''CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
@@ -200,7 +183,6 @@ def init_db():
         password_hash TEXT NOT NULL,
         role TEXT NOT NULL)''')
     
-    # إضافة المستخدم الافتراضي إذا لم يوجد أي مستخدم
     cursor.execute("SELECT COUNT(*) FROM users")
     if cursor.fetchone()[0] == 0:
         admin_hash = hashlib.sha256("admin123".encode()).hexdigest()
@@ -284,6 +266,7 @@ def update_stock(product_name, qty_change, movement_type, notes=""):
     record_movement(product_name, qty_change, movement_type, notes)
     conn.close()
 
+# ========== الدالة الصحيحة لتسجيل حركة المخزون ==========
 def record_movement(product_name, qty, movement_type, notes=""):
     conn = get_conn()
     cursor = conn.cursor()
@@ -447,8 +430,9 @@ def add_sale(product_name, qty, total, vat_amount=0, vat_rate=0):
     cursor.execute("INSERT INTO sales (product_name, qty, total, vat_amount, vat_rate) VALUES (?,?,?,?,?)",
                    (product_name, qty, total, vat_amount, vat_rate))
     conn.commit()
-    return cursor.lastrowid
+    sale_id = cursor.lastrowid
     conn.close()
+    return sale_id
 
 def add_sale_with_customer(product_name, qty, total, vat_amount, vat_rate, customer_id=None):
     sale_id = add_sale(product_name, qty, total, vat_amount, vat_rate)
