@@ -1,3 +1,7 @@
 streamlit
 pandas
-matplotlib
+plotly
+sqlalchemy
+bcrypt
+streamlit-option-menu
+openpyxl
