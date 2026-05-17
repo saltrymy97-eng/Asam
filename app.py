@@ -1,7 +1,12 @@
 import streamlit as st
 from streamlit_option_menu import option_menu
+import database
 
-# استيراد الوحدات مباشرة (بدون مجلد modules)
+# تهيئة قاعدة البيانات
+database.init_db()
+database.create_default_admin()
+
+# استيراد الوحدات
 import auth
 import dashboard
 import inventory
@@ -10,7 +15,7 @@ import purchases
 import accounting
 import hr
 
-st.set_page_config(page_title="نظام ERP", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="نظام ERP", layout="wide")
 
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
