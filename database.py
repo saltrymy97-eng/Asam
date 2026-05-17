@@ -1,13 +1,14 @@
 # database.py - إنشاء جميع جداول النظام
 import sqlite3
 import os
+import bcrypt
 
 DB_PATH = "erp.db"
 
 def get_connection():
     """إنشاء اتصال بقاعدة البيانات"""
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.execute("PRAGMA foreign_keys = ON")  # تفعيل المفاتيح الأجنبية
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 def init_db():
@@ -15,7 +16,6 @@ def init_db():
     conn = get_connection()
     c = conn.cursor()
 
-    # 1. المستخدمين
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
@@ -24,7 +24,6 @@ def init_db():
         role TEXT DEFAULT 'staff'
     )''')
 
-    # 2. المنتجات
     c.execute('''CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -36,7 +35,6 @@ def init_db():
         reorder_level INTEGER DEFAULT 10
     )''')
 
-    # 3. حركات المخزون
     c.execute('''CREATE TABLE IF NOT EXISTS stock_movements (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         product_id INTEGER,
@@ -47,7 +45,6 @@ def init_db():
         FOREIGN KEY (product_id) REFERENCES products(id)
     )''')
 
-    # 4. العملاء
     c.execute('''CREATE TABLE IF NOT EXISTS customers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -55,7 +52,6 @@ def init_db():
         address TEXT
     )''')
 
-    # 5. الموردين
     c.execute('''CREATE TABLE IF NOT EXISTS suppliers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -63,7 +59,6 @@ def init_db():
         address TEXT
     )''')
 
-    # 6. الفواتير (مبيعات ومشتريات)
     c.execute('''CREATE TABLE IF NOT EXISTS invoices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
@@ -74,7 +69,6 @@ def init_db():
         FOREIGN KEY (party_id) REFERENCES customers(id)
     )''')
 
-    # 7. بنود الفواتير
     c.execute('''CREATE TABLE IF NOT EXISTS invoice_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         invoice_id INTEGER,
@@ -85,7 +79,6 @@ def init_db():
         FOREIGN KEY (product_id) REFERENCES products(id)
     )''')
 
-    # 8. الحسابات (قيود اليومية)
     c.execute('''CREATE TABLE IF NOT EXISTS journal_entries (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         date TEXT,
@@ -93,7 +86,6 @@ def init_db():
         reference TEXT
     )''')
 
-    # 9. أسطر القيد المحاسبي
     c.execute('''CREATE TABLE IF NOT EXISTS journal_lines (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         entry_id INTEGER,
@@ -103,7 +95,6 @@ def init_db():
         FOREIGN KEY (entry_id) REFERENCES journal_entries(id)
     )''')
 
-    # 10. الموظفين
     c.execute('''CREATE TABLE IF NOT EXISTS employees (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -112,7 +103,6 @@ def init_db():
         join_date TEXT
     )''')
 
-    # 11. الحضور والانصراف
     c.execute('''CREATE TABLE IF NOT EXISTS attendance (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         employee_id INTEGER,
@@ -126,7 +116,6 @@ def init_db():
 
 def create_default_admin():
     """إنشاء مستخدم مسؤول افتراضي إذا لم يوجد مستخدمون"""
-    import bcrypt
     conn = get_connection()
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM users")
@@ -136,8 +125,3 @@ def create_default_admin():
                   ("admin", hashed, "مدير النظام", "admin"))
         conn.commit()
     conn.close()
-
-# تنفيذ تلقائي عند أول استيراد (اختياري)
-if not os.path.exists(DB_PATH):
-    init_db()
-    create_default_admin()
