@@ -12,7 +12,7 @@ def upgrade_database():
     conn = get_conn()
     cursor = conn.cursor()
     # إضافة الأعمدة المفقودة في inventory_movements
-    for col in ['movement_type', 'notes']:
+    for col in ['movement_type', 'notes', 'date_time']:
         try:
             cursor.execute(f"ALTER TABLE inventory_movements ADD COLUMN {col} TEXT")
         except:
@@ -221,8 +221,9 @@ def update_stock(product_name, qty_change, movement_type, notes=""):
 def record_movement(product_name, qty, movement_type, notes=""):
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO inventory_movements (product_name, qty, movement_type, notes) VALUES (?,?,?,?)",
-                   (product_name, qty, movement_type, notes))
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    cursor.execute("INSERT INTO inventory_movements (product_name, qty, movement_type, notes, date_time) VALUES (?,?,?,?,?)",
+                   (product_name, qty, movement_type, notes, now))
     conn.commit()
     conn.close()
 
