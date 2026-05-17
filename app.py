@@ -1,13 +1,6 @@
 import streamlit as st
-import os
 from datetime import date, datetime
-
-# ========== حذف قاعدة البيانات القديمة الفاسدة ==========
-# هذا السطر يضمن إنشاء قاعدة بيانات جديدة سليمة
-if os.path.exists('erp.db'):
-    os.remove('erp.db')
-
-from database import init_db, get_all_products, get_all_customers, get_all_suppliers, get_low_stock, get_sales_summary
+from database import init_db, upgrade_database, get_all_products, get_all_customers, get_all_suppliers, get_low_stock, get_sales_summary
 from database import add_product, delete_product, update_stock
 from database import add_customer, get_customer_statement, receive_payment
 from database import add_supplier, add_purchase
@@ -17,16 +10,17 @@ from database import get_vat_settings, update_vat_settings
 from database import get_all_sales_invoices, process_return, get_conn
 from auth import authenticate
 
-# تهيئة قاعدة البيانات (ستُنشأ من جديد)
+# ========== إصلاح قاعدة البيانات (بدون حذف) ==========
 init_db()
+upgrade_database()
 
 st.set_page_config(page_title="المتكامل - نظام ERP", page_icon="🎭", layout="wide")
 
-# ========== CSS الاحترافي ==========
+# ========== CSS احترافي (بدون مستطيلات بيضاء) ==========
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap');
-    * { font-family: 'Cairo', sans-serif; }
+    .main > div { padding: 0rem 1rem !important; }
+    .block-container { padding-top: 1rem !important; padding-bottom: 0rem !important; }
     .stApp { background: linear-gradient(135deg, #f5f7fc 0%, #eef2f7 100%); }
     [data-testid="stSidebar"] { background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%); border-radius: 0 35px 35px 0; }
     .metric-card { background: white; border-radius: 28px; padding: 25px 15px; text-align: center; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05); transition: 0.3s; border: 1px solid rgba(106,13,173,0.1); }
@@ -124,7 +118,7 @@ if menu == "🏠 لوحة التحكم":
 # ============================== المنتجات ==============================
 elif menu == "📦 المنتجات":
     st.markdown("<div class='section-title'>📦 إدارة المنتجات</div>", unsafe_allow_html=True)
-    with st.expander("➕ إضافة منتج جديد", expanded=False):
+    with st.expander("➕ إضافة منتج جديد"):
         with st.form("add_prod"):
             name = st.text_input("اسم المنتج")
             price = st.number_input("السعر", min_value=0.0, step=1.0)
@@ -262,6 +256,7 @@ elif menu == "📦 الموردين":
             if st.form_submit_button("إضافة"):
                 if name.strip():
                     add_supplier(name, phone)
+                    st.success(f"تم إضافة المورد {name}")
                     st.rerun()
                 else:
                     st.error("الاسم مطلوب")
@@ -271,7 +266,7 @@ elif menu == "📦 الموردين":
             for s in suppliers:
                 st.write(f"**{s['name']}** - 📞 {s['phone']} - الرصيد: {s['balance']:.2f}")
         else:
-            st.info("لا يوجد موردون")
+            st.info("لا يوجد موردون حالياً")
     with tab3:
         suppliers = get_all_suppliers()
         if suppliers:
@@ -444,6 +439,7 @@ elif menu == "🏚️ المستودعات":
         finally:
             conn.close()
     
+    # تأكد من وجود الجداول
     conn = get_conn()
     conn.execute("CREATE TABLE IF NOT EXISTS warehouse_stock (id INTEGER PRIMARY KEY AUTOINCREMENT, warehouse_id INTEGER, product_name TEXT, stock INTEGER DEFAULT 0, UNIQUE(warehouse_id, product_name))")
     conn.execute("CREATE TABLE IF NOT EXISTS warehouse_transfers (id INTEGER PRIMARY KEY AUTOINCREMENT, from_warehouse_id INTEGER, to_warehouse_id INTEGER, product_name TEXT, qty INTEGER, transfer_date TEXT DEFAULT CURRENT_TIMESTAMP, notes TEXT)")
@@ -617,6 +613,7 @@ elif menu == "🏭 الإنتاج (BOM)":
             update_production_order_status(order_id, 'completed', date.today().isoformat())
         conn.close()
     
+    # تهيئة الجداول
     conn = get_conn()
     conn.execute("CREATE TABLE IF NOT EXISTS bom (id INTEGER PRIMARY KEY AUTOINCREMENT, product_name TEXT, component_name TEXT, quantity REAL)")
     conn.execute("CREATE TABLE IF NOT EXISTS production_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, order_number TEXT, product_name TEXT, quantity INTEGER, status TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, completion_date TEXT, start_date TEXT)")
