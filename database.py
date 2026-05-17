@@ -1,6 +1,5 @@
-# database.py - إنشاء جميع جداول النظام
+# database.py - قاعدة بيانات نظام ERP
 import sqlite3
-import os
 import bcrypt
 
 DB_PATH = "erp.db"
