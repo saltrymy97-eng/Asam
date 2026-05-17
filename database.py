@@ -2,29 +2,22 @@ import sqlite3
 from datetime import datetime
 import hashlib
 
-# ============================================================
-#                         الاتصال بقاعدة البيانات
-# ============================================================
-
 def get_conn():
     conn = sqlite3.connect('erp.db')
     conn.row_factory = sqlite3.Row
     return conn
 
-# ============================================================
-#                         ترقية قاعدة البيانات
-# ============================================================
-
 def upgrade_database():
-    """تحديث هيكل الجداول القديمة إلى الجديد (آمن للتشغيل عدة مرات)"""
+    """إصلاح قاعدة البيانات القديمة دون فقدان البيانات"""
     conn = get_conn()
     cursor = conn.cursor()
-    
+    # إضافة الأعمدة المفقودة في inventory_movements
     for col in ['movement_type', 'notes']:
         try:
             cursor.execute(f"ALTER TABLE inventory_movements ADD COLUMN {col} TEXT")
         except:
             pass
+    # إضافة أعمدة مفقودة في sales
     for col in ['vat_amount', 'vat_rate', 'returned_qty']:
         try:
             cursor.execute(f"ALTER TABLE sales ADD COLUMN {col} REAL DEFAULT 0")
@@ -34,38 +27,26 @@ def upgrade_database():
         cursor.execute("ALTER TABLE products ADD COLUMN vat_rate REAL DEFAULT 0.0")
     except:
         pass
-    # إضافة حقل المستودع إلى حركات المخزون إذا لم يكن موجوداً
-    try:
-        cursor.execute("ALTER TABLE inventory_movements ADD COLUMN warehouse_id INTEGER REFERENCES warehouses(id)")
-    except:
-        pass
     conn.commit()
     conn.close()
-
-# ============================================================
-#                         تهيئة الجداول
-# ============================================================
 
 def init_db():
     conn = get_conn()
     cursor = conn.cursor()
-    
+    # جداول النظام (كلها موجودة، CREATE IF NOT EXISTS)
     cursor.execute('''CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
         price REAL NOT NULL,
         stock INTEGER NOT NULL DEFAULT 0,
         vat_rate REAL DEFAULT 0.0)''')
-    
     cursor.execute('''CREATE TABLE IF NOT EXISTS inventory_movements (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         product_name TEXT NOT NULL,
         qty INTEGER NOT NULL,
         movement_type TEXT NOT NULL,
-        warehouse_id INTEGER REFERENCES warehouses(id),
         date_time TEXT NOT NULL DEFAULT (datetime('now','localtime')),
         notes TEXT)''')
-    
     cursor.execute('''CREATE TABLE IF NOT EXISTS sales (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         product_name TEXT NOT NULL,
@@ -75,14 +56,12 @@ def init_db():
         vat_rate REAL DEFAULT 0,
         returned_qty INTEGER DEFAULT 0,
         date_time TEXT NOT NULL DEFAULT (datetime('now','localtime')))''')
-    
     cursor.execute('''CREATE TABLE IF NOT EXISTS customers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         phone TEXT,
         address TEXT,
         balance REAL NOT NULL DEFAULT 0.0)''')
-    
     cursor.execute('''CREATE TABLE IF NOT EXISTS customer_transactions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         customer_id INTEGER NOT NULL,
@@ -91,56 +70,45 @@ def init_db():
         amount REAL NOT NULL,
         reference_id INTEGER,
         notes TEXT)''')
-    
     cursor.execute('''CREATE TABLE IF NOT EXISTS suppliers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         phone TEXT,
         balance REAL NOT NULL DEFAULT 0.0)''')
-    
     cursor.execute('''CREATE TABLE IF NOT EXISTS purchases (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         supplier_id INTEGER NOT NULL,
         date TEXT NOT NULL DEFAULT (datetime('now','localtime')),
         total REAL NOT NULL)''')
-    
     cursor.execute('''CREATE TABLE IF NOT EXISTS purchase_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         purchase_id INTEGER NOT NULL,
         product_name TEXT NOT NULL,
         qty INTEGER NOT NULL,
         unit_cost REAL NOT NULL)''')
-    
     cursor.execute('''CREATE TABLE IF NOT EXISTS accounts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT NOT NULL UNIQUE,
         name TEXT NOT NULL,
         type TEXT NOT NULL CHECK(type IN ('asset','liability','equity','revenue','expense')),
         parent_id INTEGER)''')
-    
     cursor.execute('''CREATE TABLE IF NOT EXISTS journal_entries (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         date TEXT NOT NULL DEFAULT (datetime('now','localtime')),
         description TEXT,
         reference_type TEXT,
         reference_id INTEGER)''')
-    
     cursor.execute('''CREATE TABLE IF NOT EXISTS journal_details (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         entry_id INTEGER NOT NULL,
         account_id INTEGER NOT NULL,
         debit REAL NOT NULL DEFAULT 0,
         credit REAL NOT NULL DEFAULT 0)''')
-    
     cursor.execute('''CREATE TABLE IF NOT EXISTS vat_settings (
         id INTEGER PRIMARY KEY,
         default_rate REAL DEFAULT 0.15,
         is_enabled INTEGER DEFAULT 1)''')
-    
-    cursor.execute("SELECT COUNT(*) FROM vat_settings")
-    if cursor.fetchone()[0] == 0:
-        cursor.execute("INSERT INTO vat_settings (id, default_rate, is_enabled) VALUES (1, 0.15, 1)")
-    
+    cursor.execute("INSERT OR IGNORE INTO vat_settings (id, default_rate, is_enabled) VALUES (1, 0.15, 1)")
     cursor.execute('''CREATE TABLE IF NOT EXISTS fixed_assets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -151,13 +119,11 @@ def init_db():
         current_value REAL,
         accumulated_depreciation REAL DEFAULT 0,
         status TEXT DEFAULT 'active')''')
-    
     cursor.execute('''CREATE TABLE IF NOT EXISTS warehouses (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
         location TEXT,
         is_main INTEGER DEFAULT 0)''')
-    
     cursor.execute('''CREATE TABLE IF NOT EXISTS employees (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -168,13 +134,11 @@ def init_db():
         phone TEXT,
         email TEXT,
         status TEXT DEFAULT 'active')''')
-    
     cursor.execute('''CREATE TABLE IF NOT EXISTS bom (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         product_name TEXT NOT NULL,
         component_name TEXT NOT NULL,
         quantity REAL NOT NULL)''')
-    
     cursor.execute('''CREATE TABLE IF NOT EXISTS production_orders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         order_number TEXT UNIQUE,
@@ -182,18 +146,15 @@ def init_db():
         quantity INTEGER NOT NULL,
         status TEXT DEFAULT 'planned',
         created_at TEXT DEFAULT (datetime('now','localtime')))''')
-    
     cursor.execute('''CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
         role TEXT NOT NULL)''')
-    
     cursor.execute("SELECT COUNT(*) FROM users")
     if cursor.fetchone()[0] == 0:
         admin_hash = hashlib.sha256("admin123".encode()).hexdigest()
         cursor.execute("INSERT INTO users (username, password_hash, role) VALUES (?,?,?)", ('admin', admin_hash, 'admin'))
-    
     conn.commit()
     conn.close()
     create_default_accounts()
@@ -209,10 +170,6 @@ def create_default_accounts():
         cursor.execute("INSERT OR IGNORE INTO accounts (id, code, name, type) VALUES (?,?,?,?)", (code, code, name, type_))
     conn.commit()
     conn.close()
-
-# ============================================================
-#                         دوال المنتجات والمخزون
-# ============================================================
 
 def add_product(name, price, stock, vat_rate=0.0):
     conn = get_conn()
@@ -236,15 +193,6 @@ def get_all_products():
     conn.close()
     return [dict(row) for row in rows]
 
-def update_product(product_id, name, price):
-    conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE products SET name=?, price=? WHERE id=?", (name, price, product_id))
-    if cursor.rowcount == 0:
-        raise ValueError(f"Product {product_id} not found")
-    conn.commit()
-    conn.close()
-
 def delete_product(product_id):
     conn = get_conn()
     cursor = conn.cursor()
@@ -266,47 +214,15 @@ def update_stock(product_name, qty_change, movement_type, notes=""):
         cursor.execute("UPDATE products SET stock = stock + ? WHERE name=?", (qty_change, product_name))
     else:
         cursor.execute("UPDATE products SET stock = stock - ? WHERE name=?", (qty_change, product_name))
-    if cursor.rowcount == 0:
-        raise ValueError(f"Product '{product_name}' not found")
     conn.commit()
     record_movement(product_name, qty_change, movement_type, notes)
     conn.close()
 
-# ========== الدوال المساعدة للمستودعات ==========
-def _get_default_warehouse_id():
+def record_movement(product_name, qty, movement_type, notes=""):
     conn = get_conn()
     cursor = conn.cursor()
-    # محاولة جلب المستودع الرئيسي
-    cursor.execute("SELECT id FROM warehouses WHERE is_main=1 LIMIT 1")
-    wh = cursor.fetchone()
-    if wh is None:
-        cursor.execute("SELECT id FROM warehouses LIMIT 1")
-        wh = cursor.fetchone()
-    conn.close()
-    if wh is None:
-        raise RuntimeError("لا يوجد أي مستودع في النظام. يجب إضافة مستودع أولاً.")
-    return wh['id']
-
-# ========== الدالة الذكية لتسجيل حركة المخزون (تُصلح نفسها تلقائياً) ==========
-def record_movement(product_name, qty, movement_type, notes="", warehouse_id=None):
-    conn = get_conn()
-    cursor = conn.cursor()
-    # تأكد من وجود عمود notes (في حالة قواعد البيانات القديمة جداً)
-    try:
-        cursor.execute("ALTER TABLE inventory_movements ADD COLUMN notes TEXT")
-    except:
-        pass
-    # تأكد من وجود عمود warehouse_id
-    try:
-        cursor.execute("ALTER TABLE inventory_movements ADD COLUMN warehouse_id INTEGER REFERENCES warehouses(id)")
-    except:
-        pass
-
-    if warehouse_id is None:
-        warehouse_id = _get_default_warehouse_id()
-
-    cursor.execute("INSERT INTO inventory_movements (product_name, qty, movement_type, notes, warehouse_id) VALUES (?,?,?,?,?)",
-                   (product_name, qty, movement_type, notes, warehouse_id))
+    cursor.execute("INSERT INTO inventory_movements (product_name, qty, movement_type, notes) VALUES (?,?,?,?)",
+                   (product_name, qty, movement_type, notes))
     conn.commit()
     conn.close()
 
@@ -326,10 +242,6 @@ def get_sales_summary():
     conn.close()
     return {'total_sales': row['total_sales'], 'total_revenue': row['total_revenue']}
 
-# ============================================================
-#                         دوال العملاء
-# ============================================================
-
 def add_customer(name, phone, address):
     conn = get_conn()
     cursor = conn.cursor()
@@ -345,19 +257,10 @@ def get_all_customers():
     conn.close()
     return [dict(row) for row in rows]
 
-def get_customer_balance(customer_id):
-    conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute("SELECT balance FROM customers WHERE id=?", (customer_id,))
-    row = cursor.fetchone()
-    if row is None:
-        raise ValueError("Customer not found")
-    return row['balance']
-
 def get_customer_statement(customer_id):
     conn = get_conn()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, date, type, amount, reference_id, notes FROM customer_transactions WHERE customer_id=? ORDER BY date DESC, id DESC", (customer_id,))
+    cursor.execute("SELECT date, type, amount, notes FROM customer_transactions WHERE customer_id=? ORDER BY date DESC", (customer_id,))
     rows = cursor.fetchall()
     conn.close()
     return [dict(row) for row in rows]
@@ -369,26 +272,15 @@ def add_customer_transaction(customer_id, type_, amount, reference_id=None, note
                    (customer_id, type_, amount, reference_id, notes))
     if type_ == 'sale':
         cursor.execute("UPDATE customers SET balance = balance + ? WHERE id=?", (amount, customer_id))
-    elif type_ == 'payment':
-        cursor.execute("UPDATE customers SET balance = balance - ? WHERE id=?", (amount, customer_id))
     else:
-        raise ValueError("Invalid type")
+        cursor.execute("UPDATE customers SET balance = balance - ? WHERE id=?", (amount, customer_id))
     conn.commit()
     conn.close()
 
 def receive_payment(customer_id, amount, notes=""):
-    if amount <= 0:
-        raise ValueError("Amount must be positive")
     add_customer_transaction(customer_id, 'payment', amount, None, notes)
-    post_entry(datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-               f"تحصيل دفعة من عميل {customer_id} - {notes}",
-               'customer_payment', customer_id,
-               [{'account_id': 1, 'debit': amount, 'credit': 0},
-                {'account_id': 2, 'debit': 0, 'credit': amount}])
-
-# ============================================================
-#                         دوال الموردين والمشتريات
-# ============================================================
+    post_entry(datetime.now().strftime('%Y-%m-%d %H:%M:%S'), f"تحصيل دفعة من عميل", 'payment', customer_id,
+               [{'account_id': 1, 'debit': amount, 'credit': 0}, {'account_id': 2, 'debit': 0, 'credit': amount}])
 
 def add_supplier(name, phone):
     conn = get_conn()
@@ -414,10 +306,6 @@ def add_purchase(supplier_id, items):
     cursor.execute("SELECT id FROM suppliers WHERE id=?", (supplier_id,))
     if cursor.fetchone() is None:
         raise ValueError("Supplier not found")
-
-    # الحصول على معرف المستودع الافتراضي
-    warehouse_id = _get_default_warehouse_id()
-
     cursor.execute("INSERT INTO purchases (supplier_id, total) VALUES (?,?)", (supplier_id, total))
     purchase_id = cursor.lastrowid
     for item in items:
@@ -428,41 +316,13 @@ def add_purchase(supplier_id, items):
         cursor.execute("INSERT INTO purchase_items (purchase_id, product_name, qty, unit_cost) VALUES (?,?,?,?)",
                        (purchase_id, pname, qty, cost))
         cursor.execute("UPDATE products SET stock = stock + ? WHERE name=?", (qty, pname))
-        # تسجيل الحركة مع المستودع (ستضيف الأعمدة تلقائياً إن لزم)
-        record_movement(pname, qty, 'in', f'شراء فاتورة {purchase_id}', warehouse_id)
+        record_movement(pname, qty, 'in', f'شراء فاتورة {purchase_id}')
     cursor.execute("UPDATE suppliers SET balance = balance + ? WHERE id=?", (total, supplier_id))
     conn.commit()
-    post_entry(datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-               f"فاتورة شراء رقم {purchase_id} من مورد {supplier_id}",
-               'purchase', purchase_id,
-               [{'account_id': 3, 'debit': total, 'credit': 0},
-                {'account_id': 5, 'debit': 0, 'credit': total}])
+    post_entry(datetime.now().strftime('%Y-%m-%d %H:%M:%S'), f"فاتورة شراء رقم {purchase_id}", 'purchase', purchase_id,
+               [{'account_id': 3, 'debit': total, 'credit': 0}, {'account_id': 5, 'debit': 0, 'credit': total}])
     conn.close()
     return purchase_id
-
-def pay_supplier(supplier_id, amount, notes=""):
-    if amount <= 0:
-        raise ValueError("Amount must be positive")
-    conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, balance FROM suppliers WHERE id=?", (supplier_id,))
-    row = cursor.fetchone()
-    if row is None:
-        raise ValueError("Supplier not found")
-    if amount > row['balance']:
-        raise ValueError("المبلغ أكبر من الرصيد")
-    cursor.execute("UPDATE suppliers SET balance = balance - ? WHERE id=?", (amount, supplier_id))
-    conn.commit()
-    conn.close()
-    post_entry(datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-               f"دفع للمورد {supplier_id} - {notes}",
-               'supplier_payment', supplier_id,
-               [{'account_id': 5, 'debit': amount, 'credit': 0},
-                {'account_id': 1, 'debit': 0, 'credit': amount}])
-
-# ============================================================
-#                         دوال المبيعات والمحاسبة
-# ============================================================
 
 def add_sale(product_name, qty, total, vat_amount=0, vat_rate=0):
     conn = get_conn()
@@ -479,26 +339,14 @@ def add_sale_with_customer(product_name, qty, total, vat_amount, vat_rate, custo
     update_stock(product_name, qty, 'out', f'بيع')
     if customer_id is not None:
         add_customer_transaction(customer_id, 'sale', total, sale_id, f'فاتورة بيع {product_name}')
-        post_entry(datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                   f"بيع آجل - فاتورة {sale_id} للعميل {customer_id}",
-                   'sale', sale_id,
-                   [{'account_id': 2, 'debit': total, 'credit': 0},
-                    {'account_id': 4, 'debit': 0, 'credit': total}])
+        post_entry(datetime.now().strftime('%Y-%m-%d %H:%M:%S'), f"بيع آجل - فاتورة {sale_id}", 'sale', sale_id,
+                   [{'account_id': 2, 'debit': total, 'credit': 0}, {'account_id': 4, 'debit': 0, 'credit': total}])
     else:
-        post_entry(datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                   f"بيع نقدي - فاتورة {sale_id}",
-                   'sale', sale_id,
-                   [{'account_id': 1, 'debit': total, 'credit': 0},
-                    {'account_id': 4, 'debit': 0, 'credit': total}])
+        post_entry(datetime.now().strftime('%Y-%m-%d %H:%M:%S'), f"بيع نقدي - فاتورة {sale_id}", 'sale', sale_id,
+                   [{'account_id': 1, 'debit': total, 'credit': 0}, {'account_id': 4, 'debit': 0, 'credit': total}])
     return sale_id
 
 def post_entry(date, description, ref_type, ref_id, details):
-    if not details:
-        raise ValueError("تفاصيل مطلوبة")
-    total_debit = sum(d['debit'] for d in details)
-    total_credit = sum(d['credit'] for d in details)
-    if abs(total_debit - total_credit) > 0.001:
-        raise ValueError("القيد غير متوازن")
     conn = get_conn()
     cursor = conn.cursor()
     cursor.execute("INSERT INTO journal_entries (date, description, reference_type, reference_id) VALUES (?,?,?,?)",
@@ -553,25 +401,11 @@ def get_all_journal_entries():
     for row in rows:
         eid = row['id']
         if eid not in entries:
-            entries[eid] = {
-                'id': eid,
-                'date': row['date'],
-                'description': row['description'],
-                'reference_type': row['reference_type'],
-                'reference_id': row['reference_id'],
-                'details': []
-            }
-        entries[eid]['details'].append({
-            'account_id': row['account_id'],
-            'account_name': row['account_name'],
-            'debit': row['debit'],
-            'credit': row['credit']
-        })
+            entries[eid] = {'id': eid, 'date': row['date'], 'description': row['description'],
+                           'reference': f"{row['reference_type']} - {row['reference_id']}" if row['reference_id'] else '',
+                           'details': []}
+        entries[eid]['details'].append({'account': row['account_name'], 'debit': row['debit'], 'credit': row['credit']})
     return list(entries.values())
-
-# ============================================================
-#                         دوال الضريبة
-# ============================================================
 
 def get_vat_settings():
     conn = get_conn()
@@ -590,10 +424,6 @@ def update_vat_settings(rate, enabled):
     cursor.execute("UPDATE vat_settings SET default_rate=?, is_enabled=?", (rate, 1 if enabled else 0))
     conn.commit()
     conn.close()
-
-# ============================================================
-#                         دوال المرتجعات
-# ============================================================
 
 def get_all_sales_invoices():
     conn = get_conn()
@@ -650,10 +480,6 @@ def process_return(sale_id, product_name, return_qty):
         raise e
     finally:
         conn.close()
-
-# ============================================================
-#                         دوال التقارير المتقدمة
-# ============================================================
 
 def advanced_report():
     import streamlit as st
