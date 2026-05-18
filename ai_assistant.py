@@ -1,8 +1,10 @@
 # ai_assistant.py – مساعد ذكي بواجهة زجاجية فخمة وألوان زاهية
+# يدعم القيود المركبة وتسجيل القيد مباشرة في قاعدة البيانات
 import streamlit as st
 import sqlite3
 import pandas as pd
 from groq import Groq
+from datetime import date
 
 DB_PATH = "erp.db"
 
@@ -209,25 +211,138 @@ def show():
             else:
                 st.error("❌ لم يتم العثور على الموظف.")
 
-    # ---------- 5. قيود تلقائية ----------
+    # ---------- 5. قيود تلقائية (دعم القيود المركبة + زر تسجيل) ----------
     with tab5:
-        st.markdown(f"<h3 style='color:{ACCENT_RED};'>إنشاء قيد محاسبي بلغة طبيعية</h3>", unsafe_allow_html=True)
-        text = st.text_area("اكتب العملية:", placeholder="مثال: اشتريت بضاعة بمبلغ 5000 ريال نقداً", key="entry_text")
-        if st.button("📝 إنشاء القيد", key="create_entry"):
-            if text:
-                accounts = get_all_accounts()
-                acc_list = "\n".join([f"{a['code']} - {a['name']}" for a in accounts]) if accounts else "لا توجد حسابات مضافة بعد"
-                prompt = f"""أنت محاسب خبير. حول العملية التالية إلى قيد محاسبي.
+        st.markdown(f"<h3 style='color:{ACCENT_RED};'>إنشاء قيد محاسبي مركب بلغة طبيعية</h3>", unsafe_allow_html=True)
+        text = st.text_area("اكتب العملية:", placeholder="مثال: اشتريت بضاعة بـ 5000 ومصاريف شحن بـ 200، دفعت 3000 نقداً والباقي على الحساب", key="entry_text")
+        
+        # حالة مؤقتة لتخزين القيد الذي تم إنشاؤه
+        if "generated_entry" not in st.session_state:
+            st.session_state.generated_entry = None
+
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            generate_btn = st.button("📝 إنشاء القيد المركب", key="create_entry")
+        with col2:
+            if st.session_state.generated_entry is not None:
+                if st.button("💾 تسجيل القيد في النظام", type="primary", key="save_entry"):
+                    entry_data = st.session_state.generated_entry
+                    if not entry_data["lines"]:
+                        st.error("لا توجد أسطر لتسجيلها.")
+                    else:
+                        # التحقق من وجود الحسابات
+                        conn = get_conn()
+                        valid_lines = []
+                        errors = []
+                        for line in entry_data["lines"]:
+                            account_name = line["account"]
+                            # البحث عن كود الحساب
+                            acc = conn.execute("SELECT code FROM accounts WHERE name = ?", (account_name,)).fetchone()
+                            if acc:
+                                valid_lines.append((acc["code"], line["debit"], line["credit"]))
+                            else:
+                                errors.append(f"الحساب '{account_name}' غير موجود في شجرة الحسابات.")
+                        conn.close()
+
+                        if errors:
+                            for err in errors:
+                                st.error(err)
+                        else:
+                            try:
+                                conn = get_conn()
+                                desc = f"قيد ذكي: {text[:50]}"
+                                cur = conn.execute(
+                                    "INSERT INTO journal_entries (date, description, reference) VALUES (?, ?, ?)",
+                                    (date.today().strftime("%Y-%m-%d"), desc, "")
+                                )
+                                entry_id = cur.lastrowid
+                                for code, debit, credit in valid_lines:
+                                    conn.execute(
+                                        "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, ?, ?, ?)",
+                                        (entry_id, code, debit, credit)
+                                    )
+                                conn.commit()
+                                conn.close()
+                                st.success(f"✅ تم تسجيل القيد رقم {entry_id} بنجاح!")
+                                st.session_state.generated_entry = None
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"فشل التسجيل: {e}")
+
+        if generate_btn and text:
+            accounts = get_all_accounts()
+            acc_list = "\n".join([f"{a['code']} - {a['name']}" for a in accounts]) if accounts else "لا توجد حسابات مضافة بعد"
+            prompt = f"""أنت محاسب خبير. حول العملية التالية إلى قيد محاسبي مركب (قد يحتوي على عدة حسابات مدينة وعدة حسابات دائنة).
 الحسابات المتاحة:
 {acc_list}
-أعد القيد بالصيغة التالية فقط (بدون أي نص آخر):
-الحساب المدين | المبلغ | الحساب الدائن | المبلغ
-مثال:
-المخزون | 5000 | الصندوق | 5000
+
+أعد القيد بالصيغة التالية فقط، بحيث كل سطر يمثل جزءاً من القيد، ويكون أول كلمة في السطر "مدين" أو "دائن":
+مدين | اسم الحساب | المبلغ
+دائن | اسم الحساب | المبلغ
+
+يمكنك تكرار السطور حسب الحاجة. يجب أن يتوازن القيد (مجموع المدين = مجموع الدائن). استخدم أسماء الحسابات كما هي.
 العملية: {text}"""
-                with st.spinner("📝 جاري إنشاء القيد..."):
-                    entry = query_groq(prompt, text)
-                st.code(entry)
+            with st.spinner("📝 جاري إنشاء القيد المركب..."):
+                entry_text = query_groq(prompt, text)
+            st.code(entry_text)
+
+            # تحليل النص المسترجع إلى قائمة أسطر
+            lines = [l.strip() for l in entry_text.splitlines() if l.strip()]
+            entry_lines = []
+            for line in lines:
+                parts = [p.strip() for p in line.split("|")]
+                if len(parts) >= 3 and (parts[0].startswith("مدين") or parts[0].startswith("دائن")):
+                    side = "debit" if parts[0].startswith("مدين") else "credit"
+                    account = parts[1]
+                    try:
+                        amount = float(parts[2].replace(",", ""))
+                    except ValueError:
+                        continue
+                    entry_lines.append({
+                        "account": account,
+                        "debit": amount if side == "debit" else 0.0,
+                        "credit": amount if side == "credit" else 0.0
+                    })
+            if entry_lines:
+                st.session_state.generated_entry = {"lines": entry_lines}
+                st.rerun()
+
+        # عرض القيد المحفوظ بشكل جميل
+        if st.session_state.generated_entry is not None:
+            lines = st.session_state.generated_entry["lines"]
+            st.markdown(f"<h4 style='color:{TEXT_PRIMARY}; margin-top:1rem;'>القيد المقترح</h4>", unsafe_allow_html=True)
+            html = f"""
+            <div style="background:{GLASS_BG}; backdrop-filter:blur(10px); border:1px solid {GLASS_BORDER}; border-radius:16px; padding:1.5rem; margin:1rem 0; box-shadow:{GLASS_SHADOW}; color:{TEXT_PRIMARY};">
+            <table style="width:100%; border-collapse:collapse;">
+            <tr style="border-bottom:1px solid {GLASS_BORDER};">
+                <th style="text-align:right; padding:8px;">الحساب</th>
+                <th style="text-align:right; padding:8px;">مدين</th>
+                <th style="text-align:right; padding:8px;">دائن</th>
+            </tr>
+            """
+            total_debit = total_credit = 0.0
+            for line in lines:
+                debit = line['debit']
+                credit = line['credit']
+                total_debit += debit
+                total_credit += credit
+                html += f"""
+                <tr>
+                    <td style="padding:8px; text-align:right;">{line['account']}</td>
+                    <td style="padding:8px; text-align:right;">{debit:,.2f}</td>
+                    <td style="padding:8px; text-align:right;">{credit:,.2f}</td>
+                </tr>
+                """
+            html += f"""
+            <tr style="border-top:1px solid {GLASS_BORDER}; font-weight:bold;">
+                <td style="padding:8px; text-align:right;">المجموع</td>
+                <td style="padding:8px; text-align:right;">{total_debit:,.2f}</td>
+                <td style="padding:8px; text-align:right;">{total_credit:,.2f}</td>
+            </tr>
+            </table>
+            </div>
+            """
+            st.markdown(html, unsafe_allow_html=True)
 
     # ---------- 6. كشف الاحتيال ----------
     with tab6:
