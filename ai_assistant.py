@@ -11,6 +11,23 @@ def get_conn():
     conn.row_factory = sqlite3.Row
     return conn
 
+def create_accounts_table():
+    """إنشاء جدول الحسابات إذا لم يكن موجوداً"""
+    conn = get_conn()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            parent_id INTEGER,
+            level INTEGER DEFAULT 1,
+            is_debit TEXT DEFAULT 'debit',
+            FOREIGN KEY (parent_id) REFERENCES accounts(id)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
 def query_groq(system_prompt, user_query):
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
     response = client.chat.completions.create(
@@ -72,6 +89,9 @@ def get_all_accounts():
 # ========== واجهة المساعد الذكي ==========
 def show():
     st.title("🤖 المساعد الذكي XD ERP")
+
+    # 🆕 التأكد من وجود جدول الحسابات
+    create_accounts_table()
 
     if "GROQ_API_KEY" not in st.secrets:
         st.error("❌ الرجاء إضافة `GROQ_API_KEY` في إعدادات Streamlit Cloud (Secrets).")
@@ -160,7 +180,7 @@ def show():
         if st.button("إنشاء القيد", key="create_entry"):
             if text:
                 accounts = get_all_accounts()
-                acc_list = "\n".join([f"{a['code']} - {a['name']}" for a in accounts])
+                acc_list = "\n".join([f"{a['code']} - {a['name']}" for a in accounts]) if accounts else "لا توجد حسابات مضافة بعد"
                 prompt = f"""أنت محاسب خبير. حول العملية التالية إلى قيد محاسبي.
 الحسابات المتاحة:
 {acc_list}
