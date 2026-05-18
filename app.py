@@ -22,15 +22,15 @@ import roles_permissions
 import period_closing
 import fifo_inventory
 import payroll
-import ai_assistant        # 🆕 المساعد الذكي
+import ai_assistant  # 🆕 المساعد الذكي
 
 st.set_page_config(page_title="XD ERP", layout="wide")
 
-# ========== إعدادات الأيقونة - معطلة حالياً ==========
+# ========== إعدادات الأيقونة ==========
 st.markdown("""
     <link rel="icon" href="https://streamlit.io/favicon.svg">
 """, unsafe_allow_html=True)
-# ===================================================
+# =====================================
 
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -57,7 +57,7 @@ else:
                 "إغلاق الفترات",
                 "FIFO المخزون",
                 "كشف الرواتب",
-                "المساعد الذكي",       # 🆕
+                "المساعد الذكي",        # 🆕
                 "تسجيل الخروج"
             ],
             icons=[
@@ -73,7 +73,7 @@ else:
                 "calendar-check",
                 "boxes",
                 "cash-coin",
-                "robot",                # 🆕 أيقونة المساعد الذكي
+                "robot",                 # 🆕 أيقونة المساعد الذكي
                 "box-arrow-right"
             ],
             menu_icon="cast",
