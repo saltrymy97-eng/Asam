@@ -11,7 +11,6 @@ def get_conn():
 
 def create_fifo_tables():
     conn = get_conn()
-    # دفعات الشراء
     conn.execute("""
         CREATE TABLE IF NOT EXISTS inventory_batches (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -23,7 +22,6 @@ def create_fifo_tables():
             FOREIGN KEY (product_id) REFERENCES products(id)
         )
     """)
-    # سجل استهلاك الدفعات
     conn.execute("""
         CREATE TABLE IF NOT EXISTS fifo_consumptions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,7 +46,9 @@ def add_batch(product_id, quantity, unit_cost, batch_date, reference=""):
 
 def get_available_batches(product_id):
     conn = get_conn()
-    batches = conn.execute("""
+    # استخدام dict_factory للحصول على قواميس حقيقية
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute("""
         SELECT b.*, 
                b.quantity - COALESCE(SUM(c.consumed_qty), 0) as remaining
         FROM inventory_batches b
@@ -57,12 +57,12 @@ def get_available_batches(product_id):
         GROUP BY b.id
         HAVING remaining > 0
         ORDER BY b.batch_date ASC, b.id ASC
-    """, (product_id,)).fetchall()
+    """, (product_id,))
+    batches = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return batches
 
 def consume_fifo(product_id, quantity, consumption_date, reference=""):
-    """استهلاك كمية حسب FIFO وتخزين عمليات الصرف. ترجع التكلفة الإجمالية"""
     batches = get_available_batches(product_id)
     total_cost = 0.0
     remaining_to_consume = quantity
@@ -85,14 +85,13 @@ def consume_fifo(product_id, quantity, consumption_date, reference=""):
     if remaining_to_consume > 0:
         conn.rollback()
         conn.close()
-        return None, remaining_to_consume  # لم يكتمل الاستهلاك
+        return None, remaining_to_consume
 
     conn.commit()
     conn.close()
     return total_cost, 0
 
 def get_product_cost(product_id):
-    """تكلفة المخزون المتبقي حسب FIFO"""
     batches = get_available_batches(product_id)
     total = sum(b["remaining"] * b["unit_cost"] for b in batches)
     return total
@@ -131,7 +130,6 @@ def show():
         st.subheader("استهلاك المخزون (FIFO)")
         prod_name = st.selectbox("المنتج", products["name"], key="fifo_consume_prod")
         prod_id = int(products[products["name"] == prod_name]["id"].iloc[0])
-        # عرض المتاح
         available = sum(b["remaining"] for b in get_available_batches(prod_id))
         st.write(f"الكمية المتاحة: {available:.2f}")
         qty_consume = st.number_input("الكمية المطلوب صرفها", min_value=0.0, step=1.0)
@@ -159,12 +157,16 @@ def show():
         batches = get_available_batches(prod_id)
         if batches:
             df = pd.DataFrame(batches)
-            df = df.rename(columns={"batch_date": "التاريخ", "remaining": "الكمية المتبقية",
-                                    "unit_cost": "تكلفة الوحدة", "reference": "المرجع"})
-            df["القيمة"] = df["الكمية المتبقية"] * df["تكلفة الوحدة"]
-            st.dataframe(df[["التاريخ", "الكمية المتبقية", "تكلفة الوحدة", "القيمة", "المرجع"]],
-                         use_container_width=True, hide_index=True)
-            total_cost = df["القيمة"].sum()
-            st.markdown(f"**إجمالي قيمة المخزون المتبقي: {total_cost:,.2f}**")
+            # التحقق من وجود الأعمدة المطلوبة
+            if 'remaining' in df.columns and 'unit_cost' in df.columns:
+                df = df.rename(columns={"batch_date": "التاريخ", "remaining": "الكمية المتبقية",
+                                        "unit_cost": "تكلفة الوحدة", "reference": "المرجع"})
+                df["القيمة"] = df["الكمية المتبقية"] * df["تكلفة الوحدة"]
+                st.dataframe(df[["التاريخ", "الكمية المتبقية", "تكلفة الوحدة", "القيمة", "المرجع"]],
+                             use_container_width=True, hide_index=True)
+                total_cost = df["القيمة"].sum()
+                st.markdown(f"**إجمالي قيمة المخزون المتبقي: {total_cost:,.2f}**")
+            else:
+                st.warning("لم يتم العثور على بيانات المخزون المطلوبة")
         else:
             st.info("لا توجد دفعات متبقية لهذا المنتج")
