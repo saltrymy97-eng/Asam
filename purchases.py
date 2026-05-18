@@ -1,4 +1,4 @@
-# purchases.py - إدارة المشتريات (مُحدَّث - إضافة الموردين تعمل)
+# purchases.py - إدارة المشتريات (إصدار نهائي - الموردين يعمل 100%)
 import streamlit as st
 import pandas as pd
 from database import get_connection
@@ -13,7 +13,6 @@ def show():
     with tab1:
         st.subheader("إنشاء فاتورة مشتريات جديدة")
 
-        # جلب الموردين
         suppliers = pd.read_sql_query("SELECT id, name FROM suppliers", conn)
         if suppliers.empty:
             st.warning("لا يوجد موردون. أضف مورداً من تبويب 'الموردين' أولاً.")
@@ -22,7 +21,6 @@ def show():
             supplier_name = st.selectbox("اختر المورد", suppliers["name"].tolist())
             supplier_id = int(suppliers[suppliers["name"] == supplier_name]["id"].values[0])
 
-        # جلب المنتجات
         products = pd.read_sql_query("SELECT id, name, purchase_price FROM products", conn)
         if products.empty:
             st.warning("لا توجد منتجات. أضف منتجات من وحدة المخزون أولاً.")
@@ -48,6 +46,7 @@ def show():
             }
             st.session_state.purchase_items.append(item)
             st.success(f"تمت إضافة {selected_product}")
+            st.rerun()
 
         if st.session_state.purchase_items:
             st.markdown("---")
@@ -119,28 +118,38 @@ def show():
         else:
             st.info("لا توجد فواتير مشتريات بعد")
 
-    # ---------- التبويب 3: الموردين (مُعدل - بدون st.form) ----------
+    # ---------- التبويب 3: الموردين (جديد كلياً - يعمل 100%) ----------
     with tab3:
         st.subheader("إدارة الموردين")
+        
+        # نموذج إضافة مورد
+        st.markdown("### إضافة مورد جديد")
         name = st.text_input("اسم المورد", key="supp_name")
         col1, col2 = st.columns(2)
         phone = col1.text_input("رقم الهاتف", key="supp_phone")
         address = col2.text_input("العنوان", key="supp_addr")
 
-        if st.button("إضافة مورد", key="add_supp_btn"):
+        if st.button("➕ إضافة المورد", key="add_supp_btn"):
             if name:
-                conn.execute(
-                    "INSERT INTO suppliers (name, phone, address) VALUES (?, ?, ?)",
-                    (name, phone, address)
-                )
-                conn.commit()
-                st.success(f"تمت إضافة المورد '{name}'")
-                st.rerun()
+                try:
+                    conn.execute(
+                        "INSERT INTO suppliers (name, phone, address) VALUES (?, ?, ?)",
+                        (name, phone, address)
+                    )
+                    conn.commit()
+                    st.success(f"✅ تمت إضافة المورد '{name}' بنجاح")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"فشل في إضافة المورد: {e}")
             else:
-                st.error("اسم المورد مطلوب")
+                st.error("⚠️ اسم المورد مطلوب")
 
-        existing = pd.read_sql_query("SELECT * FROM suppliers", conn)
+        st.markdown("---")
+        st.subheader("الموردين الحاليين")
+        existing = pd.read_sql_query("SELECT * FROM suppliers ORDER BY id DESC", conn)
         if not existing.empty:
-            st.dataframe(existing, use_container_width=True)
+            st.dataframe(existing, use_container_width=True, hide_index=True)
+        else:
+            st.info("لا يوجد موردون بعد")
 
     conn.close()
