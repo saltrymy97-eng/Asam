@@ -22,7 +22,8 @@ import roles_permissions
 import period_closing
 import fifo_inventory
 import payroll
-import ai_assistant  # 🆕 المساعد الذكي
+import ai_assistant
+import closing_entries  # 🆕 قيد إغلاق الحسابات
 
 st.set_page_config(page_title="XD ERP", layout="wide")
 
@@ -55,9 +56,10 @@ else:
                 "القوائم المالية",
                 "الصلاحيات",
                 "إغلاق الفترات",
+                "إغلاق الحسابات",       # 🆕
                 "FIFO المخزون",
                 "كشف الرواتب",
-                "المساعد الذكي",        # 🆕
+                "المساعد الذكي",
                 "تسجيل الخروج"
             ],
             icons=[
@@ -71,9 +73,10 @@ else:
                 "file-earmark-bar-graph",
                 "shield-lock",
                 "calendar-check",
+                "journal-x",            # 🆕 أيقونة إغلاق الحسابات
                 "boxes",
                 "cash-coin",
-                "robot",                 # 🆕 أيقونة المساعد الذكي
+                "robot",
                 "box-arrow-right"
             ],
             menu_icon="cast",
@@ -100,11 +103,13 @@ else:
         roles_permissions.show()
     elif selected == "إغلاق الفترات":
         period_closing.show()
+    elif selected == "إغلاق الحسابات":     # 🆕
+        closing_entries.show()
     elif selected == "FIFO المخزون":
         fifo_inventory.show()
     elif selected == "كشف الرواتب":
         payroll.show()
-    elif selected == "المساعد الذكي":     # 🆕
+    elif selected == "المساعد الذكي":
         ai_assistant.show()
     elif selected == "تسجيل الخروج":
         auth.logout()
