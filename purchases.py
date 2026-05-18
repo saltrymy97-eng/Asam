@@ -1,4 +1,4 @@
-# modules/purchases.py - إدارة المشتريات
+# purchases.py - إدارة المشتريات (مُحدَّث - إضافة الموردين تعمل)
 import streamlit as st
 import pandas as pd
 from database import get_connection
@@ -26,16 +26,15 @@ def show():
         products = pd.read_sql_query("SELECT id, name, purchase_price FROM products", conn)
         if products.empty:
             st.warning("لا توجد منتجات. أضف منتجات من وحدة المخزون أولاً.")
+            conn.close()
             return
 
-        # إعداد قائمة بنود المشتريات
         if 'purchase_items' not in st.session_state:
             st.session_state.purchase_items = []
 
         col1, col2, col3 = st.columns(3)
         selected_product = col1.selectbox("اختر المنتج", products["name"].tolist(), key="pur_prod_sel")
         qty = col2.number_input("الكمية", min_value=1, step=1, key="pur_qty_sel")
-        # سعر الشراء قابل للتعديل
         default_price = float(products[products["name"] == selected_product]["purchase_price"].values[0])
         unit_price = col3.number_input("سعر الشراء للوحدة", min_value=0.0, step=0.01, value=default_price, key="pur_price_sel")
 
@@ -50,7 +49,6 @@ def show():
             st.session_state.purchase_items.append(item)
             st.success(f"تمت إضافة {selected_product}")
 
-        # عرض البنود الحالية
         if st.session_state.purchase_items:
             st.markdown("---")
             st.subheader("بنود الفاتورة")
@@ -65,25 +63,21 @@ def show():
                     st.error("يجب اختيار مورد")
                 else:
                     try:
-                        # إدراج الفاتورة
                         cursor = conn.execute(
                             "INSERT INTO invoices (type, party_id, invoice_date, total, status) VALUES ('purchase', ?, date('now'), ?, 'completed')",
                             (supplier_id, total_purchase)
                         )
                         invoice_id = cursor.lastrowid
 
-                        # إدراج البنود وتحديث المخزون
                         for item in st.session_state.purchase_items:
                             conn.execute(
                                 "INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?)",
                                 (invoice_id, item["product_id"], item["quantity"], item["unit_price"])
                             )
-                            # حركة مخزون (داخل)
                             conn.execute(
                                 "INSERT INTO stock_movements (product_id, type, quantity, date, reference) VALUES (?, 'in', ?, date('now'), ?)",
                                 (item["product_id"], item["quantity"], f"فاتورة مشتريات #{invoice_id}")
                             )
-                            # زيادة المخزون
                             conn.execute(
                                 "UPDATE products SET quantity = quantity + ? WHERE id = ?",
                                 (item["quantity"], item["product_id"])
@@ -125,25 +119,25 @@ def show():
         else:
             st.info("لا توجد فواتير مشتريات بعد")
 
-    # ---------- التبويب 3: الموردين ----------
+    # ---------- التبويب 3: الموردين (مُعدل - بدون st.form) ----------
     with tab3:
         st.subheader("إدارة الموردين")
-        with st.form("add_supplier"):
-            col1, col2 = st.columns(2)
-            name = col1.text_input("اسم المورد")
-            phone = col2.text_input("رقم الهاتف")
-            address = st.text_input("العنوان")
-            if st.form_submit_button("إضافة مورد"):
-                if name:
-                    conn.execute(
-                        "INSERT INTO suppliers (name, phone, address) VALUES (?, ?, ?)",
-                        (name, phone, address)
-                    )
-                    conn.commit()
-                    st.success(f"تمت إضافة المورد '{name}'")
-                    st.rerun()
-                else:
-                    st.error("اسم المورد مطلوب")
+        name = st.text_input("اسم المورد", key="supp_name")
+        col1, col2 = st.columns(2)
+        phone = col1.text_input("رقم الهاتف", key="supp_phone")
+        address = col2.text_input("العنوان", key="supp_addr")
+
+        if st.button("إضافة مورد", key="add_supp_btn"):
+            if name:
+                conn.execute(
+                    "INSERT INTO suppliers (name, phone, address) VALUES (?, ?, ?)",
+                    (name, phone, address)
+                )
+                conn.commit()
+                st.success(f"تمت إضافة المورد '{name}'")
+                st.rerun()
+            else:
+                st.error("اسم المورد مطلوب")
 
         existing = pd.read_sql_query("SELECT * FROM suppliers", conn)
         if not existing.empty:
