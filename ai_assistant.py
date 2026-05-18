@@ -1,9 +1,23 @@
+# ai_assistant.py – مساعد ذكي بواجهة زجاجية فخمة وألوان زاهية
 import streamlit as st
 import sqlite3
 import pandas as pd
 from groq import Groq
 
 DB_PATH = "erp.db"
+
+# ========== ألوان التصميم ==========
+BG_GRADIENT = "linear-gradient(135deg, #0F172A 0%, #1E1B4B 100%)"
+GLASS_BG = "rgba(255, 255, 255, 0.12)"
+GLASS_BORDER = "rgba(255, 255, 255, 0.25)"
+GLASS_SHADOW = "0 8px 32px 0 rgba(0,0,0,0.37)"
+TEXT_PRIMARY = "#F8FAFC"
+TEXT_SECONDARY = "#CBD5E1"
+ACCENT_BLUE = "#3B82F6"
+ACCENT_GREEN = "#10B981"
+ACCENT_ORANGE = "#F59E0B"
+ACCENT_RED = "#EF4444"
+ACCENT_PURPLE = "#8B5CF6"
 
 # ========== دوال مساعدة ==========
 def get_conn():
@@ -86,17 +100,23 @@ def get_all_accounts():
     conn.close()
     return accounts
 
-# ========== واجهة المساعد الذكي ==========
+# ========== واجهة المساعد الذكي – تصميم زجاجي فخم ==========
 def show():
-    st.title("🤖 المساعد الذكي XD ERP")
+    # ---------- رأس الصفحة ----------
+    st.markdown(f"""
+    <div style="margin-bottom: 2rem; text-align:right;">
+        <h1 style="color:{TEXT_PRIMARY}; font-size:2.8rem; margin:0; text-shadow:0 0 20px {ACCENT_PURPLE};">🤖 المساعد الذكي XD</h1>
+        <p style="color:{TEXT_SECONDARY}; font-size:1.2rem;">ستة خبراء في مكان واحد لخدمة أعمالك</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # 🆕 التأكد من وجود جدول الحسابات
     create_accounts_table()
 
     if "GROQ_API_KEY" not in st.secrets:
         st.error("❌ الرجاء إضافة `GROQ_API_KEY` في إعدادات Streamlit Cloud (Secrets).")
         return
 
+    # ---------- تبويبات زجاجية ----------
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "🧠 مساعد محاسبي", "📊 محلل مالي", "📦 توقع المخزون",
         "💬 شات الموظفين", "📝 قيود تلقائية", "🔍 كشف الاحتيال"
@@ -104,9 +124,9 @@ def show():
 
     # ---------- 1. مساعد محاسبي ----------
     with tab1:
-        st.subheader("اسأل عن أي شيء في حساباتك")
-        question = st.text_input("سؤالك:", placeholder="مثال: كم صافي الربح هذا الشهر؟")
-        if st.button("اسأل", key="ask_finance"):
+        st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>اسأل عن أي شيء في حساباتك</h3>", unsafe_allow_html=True)
+        question = st.text_input("سؤالك:", placeholder="مثال: كم صافي الربح هذا الشهر؟", key="q1")
+        if st.button("🔮 اسأل الخبير", key="ask_finance"):
             if question:
                 data = get_financial_summary()
                 prompt = f"""أنت مساعد محاسبي خبير. استخدم البيانات التالية للإجابة:
@@ -117,14 +137,18 @@ def show():
 الخصوم: {data['liabilities']:,.2f}
 حقوق الملكية: {data['equity']:,.2f}
 أجب بالعربية على السؤال التالي:"""
-                with st.spinner("جاري التفكير..."):
+                with st.spinner("🧠 التفكير..."):
                     answer = query_groq(prompt, question)
-                st.success(answer)
+                st.markdown(f"""
+                <div style="background:{GLASS_BG}; backdrop-filter:blur(10px); border:1px solid {GLASS_BORDER}; border-radius:16px; padding:1.5rem; margin-top:1rem; box-shadow:{GLASS_SHADOW};">
+                    <p style="color:{TEXT_PRIMARY}; font-size:1.1rem; margin:0;">{answer}</p>
+                </div>
+                """, unsafe_allow_html=True)
 
     # ---------- 2. محلل مالي ----------
     with tab2:
-        st.subheader("تحليل القوائم المالية وتوصيات")
-        if st.button("حلل القوائم المالية الآن", key="analyze_fin"):
+        st.markdown(f"<h3 style='color:{ACCENT_GREEN};'>تحليل القوائم المالية وتوصيات</h3>", unsafe_allow_html=True)
+        if st.button("📈 حلل القوائم المالية الآن", key="analyze_fin"):
             data = get_financial_summary()
             prompt = f"""أنت محلل مالي خبير. حلل البيانات التالية وقدم توصيات:
 - الإيرادات: {data['revenue']:,.2f}
@@ -134,50 +158,62 @@ def show():
 - الخصوم: {data['liabilities']:,.2f}
 - حقوق الملكية: {data['equity']:,.2f}
 قدم تحليلاً شاملاً بالعربية مع نسب مالية رئيسية وتوصيات قابلة للتنفيذ."""
-            with st.spinner("جاري التحليل..."):
+            with st.spinner("📊 التحليل..."):
                 analysis = query_groq(prompt, "حلل هذه البيانات")
-            st.markdown(analysis)
+            st.markdown(f"""
+            <div style="background:{GLASS_BG}; backdrop-filter:blur(10px); border:1px solid {GLASS_BORDER}; border-radius:16px; padding:1.5rem; margin-top:1rem; box-shadow:{GLASS_SHADOW};">
+                <div style="color:{TEXT_PRIMARY}; font-size:1.1rem;">{analysis}</div>
+            </div>
+            """, unsafe_allow_html=True)
 
     # ---------- 3. توقع المخزون ----------
     with tab3:
-        st.subheader("المنتجات المتوقع نفادها")
+        st.markdown(f"<h3 style='color:{ACCENT_ORANGE};'>المنتجات المتوقع نفادها</h3>", unsafe_allow_html=True)
         low, all_prods = get_inventory_data()
-        if st.button("توقع الطلب", key="predict_inv"):
+        if st.button("📦 توقع الطلب", key="predict_inv"):
             if all_prods:
                 df = pd.DataFrame(all_prods)
                 prompt = f"""أنت خبير مخزون. حلل بيانات المنتجات التالية وتوقع أيها سينفد قريباً:
 {df.to_string()}
 اذكر المنتجات المهددة بالنفاد، والكميات المقترح طلبها، وأي ملاحظات. أجب بالعربية."""
-                with st.spinner("جاري التحليل..."):
+                with st.spinner("📦 التحليل..."):
                     prediction = query_groq(prompt, "توقع الطلب")
-                st.markdown(prediction)
+                st.markdown(f"""
+                <div style="background:{GLASS_BG}; backdrop-filter:blur(10px); border:1px solid {GLASS_BORDER}; border-radius:16px; padding:1.5rem; margin-top:1rem; box-shadow:{GLASS_SHADOW};">
+                    <div style="color:{TEXT_PRIMARY}; font-size:1.1rem;">{prediction}</div>
+                </div>
+                """, unsafe_allow_html=True)
         if low:
-            st.warning("منتجات تحت الحد الأدنى حالياً:")
+            st.warning("⚠️ منتجات تحت الحد الأدنى حالياً:")
             st.dataframe(pd.DataFrame(low))
 
     # ---------- 4. شات الموظفين ----------
     with tab4:
-        st.subheader("اسأل عن راتبك أو إجازاتك")
-        emp_name = st.text_input("اسمك:", placeholder="أدخل اسمك للبحث")
-        emp_q = st.text_input("سؤالك:", placeholder="مثال: كم راتبي؟")
-        if st.button("اسأل", key="ask_emp") and emp_name and emp_q:
+        st.markdown(f"<h3 style='color:{ACCENT_PURPLE};'>اسأل عن راتبك أو إجازاتك</h3>", unsafe_allow_html=True)
+        emp_name = st.text_input("اسمك:", placeholder="أدخل اسمك للبحث", key="emp_name")
+        emp_q = st.text_input("سؤالك:", placeholder="مثال: كم راتبي؟", key="emp_q")
+        if st.button("💬 اسأل", key="ask_emp") and emp_name and emp_q:
             emp, sal = get_employee_info(emp_name)
             if emp:
                 info = f"موظف: {emp['name']}, المنصب: {emp['position']}"
                 if sal:
                     info += f", الراتب الأساسي: {sal['basic_salary']}, بدل السكن: {sal['housing_allowance']}, بدل النقل: {sal['transport_allowance']}, الخصومات: {sal['deductions']}"
                 prompt = f"أنت مساعد موارد بشرية. بيانات الموظف: {info}. أجب عن السؤال التالي بالعربية:"
-                with st.spinner("جاري البحث..."):
+                with st.spinner("💬 البحث..."):
                     ans = query_groq(prompt, emp_q)
-                st.success(ans)
+                st.markdown(f"""
+                <div style="background:{GLASS_BG}; backdrop-filter:blur(10px); border:1px solid {GLASS_BORDER}; border-radius:16px; padding:1.5rem; margin-top:1rem; box-shadow:{GLASS_SHADOW};">
+                    <p style="color:{TEXT_PRIMARY}; font-size:1.1rem; margin:0;">{ans}</p>
+                </div>
+                """, unsafe_allow_html=True)
             else:
-                st.error("لم يتم العثور على الموظف.")
+                st.error("❌ لم يتم العثور على الموظف.")
 
     # ---------- 5. قيود تلقائية ----------
     with tab5:
-        st.subheader("إنشاء قيد محاسبي بلغة طبيعية")
-        text = st.text_area("اكتب العملية:", placeholder="مثال: اشتريت بضاعة بمبلغ 5000 ريال نقداً")
-        if st.button("إنشاء القيد", key="create_entry"):
+        st.markdown(f"<h3 style='color:{ACCENT_RED};'>إنشاء قيد محاسبي بلغة طبيعية</h3>", unsafe_allow_html=True)
+        text = st.text_area("اكتب العملية:", placeholder="مثال: اشتريت بضاعة بمبلغ 5000 ريال نقداً", key="entry_text")
+        if st.button("📝 إنشاء القيد", key="create_entry"):
             if text:
                 accounts = get_all_accounts()
                 acc_list = "\n".join([f"{a['code']} - {a['name']}" for a in accounts]) if accounts else "لا توجد حسابات مضافة بعد"
@@ -189,22 +225,26 @@ def show():
 مثال:
 المخزون | 5000 | الصندوق | 5000
 العملية: {text}"""
-                with st.spinner("جاري إنشاء القيد..."):
+                with st.spinner("📝 جاري إنشاء القيد..."):
                     entry = query_groq(prompt, text)
                 st.code(entry)
 
     # ---------- 6. كشف الاحتيال ----------
     with tab6:
-        st.subheader("فحص القيود المشبوهة")
-        if st.button("افحص القيود", key="audit"):
+        st.markdown(f"<h3 style='color:#EC4899;'>فحص القيود المشبوهة</h3>", unsafe_allow_html=True)
+        if st.button("🕵️ افحص القيود", key="audit"):
             entries = get_recent_entries()
             if entries:
                 df = pd.DataFrame(entries)
                 prompt = f"""أنت مدقق حسابات. افحص القيود التالية وابحث عن أي شذوذ أو علامات احتيال:
 {df.to_string()}
 اذكر القيود المشبوهة (إن وجدت) مع ذكر السبب. أجب بالعربية."""
-                with st.spinner("جاري الفحص..."):
+                with st.spinner("🔍 الفحص..."):
                     audit = query_groq(prompt, "افحص هذه القيود")
-                st.markdown(audit)
+                st.markdown(f"""
+                <div style="background:{GLASS_BG}; backdrop-filter:blur(10px); border:1px solid {GLASS_BORDER}; border-radius:16px; padding:1.5rem; margin-top:1rem; box-shadow:{GLASS_SHADOW};">
+                    <div style="color:{TEXT_PRIMARY}; font-size:1.1rem;">{audit}</div>
+                </div>
+                """, unsafe_allow_html=True)
             else:
-                st.info("لا توجد قيود لفحصها.")
+                st.info("ℹ️ لا توجد قيود لفحصها.")
