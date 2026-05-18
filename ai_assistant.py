@@ -211,12 +211,11 @@ def show():
             else:
                 st.error("❌ لم يتم العثور على الموظف.")
 
-    # ---------- 5. قيود تلقائية (دعم القيود المركبة + زر تسجيل) ----------
+    # ---------- 5. قيود تلقائية (دعم القيود المركبة + تسجيل) ----------
     with tab5:
         st.markdown(f"<h3 style='color:{ACCENT_RED};'>إنشاء قيد محاسبي مركب بلغة طبيعية</h3>", unsafe_allow_html=True)
         text = st.text_area("اكتب العملية:", placeholder="مثال: اشتريت بضاعة بـ 5000 ومصاريف شحن بـ 200، دفعت 3000 نقداً والباقي على الحساب", key="entry_text")
         
-        # حالة مؤقتة لتخزين القيد الذي تم إنشاؤه
         if "generated_entry" not in st.session_state:
             st.session_state.generated_entry = None
 
@@ -307,42 +306,24 @@ def show():
                 st.session_state.generated_entry = {"lines": entry_lines}
                 st.rerun()
 
-        # عرض القيد المحفوظ بشكل جميل
+        # عرض القيد بشكل جميل باستخدام DataFrame داخل بطاقة زجاجية
         if st.session_state.generated_entry is not None:
             lines = st.session_state.generated_entry["lines"]
             st.markdown(f"<h4 style='color:{TEXT_PRIMARY}; margin-top:1rem;'>القيد المقترح</h4>", unsafe_allow_html=True)
-            html = f"""
-            <div style="background:{GLASS_BG}; backdrop-filter:blur(10px); border:1px solid {GLASS_BORDER}; border-radius:16px; padding:1.5rem; margin:1rem 0; box-shadow:{GLASS_SHADOW}; color:{TEXT_PRIMARY};">
-            <table style="width:100%; border-collapse:collapse;">
-            <tr style="border-bottom:1px solid {GLASS_BORDER};">
-                <th style="text-align:right; padding:8px;">الحساب</th>
-                <th style="text-align:right; padding:8px;">مدين</th>
-                <th style="text-align:right; padding:8px;">دائن</th>
-            </tr>
-            """
-            total_debit = total_credit = 0.0
-            for line in lines:
-                debit = line['debit']
-                credit = line['credit']
-                total_debit += debit
-                total_credit += credit
-                html += f"""
-                <tr>
-                    <td style="padding:8px; text-align:right;">{line['account']}</td>
-                    <td style="padding:8px; text-align:right;">{debit:,.2f}</td>
-                    <td style="padding:8px; text-align:right;">{credit:,.2f}</td>
-                </tr>
-                """
-            html += f"""
-            <tr style="border-top:1px solid {GLASS_BORDER}; font-weight:bold;">
-                <td style="padding:8px; text-align:right;">المجموع</td>
-                <td style="padding:8px; text-align:right;">{total_debit:,.2f}</td>
-                <td style="padding:8px; text-align:right;">{total_credit:,.2f}</td>
-            </tr>
-            </table>
-            </div>
-            """
-            st.markdown(html, unsafe_allow_html=True)
+            # بناء DataFrame
+            df = pd.DataFrame(lines)
+            total_debit = df["debit"].sum()
+            total_credit = df["credit"].sum()
+            # صف المجاميع
+            summary = pd.DataFrame([{"account": "المجموع", "debit": total_debit, "credit": total_credit}])
+            df_display = pd.concat([df, summary], ignore_index=True)
+            df_display = df_display.rename(columns={"account": "الحساب", "debit": "مدين", "credit": "دائن"})
+            # تطبيق تنسيق الأرقام
+            st.dataframe(
+                df_display.style.format({"مدين": "{:,.2f}", "دائن": "{:,.2f}"}),
+                use_container_width=True,
+                hide_index=True
+            )
 
     # ---------- 6. كشف الاحتيال ----------
     with tab6:
