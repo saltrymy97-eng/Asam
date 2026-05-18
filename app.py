@@ -25,6 +25,9 @@ import payroll
 
 st.set_page_config(page_title="نظام ERP", layout="wide")
 
+# 🆕 هذا السطر يضيف manifest.json للأيقونة الاحترافية
+st.markdown('<link rel="manifest" href="manifest.json">', unsafe_allow_html=True)
+
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 if 'user' not in st.session_state:
@@ -44,28 +47,28 @@ else:
                 "المشتريات",
                 "الحسابات",
                 "الموارد البشرية",
-                "شجرة الحسابات",        # 🆕
-                "القوائم المالية",       # 🆕
-                "الصلاحيات",            # 🆕
-                "إغلاق الفترات",        # 🆕
-                "FIFO المخزون",         # 🆕
-                "كشف الرواتب",          # 🆕
+                "شجرة الحسابات",
+                "القوائم المالية",
+                "الصلاحيات",
+                "إغلاق الفترات",
+                "FIFO المخزون",
+                "كشف الرواتب",
                 "تسجيل الخروج"
             ],
             icons=[
-                "speedometer2",          # لوحة المعلومات
-                "box",                   # المخزون
-                "cart",                  # المبيعات
-                "truck",                 # المشتريات
-                "calculator",            # الحسابات
-                "people",                # الموارد البشرية
-                "diagram-3",             # شجرة الحسابات 🆕
-                "file-earmark-bar-graph",# القوائم المالية 🆕
-                "shield-lock",           # الصلاحيات 🆕
-                "calendar-check",        # إغلاق الفترات 🆕
-                "boxes",                 # FIFO المخزون 🆕
-                "cash-coin",             # كشف الرواتب 🆕
-                "box-arrow-right"        # تسجيل الخروج
+                "speedometer2",
+                "box",
+                "cart",
+                "truck",
+                "calculator",
+                "people",
+                "diagram-3",
+                "file-earmark-bar-graph",
+                "shield-lock",
+                "calendar-check",
+                "boxes",
+                "cash-coin",
+                "box-arrow-right"
             ],
             menu_icon="cast",
             default_index=0,
