@@ -6,3 +6,4 @@ bcrypt
 streamlit-option-menu
 openpyxl
 groq
+psycopg2-binary
