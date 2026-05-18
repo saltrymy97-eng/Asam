@@ -1,4 +1,4 @@
-# database.py - قاعدة بيانات نظام ERP
+# database.py - قاعدة بيانات نظام ERP كاملة (جميع الجداول)
 import sqlite3
 import bcrypt
 
@@ -108,6 +108,82 @@ def init_db():
         date TEXT,
         status TEXT,
         FOREIGN KEY (employee_id) REFERENCES employees(id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS accounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        parent_id INTEGER,
+        level INTEGER DEFAULT 1,
+        is_debit TEXT DEFAULT 'debit',
+        FOREIGN KEY (parent_id) REFERENCES accounts(id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS inventory_batches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER,
+        quantity REAL NOT NULL,
+        unit_cost REAL NOT NULL,
+        batch_date TEXT NOT NULL,
+        reference TEXT,
+        FOREIGN KEY (product_id) REFERENCES products(id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS fifo_consumptions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        batch_id INTEGER,
+        consumed_qty REAL NOT NULL,
+        consumption_date TEXT NOT NULL,
+        reference TEXT,
+        FOREIGN KEY (batch_id) REFERENCES inventory_batches(id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS employee_salaries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        employee_id INTEGER UNIQUE,
+        basic_salary REAL DEFAULT 0,
+        housing_allowance REAL DEFAULT 0,
+        transport_allowance REAL DEFAULT 0,
+        other_allowances REAL DEFAULT 0,
+        deductions REAL DEFAULT 0,
+        FOREIGN KEY (employee_id) REFERENCES employees(id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS payroll_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        employee_id INTEGER,
+        month TEXT NOT NULL,
+        basic_salary REAL,
+        housing_allowance REAL,
+        transport_allowance REAL,
+        other_allowances REAL,
+        total_allowances REAL,
+        deductions REAL,
+        net_salary REAL,
+        journal_entry_id INTEGER,
+        FOREIGN KEY (employee_id) REFERENCES employees(id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS closed_periods (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        period_type TEXT NOT NULL,
+        period_value TEXT NOT NULL,
+        closed_at TEXT NOT NULL,
+        closed_by TEXT NOT NULL,
+        UNIQUE(period_type, period_value)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS roles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE NOT NULL
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS role_permissions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        role_id INTEGER,
+        module TEXT NOT NULL,
+        FOREIGN KEY (role_id) REFERENCES roles(id)
     )''')
 
     conn.commit()
