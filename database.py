@@ -1,3 +1,4 @@
+# database.py - النسخة النهائية للاتصال بـ Supabase PostgreSQL
 import psycopg2
 import psycopg2.extras
 import bcrypt
@@ -5,7 +6,8 @@ import streamlit as st
 from urllib.parse import urlparse, unquote, quote_plus
 
 def get_connection():
-    """إنشاء اتصال بقاعدة بيانات PostgreSQL مع معالجة آمنة للرابط"""
+    """إنشاء اتصال بقاعدة بيانات PostgreSQL على Supabase"""
+    # قراءة الرابط من Secrets (يُفترض أن يكون خاليًا من الرموز الخاصة الآن)
     db_url = st.secrets["DATABASE_URL"]
     
     # تحليل الرابط لاستخراج الأجزاء
@@ -16,9 +18,10 @@ def get_connection():
     port = parsed.port or 5432
     database = parsed.path.lstrip("/")
     
-    # بناء رابط الاتصال الكامل مع sslmode
+    # بناء رابط الاتصال الكامل مع SSL المطلوب لـ Supabase
     conn_string = f"postgresql://{username}:{quote_plus(password)}@{host}:{port}/{database}?sslmode=require"
     
+    # إنشاء الاتصال
     conn = psycopg2.connect(conn_string)
     conn.autocommit = False
     return conn
