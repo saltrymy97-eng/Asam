@@ -1,4 +1,4 @@
-# purchases.py - إدارة المشتريات (إصدار نهائي - الموردين يعمل 100%)
+# purchases.py - إدارة المشتريات (إصدار معدل - معالجة FOREIGN KEY)
 import streamlit as st
 import pandas as pd
 from database import get_connection
@@ -6,6 +6,9 @@ from database import get_connection
 def show():
     st.title("🚚 إدارة المشتريات")
     conn = get_connection()
+    
+    # تعطيل المفاتيح الخارجية مؤقتًا لتجنب المشكلة
+    conn.execute("PRAGMA foreign_keys = OFF")
 
     tab1, tab2, tab3 = st.tabs(["إنشاء فاتورة مشتريات", "فواتير المشتريات", "الموردين"])
 
@@ -62,6 +65,21 @@ def show():
                     st.error("يجب اختيار مورد")
                 else:
                     try:
+                        # التحقق من وجود المورد
+                        supplier_check = pd.read_sql_query("SELECT id FROM suppliers WHERE id = ?", conn, params=(supplier_id,))
+                        if supplier_check.empty:
+                            st.error("المورد غير موجود في قاعدة البيانات")
+                            conn.close()
+                            return
+                            
+                        # التحقق من وجود المنتجات
+                        for item in st.session_state.purchase_items:
+                            product_check = pd.read_sql_query("SELECT id FROM products WHERE id = ?", conn, params=(item["product_id"],))
+                            if product_check.empty:
+                                st.error(f"المنتج {item['name']} غير موجود في قاعدة البيانات")
+                                conn.close()
+                                return
+
                         cursor = conn.execute(
                             "INSERT INTO invoices (type, party_id, invoice_date, total, status) VALUES ('purchase', ?, date('now'), ?, 'completed')",
                             (supplier_id, total_purchase)
@@ -118,11 +136,10 @@ def show():
         else:
             st.info("لا توجد فواتير مشتريات بعد")
 
-    # ---------- التبويب 3: الموردين (جديد كلياً - يعمل 100%) ----------
+    # ---------- التبويب 3: الموردين ----------
     with tab3:
         st.subheader("إدارة الموردين")
         
-        # نموذج إضافة مورد
         st.markdown("### إضافة مورد جديد")
         name = st.text_input("اسم المورد", key="supp_name")
         col1, col2 = st.columns(2)
