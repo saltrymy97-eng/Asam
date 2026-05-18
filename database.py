@@ -1,9 +1,8 @@
-# database.py - النسخة النهائية المعدلة (تحليل آمن لرابط PostgreSQL)
 import psycopg2
 import psycopg2.extras
 import bcrypt
 import streamlit as st
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse, unquote, quote_plus
 
 def get_connection():
     """إنشاء اتصال بقاعدة بيانات PostgreSQL مع معالجة آمنة للرابط"""
@@ -11,23 +10,16 @@ def get_connection():
     
     # تحليل الرابط لاستخراج الأجزاء
     parsed = urlparse(db_url)
-    
-    # استخراج بيانات الاتصال
     username = parsed.username
     password = unquote(parsed.password) if parsed.password else ""
     host = parsed.hostname
     port = parsed.port or 5432
     database = parsed.path.lstrip("/")
     
-    # إنشاء الاتصال باستخدام المعاملات المنفصلة (أكثر أماناً)
-    conn = psycopg2.connect(
-        host=host,
-        port=port,
-        database=database,
-        user=username,
-        password=password,
-        sslmode="require"  # مطلوب لـ Supabase
-    )
+    # بناء رابط الاتصال الكامل مع sslmode
+    conn_string = f"postgresql://{username}:{quote_plus(password)}@{host}:{port}/{database}?sslmode=require"
+    
+    conn = psycopg2.connect(conn_string)
     conn.autocommit = False
     return conn
 
