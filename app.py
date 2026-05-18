@@ -25,25 +25,12 @@ import payroll
 
 st.set_page_config(page_title="XD ERP", layout="wide")
 
-# ========== 🆕 إعدادات الأيقونة الشاملة والمضمونة ==========
+# ========== إعدادات الأيقونة - معطلة حالياً ==========
+# يمكن ترك هذا القسم فارغاً أو حذفه بالكامل
 st.markdown("""
-    <!-- أيقونة أساسية للأندرويد والويب -->
-    <link rel="icon" type="image/png" sizes="192x192" href="https://placehold.co/192x192/0F172A/F59E0B?text=X&font=raleway">
-    <link rel="shortcut icon" href="https://placehold.co/192x192/0F172A/F59E0B?text=X&font=raleway">
-    
-    <!-- آبل (أيفون) -->
-    <link rel="apple-touch-icon" sizes="180x180" href="https://placehold.co/180x180/0F172A/F59E0B?text=X&font=raleway">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    
-    <!-- شريط العنوان واللون -->
-    <meta name="theme-color" content="#0F172A">
-    <meta name="msapplication-TileColor" content="#0F172A">
-    
-    <!-- اختصار التطبيق -->
-    <link rel="manifest" href="data:application/json;base64,ewogICJuYW1lIjogIlhEIEVSUCIsCiAgInNob3J0X25hbWUiOiAiWEQiLAogICJzdGFydF91cmwiOiAiLyIsCiAgImRpc3BsYXkiOiAic3RhbmRhbG9uZSIsCiAgImJhY2tncm91bmRfY29sb3IiOiAiIzB GMTcyQSIsCiAgInRoZW1lX2NvbG9yIjogIiMwRjE3MkEiLAogICJpY29ucyI6IFsKICAgIHsKICAgICAgInNyYyI6ICJodHRwczovL3BsYWNlaG9sZC5jby8xOTJ4MTkyLzB GMTcyQS9GNTlFMEI/dGV4dD1YJmZvbnQ9cmFsZXdheSIsCiAgICAgICJzaXplcyI6ICIxOTJ4MTkyIiwKICAgICAgInR5cGUiOiAiaW1hZ2UvcG5nIgogICAgfQogIF0KfQ==">
+    <link rel="icon" href="https://streamlit.io/favicon.svg">
 """, unsafe_allow_html=True)
-# =============================================
+# ===================================================
 
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
