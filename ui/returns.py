@@ -1,4 +1,4 @@
-# ui/returns.py - واجهة مرتجعات البضاعة (المفاتيح الفريدة تعمل)
+# ui/returns.py - واجهة مرتجعات البضاعة (إصدار نهائي - حقول الكمية منفصلة)
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -40,14 +40,19 @@ def show():
                     
                     return_items = []
                     for item in items:
-                        unique_key = f"ret_{inv['id']}_{item['id']}"
-                        qty = st.number_input(
-                            f"كمية {item['name']} (المتاح: {item['quantity']})",
-                            min_value=0,
-                            max_value=int(item["quantity"]),
-                            value=0,
-                            key=unique_key
-                        )
+                        col1, col2 = st.columns([2, 1])
+                        with col1:
+                            st.write(f"**{item['name']}** - المتاح: {item['quantity']}")
+                        with col2:
+                            qty = st.number_input(
+                                "الكمية",
+                                min_value=0,
+                                max_value=int(item["quantity"]),
+                                value=0,
+                                step=1,
+                                key=f"ret_{inv['id']}_{item['id']}",
+                                label_visibility="collapsed"
+                            )
                         if qty > 0:
                             return_items.append((item["name"], qty))
                     
@@ -93,14 +98,19 @@ def show():
                     
                     return_items = []
                     for item in items:
-                        unique_key = f"pret_{inv['id']}_{item['id']}"
-                        qty = st.number_input(
-                            f"كمية {item['name']} (المتاح: {item['quantity']})",
-                            min_value=0,
-                            max_value=int(item["quantity"]),
-                            value=0,
-                            key=unique_key
-                        )
+                        col1, col2 = st.columns([2, 1])
+                        with col1:
+                            st.write(f"**{item['name']}** - المتاح: {item['quantity']}")
+                        with col2:
+                            qty = st.number_input(
+                                "الكمية",
+                                min_value=0,
+                                max_value=int(item["quantity"]),
+                                value=0,
+                                step=1,
+                                key=f"pret_{inv['id']}_{item['id']}",
+                                label_visibility="collapsed"
+                            )
                         if qty > 0:
                             return_items.append((item["name"], qty))
                     
