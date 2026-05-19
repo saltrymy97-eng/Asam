@@ -1,11 +1,13 @@
 # ai_assistant.py – مساعد ذكي بواجهة زجاجية فخمة وألوان زاهية
 # يدعم القيود المركبة وتسجيل القيد مباشرة في قاعدة البيانات
 # المساعد المحاسبي الآن يرى كل بيانات النظام
+# 🆕 تبويب التنبؤ بالمستقبل (مبيعات، تدفق نقدي، مخزون، أرباح)
 import streamlit as st
 import sqlite3
 import pandas as pd
 from groq import Groq
 from datetime import date
+import json
 
 DB_PATH = "erp.db"
 
@@ -21,6 +23,8 @@ ACCENT_GREEN = "#10B981"
 ACCENT_ORANGE = "#F59E0B"
 ACCENT_RED = "#EF4444"
 ACCENT_PURPLE = "#8B5CF6"
+ACCENT_CYAN = "#06B6D4"
+ACCENT_PINK = "#EC4899"
 
 # ========== دوال مساعدة ==========
 def get_conn():
@@ -45,7 +49,7 @@ def create_accounts_table():
     conn.commit()
     conn.close()
 
-def query_groq(system_prompt, user_query):
+def query_groq(system_prompt, user_query, max_tokens=1500):
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -54,12 +58,12 @@ def query_groq(system_prompt, user_query):
             {"role": "user", "content": user_query}
         ],
         temperature=0.3,
-        max_tokens=1500
+        max_tokens=max_tokens
     )
     return response.choices[0].message.content
 
 def get_comprehensive_data():
-    """جمع جميع بيانات النظام للمساعد المحاسبي"""
+    """جمع جميع بيانات النظام للمساعد المحاسبي والتنبؤات"""
     conn = get_conn()
     
     # 1. الملخص المالي
@@ -110,6 +114,33 @@ def get_comprehensive_data():
     entries = conn.execute("SELECT date, description FROM journal_entries ORDER BY id DESC LIMIT 5").fetchall()
     entries_list = [dict(e) for e in entries]
     
+    # 9. بيانات إضافية للتنبؤات
+    # الفواتير حسب الشهر (آخر 12 شهر)
+    monthly_sales = conn.execute("""
+        SELECT strftime('%Y-%m', invoice_date) as month, SUM(total) as total
+        FROM invoices WHERE type='sale' AND status='completed'
+        GROUP BY month ORDER BY month DESC LIMIT 12
+    """).fetchall()
+    monthly_sales_list = [dict(m) for m in monthly_sales]
+    
+    monthly_purchases = conn.execute("""
+        SELECT strftime('%Y-%m', invoice_date) as month, SUM(total) as total
+        FROM invoices WHERE type='purchase' AND status='completed'
+        GROUP BY month ORDER BY month DESC LIMIT 12
+    """).fetchall()
+    monthly_purchases_list = [dict(m) for m in monthly_purchases]
+    
+    # معدل استهلاك المخزون
+    stock_consumption = conn.execute("""
+        SELECT p.name, 
+               COALESCE(SUM(CASE WHEN sm.type='out' THEN sm.quantity ELSE 0 END), 0) as total_out,
+               COUNT(DISTINCT strftime('%Y-%m', sm.date)) as months_count
+        FROM products p
+        LEFT JOIN stock_movements sm ON p.id = sm.product_id
+        GROUP BY p.id
+    """).fetchall()
+    consumption_list = [dict(s) for s in stock_consumption]
+    
     conn.close()
     
     return {
@@ -121,7 +152,10 @@ def get_comprehensive_data():
         "employees": employees_list,
         "recent_invoices": invoices_list,
         "recent_stock": stock_list,
-        "recent_entries": entries_list
+        "recent_entries": entries_list,
+        "monthly_sales": monthly_sales_list,
+        "monthly_purchases": monthly_purchases_list,
+        "stock_consumption": consumption_list
     }
 
 def get_inventory_data():
@@ -159,7 +193,7 @@ def show():
     st.markdown(f"""
     <div style="margin-bottom: 2rem; text-align:right;">
         <h1 style="color:{TEXT_PRIMARY}; font-size:2.8rem; margin:0; text-shadow:0 0 20px {ACCENT_PURPLE};">🤖 المساعد الذكي XD</h1>
-        <p style="color:{TEXT_SECONDARY}; font-size:1.2rem;">ستة خبراء في مكان واحد لخدمة أعمالك</p>
+        <p style="color:{TEXT_SECONDARY}; font-size:1.2rem;">سبعة خبراء في مكان واحد لخدمة أعمالك</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -170,9 +204,10 @@ def show():
         return
 
     # ---------- تبويبات زجاجية ----------
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "🧠 مساعد محاسبي", "📊 محلل مالي", "📦 توقع المخزون",
-        "💬 شات الموظفين", "📝 قيود تلقائية", "🔍 كشف الاحتيال"
+        "💬 شات الموظفين", "📝 قيود تلقائية", "🔍 كشف الاحتيال",
+        "🔮 تنبؤات مستقبلية"  # 🆕
     ])
 
     # ---------- 1. مساعد محاسبي (يرى كل البيانات الآن) ----------
@@ -182,9 +217,9 @@ def show():
         if st.button("🔮 اسأل الخبير", key="ask_finance"):
             if question:
                 data = get_comprehensive_data()
-                # تحويل البيانات إلى نص
-                import json
-                data_str = json.dumps(data, ensure_ascii=False, indent=2, default=str)
+                # إزالة بيانات التنبؤ الثقيلة من prompt المساعد المحاسبي
+                data_for_qa = {k: v for k, v in data.items() if k not in ["monthly_sales", "monthly_purchases", "stock_consumption"]}
+                data_str = json.dumps(data_for_qa, ensure_ascii=False, indent=2, default=str)
                 prompt = f"""أنت مساعد ذكي خبير في نظام ERP. لديك إمكانية الوصول إلى جميع بيانات النظام التالية:
 {data_str}
 
@@ -387,3 +422,58 @@ def show():
                 """, unsafe_allow_html=True)
             else:
                 st.info("ℹ️ لا توجد قيود لفحصها.")
+
+    # ---------- 7. 🔮 تنبؤات مستقبلية (جديد) ----------
+    with tab7:
+        st.markdown(f"<h3 style='color:{ACCENT_CYAN};'>🔮 تنبؤات مستقبلية شاملة</h3>", unsafe_allow_html=True)
+        st.markdown(f"<p style='color:{TEXT_SECONDARY};'>تحليل البيانات الحالية وتوقع المبيعات والتدفق النقدي والمخزون والأرباح للفترة القادمة</p>", unsafe_allow_html=True)
+        
+        forecast_period = st.selectbox("فترة التنبؤ", ["الشهر القادم", "الـ 3 أشهر القادمة", "الـ 6 أشهر القادمة", "السنة القادمة"], key="forecast_period")
+        
+        if st.button("🔮 ابدأ التنبؤ", key="start_forecast", type="primary"):
+            data = get_comprehensive_data()
+            
+            # تحويل البيانات إلى نص
+            data_str = json.dumps(data, ensure_ascii=False, indent=2, default=str)
+            
+            prompt = f"""أنت خبير تحليل مالي وتخطيط أعمال. لديك جميع بيانات النظام التالية:
+{data_str}
+
+المطلوب: تقديم تنبؤات شاملة للفترة: {forecast_period}.
+
+قم بتقديم التحليل التالي بالعربية، مع أرقام تقديرية مبنية على البيانات الحالية والاتجاهات:
+
+1. 📈 **توقع المبيعات**: توقع إجمالي المبيعات للفترة القادمة بناءً على اتجاهات المبيعات السابقة.
+
+2. 💰 **توقع التدفق النقدي**: توقع النقدية المتدفقة الداخلة والخارجة، وصافي التدفق النقدي.
+
+3. 📦 **توقع نفاد المخزون**: أي المنتجات ستنفد خلال هذه الفترة؟ وما هي الكميات المقترح شراؤها؟
+
+4. 💎 **توقع الأرباح**: توقع صافي الدخل للفترة القادمة بناءً على تقديرات الإيرادات والمصروفات.
+
+5. ⚠️ **المخاطر والتحديات**: ما هي المخاطر المحتملة التي يجب الانتباه لها؟
+
+قدم إجابتك بشكل منظم وواضح، مع أرقام محددة (حتى لو كانت تقديرية). لا تختلق بيانات غير موجودة، ولكن يمكنك استخدام البيانات الحالية لحساب تقديرات منطقية."""
+            
+            with st.spinner("🔮 جاري تحليل البيانات وتوليد التنبؤات..."):
+                forecast = query_groq(prompt, "قدم تنبؤات شاملة", max_tokens=2500)
+            
+            st.markdown(f"""
+            <div style="background:{GLASS_BG}; backdrop-filter:blur(10px); border:1px solid {GLASS_BORDER}; border-radius:16px; padding:2rem; margin-top:1rem; box-shadow:{GLASS_SHADOW};">
+                <div style="color:{TEXT_PRIMARY}; font-size:1rem; line-height:1.8;">{forecast}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # ملخص سريع بالأرقام
+            st.markdown("---")
+            st.markdown(f"<h4 style='color:{TEXT_PRIMARY};'>📊 ملخص المؤشرات الحالية</h4>", unsafe_allow_html=True)
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("الإيرادات الحالية", f"{data['revenue']:,.0f}")
+            with col2:
+                st.metric("صافي الدخل الحالي", f"{data['net_income']:,.0f}")
+            with col3:
+                st.metric("عدد المنتجات", len(data['products']))
+            with col4:
+                st.metric("عدد العملاء", len(data['customers']))
