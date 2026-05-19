@@ -33,9 +33,7 @@ def show():
                 if items:
                     st.markdown("**بنود الفاتورة:**")
                     items_df = pd.DataFrame(items)
-                    # عرض جميع الأعمدة ما عدا id
-                    display_cols = [c for c in items_df.columns if c != 'id']
-                    st.dataframe(items_df[display_cols], use_container_width=True)
+                    st.dataframe(items_df, use_container_width=True, hide_index=True)
                     
                     st.markdown("---")
                     st.subheader("اختر المنتجات المرتجعة")
@@ -88,8 +86,7 @@ def show():
                 if items:
                     st.markdown("**بنود الفاتورة:**")
                     items_df = pd.DataFrame(items)
-                    display_cols = [c for c in items_df.columns if c != 'id']
-                    st.dataframe(items_df[display_cols], use_container_width=True)
+                    st.dataframe(items_df, use_container_width=True, hide_index=True)
                     
                     st.markdown("---")
                     st.subheader("اختر المنتجات المرتجعة")
@@ -130,10 +127,6 @@ def show():
         returns = get_return_history()
         if returns:
             df = pd.DataFrame(returns)
-            df["type"] = df["type"].map({
-                "sale_return": "مرتجع مبيعات",
-                "purchase_return": "مرتجع مشتريات"
-            })
             st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.info("لا توجد مرتجعات بعد")
