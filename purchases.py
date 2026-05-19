@@ -1,13 +1,13 @@
-# purchases.py - إدارة المشتريات (إصدار معدل - معالجة FOREIGN KEY)
+# purchases.py - إدارة المشتريات (مع سجل التدقيق)
 import streamlit as st
 import pandas as pd
 from database import get_connection
+from services.audit_service import log_action  # 🆕
 
 def show():
     st.title("🚚 إدارة المشتريات")
     conn = get_connection()
     
-    # تعطيل المفاتيح الخارجية مؤقتًا لتجنب المشكلة
     conn.execute("PRAGMA foreign_keys = OFF")
 
     tab1, tab2, tab3 = st.tabs(["إنشاء فاتورة مشتريات", "فواتير المشتريات", "الموردين"])
@@ -65,14 +65,12 @@ def show():
                     st.error("يجب اختيار مورد")
                 else:
                     try:
-                        # التحقق من وجود المورد
                         supplier_check = pd.read_sql_query("SELECT id FROM suppliers WHERE id = ?", conn, params=(supplier_id,))
                         if supplier_check.empty:
                             st.error("المورد غير موجود في قاعدة البيانات")
                             conn.close()
                             return
                             
-                        # التحقق من وجود المنتجات
                         for item in st.session_state.purchase_items:
                             product_check = pd.read_sql_query("SELECT id FROM products WHERE id = ?", conn, params=(item["product_id"],))
                             if product_check.empty:
@@ -101,6 +99,14 @@ def show():
                             )
 
                         conn.commit()
+                        # 🆕 تسجيل في سجل التدقيق
+                        log_action(
+                            username=st.session_state.user.get('username', 'admin'),
+                            action="فاتورة مشتريات",
+                            table_name="invoices",
+                            record_id=invoice_id,
+                            new_value=f"المورد: {supplier_name}, الإجمالي: {total_purchase:,.2f}"
+                        )
                         st.success(f"تم حفظ فاتورة المشتريات رقم {invoice_id} بنجاح")
                         st.session_state.purchase_items = []
                         st.rerun()
@@ -154,6 +160,13 @@ def show():
                         (name, phone, address)
                     )
                     conn.commit()
+                    # 🆕 تسجيل في سجل التدقيق
+                    log_action(
+                        username=st.session_state.user.get('username', 'admin'),
+                        action="إضافة مورد",
+                        table_name="suppliers",
+                        new_value=f"المورد: {name}, الهاتف: {phone}"
+                    )
                     st.success(f"✅ تمت إضافة المورد '{name}' بنجاح")
                     st.rerun()
                 except Exception as e:
