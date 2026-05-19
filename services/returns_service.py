@@ -119,4 +119,17 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
         conn.rollback()
         return False, str(e), 0
     finally:
-        conn.close
+        conn.close()
+
+def get_return_history():
+    """سجل المرتجعات مع سبب الإرجاع"""
+    conn = get_connection()
+    returns = conn.execute("""
+        SELECT id, type, invoice_date, total, status, reason
+        FROM invoices
+        WHERE type IN ('sale_return', 'purchase_return')
+        ORDER BY id DESC
+        LIMIT 50
+    """).fetchall()
+    conn.close()
+    return returns
