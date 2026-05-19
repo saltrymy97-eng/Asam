@@ -23,7 +23,8 @@ import period_closing
 import fifo_inventory
 import payroll
 import ai_assistant
-import closing_entries  # 🆕 قيد إغلاق الحسابات
+import closing_entries  # قيد إغلاق الحسابات
+import returns           # 🆕 مرتجعات البضاعة
 
 st.set_page_config(page_title="XD ERP", layout="wide")
 
@@ -50,13 +51,14 @@ else:
                 "المخزون",
                 "المبيعات",
                 "المشتريات",
+                "مرتجعات البضاعة",       # 🆕
                 "الحسابات",
                 "الموارد البشرية",
                 "شجرة الحسابات",
                 "القوائم المالية",
                 "الصلاحيات",
                 "إغلاق الفترات",
-                "إغلاق الحسابات",       # 🆕
+                "إغلاق الحسابات",
                 "FIFO المخزون",
                 "كشف الرواتب",
                 "المساعد الذكي",
@@ -67,13 +69,14 @@ else:
                 "box",
                 "cart",
                 "truck",
+                "arrow-repeat",          # 🆕 أيقونة المرتجعات
                 "calculator",
                 "people",
                 "diagram-3",
                 "file-earmark-bar-graph",
                 "shield-lock",
                 "calendar-check",
-                "journal-x",            # 🆕 أيقونة إغلاق الحسابات
+                "journal-x",
                 "boxes",
                 "cash-coin",
                 "robot",
@@ -91,6 +94,8 @@ else:
         sales.show()
     elif selected == "المشتريات":
         purchases.show()
+    elif selected == "مرتجعات البضاعة":   # 🆕
+        returns.show()
     elif selected == "الحسابات":
         accounting.show()
     elif selected == "الموارد البشرية":
@@ -103,7 +108,7 @@ else:
         roles_permissions.show()
     elif selected == "إغلاق الفترات":
         period_closing.show()
-    elif selected == "إغلاق الحسابات":     # 🆕
+    elif selected == "إغلاق الحسابات":
         closing_entries.show()
     elif selected == "FIFO المخزون":
         fifo_inventory.show()
