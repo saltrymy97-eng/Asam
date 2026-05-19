@@ -24,7 +24,7 @@ import fifo_inventory
 import payroll
 import ai_assistant
 import closing_entries  # قيد إغلاق الحسابات
-import returns           # 🆕 مرتجعات البضاعة
+from ui.returns import show as returns_show  # 🆕 مرتجعات البضاعة (من مجلد ui)
 
 st.set_page_config(page_title="XD ERP", layout="wide")
 
@@ -95,7 +95,7 @@ else:
     elif selected == "المشتريات":
         purchases.show()
     elif selected == "مرتجعات البضاعة":   # 🆕
-        returns.show()
+        returns_show()
     elif selected == "الحسابات":
         accounting.show()
     elif selected == "الموارد البشرية":
