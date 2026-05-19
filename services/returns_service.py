@@ -1,5 +1,6 @@
-# services/returns_service.py - منطق أعمال مرتجعات البضاعة (مع الكمية المرتجعة)
+# services/returns_service.py - منطق أعمال مرتجعات البضاعة (مع الكمية المرتجعة وسجل التدقيق)
 import sqlite3
+from services.audit_service import log_action  # 🆕
 
 DB_PATH = "erp.db"
 
@@ -96,6 +97,17 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
                 """, (product["id"], qty, return_date, f"مرتجع مشتريات #{return_invoice_id}"))
         conn.execute("UPDATE invoices SET total = ? WHERE id = ?", (total_return, return_invoice_id))
         conn.commit()
+        
+        # 🆕 تسجيل في سجل التدقيق
+        return_type_name = "مرتجع مبيعات" if invoice_type == "sale" else "مرتجع مشتريات"
+        log_action(
+            username="admin",
+            action=return_type_name,
+            table_name="invoices",
+            record_id=return_invoice_id,
+            new_value=f"الإجمالي: {total_return:,.2f}, السبب: {reason}"
+        )
+        
         return True, return_invoice_id, total_return
     except Exception as e:
         conn.rollback()
