@@ -1,4 +1,4 @@
-# ui/returns.py - واجهة مرتجعات البضاعة (إصدار نهائي - حقول الكمية منفصلة)
+# ui/returns.py - واجهة مرتجعات البضاعة (حقول كمية يدوية)
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -44,17 +44,24 @@ def show():
                         with col1:
                             st.write(f"**{item['name']}** - المتاح: {item['quantity']}")
                         with col2:
-                            qty = st.number_input(
+                            qty_str = st.text_input(
                                 "الكمية",
-                                min_value=0,
-                                max_value=int(item["quantity"]),
-                                value=0,
-                                step=1,
+                                value="0",
                                 key=f"ret_{inv['id']}_{item['id']}",
                                 label_visibility="collapsed"
                             )
-                        if qty > 0:
-                            return_items.append((item["name"], qty))
+                            # تحويل النص إلى رقم
+                            try:
+                                qty = int(qty_str) if qty_str else 0
+                            except:
+                                qty = 0
+                            # التأكد من أن الكمية ضمن الحدود
+                            if qty < 0:
+                                qty = 0
+                            if qty > int(item["quantity"]):
+                                qty = int(item["quantity"])
+                            if qty > 0:
+                                return_items.append((item["name"], qty))
                     
                     if return_items:
                         return_date = st.date_input("تاريخ المرتجع", value=date.today())
@@ -70,8 +77,6 @@ def show():
                                 st.rerun()
                             else:
                                 st.error(f"فشل العملية: {result}")
-                    else:
-                        st.info("حدد كمية لمنتج واحد على الأقل")
     
     # ---------- مرتجع مشتريات ----------
     with tab2:
@@ -102,17 +107,22 @@ def show():
                         with col1:
                             st.write(f"**{item['name']}** - المتاح: {item['quantity']}")
                         with col2:
-                            qty = st.number_input(
+                            qty_str = st.text_input(
                                 "الكمية",
-                                min_value=0,
-                                max_value=int(item["quantity"]),
-                                value=0,
-                                step=1,
+                                value="0",
                                 key=f"pret_{inv['id']}_{item['id']}",
                                 label_visibility="collapsed"
                             )
-                        if qty > 0:
-                            return_items.append((item["name"], qty))
+                            try:
+                                qty = int(qty_str) if qty_str else 0
+                            except:
+                                qty = 0
+                            if qty < 0:
+                                qty = 0
+                            if qty > int(item["quantity"]):
+                                qty = int(item["quantity"])
+                            if qty > 0:
+                                return_items.append((item["name"], qty))
                     
                     if return_items:
                         return_date = st.date_input("تاريخ المرتجع", value=date.today(), key="purchase_ret_date")
@@ -128,8 +138,6 @@ def show():
                                 st.rerun()
                             else:
                                 st.error(f"فشل العملية: {result}")
-                    else:
-                        st.info("حدد كمية لمنتج واحد على الأقل")
     
     # ---------- سجل المرتجعات ----------
     with tab3:
