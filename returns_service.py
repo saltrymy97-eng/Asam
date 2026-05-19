@@ -1,138 +1,132 @@
-# services/returns_service.py - منطق أعمال مرتجعات البضاعة
-import sqlite3
+# returns.py - واجهة مرتجعات البضاعة
+import streamlit as st
+import pandas as pd
+from datetime import date
+import returns_service  # <-- تم التعديل هنا
 
-DB_PATH = "erp.db"
-
-def get_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-def get_sales_invoices():
-    """جلب فواتير المبيعات المكتملة"""
-    conn = get_connection()
-    invoices = conn.execute("""
-        SELECT i.id, i.invoice_date, c.name as customer, i.total
-        FROM invoices i
-        JOIN customers c ON i.party_id = c.id
-        WHERE i.type = 'sale' AND i.status = 'completed'
-        ORDER BY i.id DESC
-    """).fetchall()
-    conn.close()
-    return invoices
-
-def get_purchase_invoices():
-    """جلب فواتير المشتريات المكتملة"""
-    conn = get_connection()
-    invoices = conn.execute("""
-        SELECT i.id, i.invoice_date, s.name as supplier, i.total
-        FROM invoices i
-        JOIN suppliers s ON i.party_id = s.id
-        WHERE i.type = 'purchase' AND i.status = 'completed'
-        ORDER BY i.id DESC
-    """).fetchall()
-    conn.close()
-    return invoices
-
-def get_invoice_items(invoice_id):
-    """جلب بنود فاتورة محددة"""
-    conn = get_connection()
-    items = conn.execute("""
-        SELECT ii.id, p.name, ii.quantity, ii.unit_price
-        FROM invoice_items ii
-        JOIN products p ON ii.product_id = p.id
-        WHERE ii.invoice_id = ?
-    """, (invoice_id,)).fetchall()
-    conn.close()
-    return items
-
-def process_return(invoice_type, invoice_id, items_to_return, return_date, reason=""):
-    """
-    تنفيذ عملية المرتجع:
-    - invoice_type: 'sale' أو 'purchase'
-    - invoice_id: رقم الفاتورة
-    - items_to_return: قائمة من (product_name, quantity)
-    - return_date: تاريخ المرتجع
-    - reason: سبب الإرجاع
-    """
-    conn = get_connection()
+def show():
+    st.title("🔄 مرتجعات البضاعة")
     
-    try:
-        # 1. إنشاء فاتورة مرتجع
-        cursor = conn.execute("""
-            INSERT INTO invoices (type, party_id, invoice_date, total, status)
-            VALUES (?, ?, ?, 0, 'completed')
-        """, (f'{invoice_type}_return', 0, return_date))
-        return_invoice_id = cursor.lastrowid
+    tab1, tab2, tab3 = st.tabs(["مرتجع مبيعات", "مرتجع مشتريات", "سجل المرتجعات"])
+    
+    # ---------- مرتجع مبيعات ----------
+    with tab1:
+        st.subheader("إرجاع بضاعة من عميل")
+        invoices = returns_service.get_sales_invoices()
         
-        total_return = 0.0
+        if not invoices:
+            st.info("لا توجد فواتير مبيعات مكتملة")
+            return
         
-        for product_name, qty in items_to_return:
-            # جلب المنتج من جدول products
-            product = conn.execute(
-                "SELECT id, purchase_price, selling_price FROM products WHERE name = ?",
-                (product_name,)
-            ).fetchone()
-            
-            if not product:
-                continue
-            
-            # تحديد السعر حسب نوع الفاتورة
-            unit_price = product["selling_price"] if invoice_type == "sale" else product["purchase_price"]
-            line_total = qty * unit_price
-            total_return += line_total
-            
-            # إضافة بند المرتجع
-            conn.execute("""
-                INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price)
-                VALUES (?, ?, ?, ?)
-            """, (return_invoice_id, product["id"], qty, unit_price))
-            
-            # تحديث المخزون (عكس حركة الفاتورة الأصلية)
-            if invoice_type == "sale":
-                # مرتجع مبيعات: زيادة المخزون
-                conn.execute(
-                    "UPDATE products SET quantity = quantity + ? WHERE id = ?",
-                    (qty, product["id"])
-                )
-                conn.execute("""
-                    INSERT INTO stock_movements (product_id, type, quantity, date, reference)
-                    VALUES (?, 'in', ?, ?, ?)
-                """, (product["id"], qty, return_date, f"مرتجع مبيعات #{return_invoice_id}"))
-            else:
-                # مرتجع مشتريات: تقليل المخزون
-                conn.execute(
-                    "UPDATE products SET quantity = quantity - ? WHERE id = ?",
-                    (qty, product["id"])
-                )
-                conn.execute("""
-                    INSERT INTO stock_movements (product_id, type, quantity, date, reference)
-                    VALUES (?, 'out', ?, ?, ?)
-                """, (product["id"], qty, return_date, f"مرتجع مشتريات #{return_invoice_id}"))
+        invoice_options = {f"فاتورة #{inv['id']} - {inv['customer']} ({inv['invoice_date']})": inv for inv in invoices}
+        selected = st.selectbox("اختر الفاتورة", list(invoice_options.keys()), key="sales_return_inv")
         
-        # تحديث إجمالي فاتورة المرتجع
-        conn.execute(
-            "UPDATE invoices SET total = ? WHERE id = ?",
-            (total_return, return_invoice_id)
-        )
+        if selected:
+            inv = invoice_options[selected]
+            items = returns_service.get_invoice_items(inv["id"])
+            
+            if items:
+                st.markdown("**بنود الفاتورة:**")
+                items_df = pd.DataFrame(items)
+                st.dataframe(items_df[["name", "quantity", "unit_price"]], use_container_width=True)
+                
+                st.markdown("---")
+                st.subheader("اختر المنتجات المرتجعة")
+                
+                return_items = []
+                for item in items:
+                    col1, col2 = st.columns([3, 1])
+                    max_qty = int(item["quantity"])
+                    qty = col2.number_input(
+                        f"كمية {item['name']}",
+                        min_value=0,
+                        max_value=max_qty,
+                        value=0,
+                        key=f"ret_{item['id']}"
+                    )
+                    col1.write(f"**{item['name']}** - المتاح: {max_qty}")
+                    if qty > 0:
+                        return_items.append((item["name"], qty))
+                
+                if return_items:
+                    return_date = st.date_input("تاريخ المرتجع", value=date.today())
+                    reason = st.text_area("سبب الإرجاع (اختياري)")
+                    
+                    if st.button("✅ تأكيد مرتجع المبيعات", key="confirm_sale_return"):
+                        success, result, total = returns_service.process_return(
+                            "sale", inv["id"], return_items,
+                            return_date.strftime("%Y-%m-%d"), reason
+                        )
+                        if success:
+                            st.success(f"تم تسجيل المرتجع رقم {result} - الإجمالي: {total:,.2f}")
+                            st.rerun()
+                        else:
+                            st.error(f"فشل العملية: {result}")
+    
+    # ---------- مرتجع مشتريات ----------
+    with tab2:
+        st.subheader("إرجاع بضاعة للمورد")
+        invoices = returns_service.get_purchase_invoices()
         
-        conn.commit()
-        return True, return_invoice_id, total_return
-    except Exception as e:
-        conn.rollback()
-        return False, str(e), 0
-    finally:
-        conn.close()
-
-def get_return_history():
-    """سجل المرتجعات"""
-    conn = get_connection()
-    returns = conn.execute("""
-        SELECT id, type, invoice_date, total, status
-        FROM invoices
-        WHERE type IN ('sale_return', 'purchase_return')
-        ORDER BY id DESC
-        LIMIT 50
-    """).fetchall()
-    conn.close()
-    return returns
+        if not invoices:
+            st.info("لا توجد فواتير مشتريات مكتملة")
+            return
+        
+        invoice_options = {f"فاتورة #{inv['id']} - {inv['supplier']} ({inv['invoice_date']})": inv for inv in invoices}
+        selected = st.selectbox("اختر الفاتورة", list(invoice_options.keys()), key="purchase_return_inv")
+        
+        if selected:
+            inv = invoice_options[selected]
+            items = returns_service.get_invoice_items(inv["id"])
+            
+            if items:
+                st.markdown("**بنود الفاتورة:**")
+                items_df = pd.DataFrame(items)
+                st.dataframe(items_df[["name", "quantity", "unit_price"]], use_container_width=True)
+                
+                st.markdown("---")
+                st.subheader("اختر المنتجات المرتجعة")
+                
+                return_items = []
+                for item in items:
+                    col1, col2 = st.columns([3, 1])
+                    max_qty = int(item["quantity"])
+                    qty = col2.number_input(
+                        f"كمية {item['name']}",
+                        min_value=0,
+                        max_value=max_qty,
+                        value=0,
+                        key=f"pret_{item['id']}"
+                    )
+                    col1.write(f"**{item['name']}** - المتاح: {max_qty}")
+                    if qty > 0:
+                        return_items.append((item["name"], qty))
+                
+                if return_items:
+                    return_date = st.date_input("تاريخ المرتجع", value=date.today(), key="purchase_ret_date")
+                    reason = st.text_area("سبب الإرجاع (اختياري)", key="purchase_ret_reason")
+                    
+                    if st.button("✅ تأكيد مرتجع المشتريات", key="confirm_purchase_return"):
+                        success, result, total = returns_service.process_return(
+                            "purchase", inv["id"], return_items,
+                            return_date.strftime("%Y-%m-%d"), reason
+                        )
+                        if success:
+                            st.success(f"تم تسجيل المرتجع رقم {result} - الإجمالي: {total:,.2f}")
+                            st.rerun()
+                        else:
+                            st.error(f"فشل العملية: {result}")
+    
+    # ---------- سجل المرتجعات ----------
+    with tab3:
+        st.subheader("سجل عمليات المرتجعات")
+        returns = returns_service.get_return_history()
+        if returns:
+            df = pd.DataFrame(returns)
+            df["type"] = df["type"].map({
+                "sale_return": "مرتجع مبيعات",
+                "purchase_return": "مرتجع مشتريات"
+            })
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        else:
+            st.info("لا توجد مرتجعات بعد")
