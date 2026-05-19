@@ -1,6 +1,7 @@
 # ui/audit_log.py - سجل التدقيق (واجهة زجاجية فخمة)
 import streamlit as st
 import pandas as pd
+import sqlite3
 from services.audit_service import (
     create_audit_table,
     get_audit_logs,
@@ -73,7 +74,6 @@ def show():
     with col1:
         filter_table = st.selectbox("تصفية حسب الجدول", ["الكل", "users", "products", "invoices", "journal_entries", "employees", "customers", "suppliers"], key="audit_filter_table")
     with col2:
-        import sqlite3
         conn = sqlite3.connect("erp.db")
         conn.row_factory = sqlite3.Row
         users = [u["username"] for u in conn.execute("SELECT DISTINCT username FROM audit_log").fetchall()]
@@ -104,35 +104,3 @@ def show():
         st.dataframe(df, use_container_width=True, hide_index=True)
     else:
         st.info("ℹ️ لا توجد سجلات تدقيق بعد.")
-
-    st.markdown("---")
-
-    # ---------- شرح كيفية الاستخدام ----------
-    with st.expander("📖 كيفية استخدام سجل التدقيق في وحداتك"):
-        st.markdown(f"""
-        <div style="color:{TEXT_PRIMARY}; direction:rtl;">
-        <p>لتسجيل أي إجراء في النظام، استخدم الدالة <code>log_action</code> من ملف <code>services.audit_service</code>:</p>
-        <pre style="background:{GLASS_BG}; padding:1rem; border-radius:8px; color:{TEXT_PRIMARY};">
-from services.audit_service import log_action
-
-# تسجيل إضافة منتج جديد
-log_action(
-    username="admin",
-    action="إضافة",
-    table_name="products",
-    record_id=1,
-    new_value="{{'name': 'منتج جديد', 'price': 100}}"
-)
-
-# تسجيل تعديل سعر منتج
-log_action(
-    username="admin",
-    action="تعديل",
-    table_name="products",
-    record_id=1,
-    old_value="{{'price': 100}}",
-    new_value="{{'price': 150}}"
-)
-        </pre>
-        </div>
-        """, unsafe_allow_html=True)
