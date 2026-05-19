@@ -1,7 +1,8 @@
-# modules/accounting.py - الحسابات وقيود اليومية
+# accounting.py - الحسابات وقيود اليومية (مع سجل التدقيق)
 import streamlit as st
 import pandas as pd
 from database import get_connection
+from services.audit_service import log_action  # 🆕
 
 def show():
     st.title("🧾 الحسابات")
@@ -19,7 +20,6 @@ def show():
             reference = st.text_input("المرجع (اختياري)")
 
             st.markdown("**الأسطر المحاسبية**")
-            # سنسمح بإضافة حتى 4 أسطر في هذا المثال
             lines = []
             for i in range(4):
                 cols = st.columns([3, 2, 2])
@@ -53,6 +53,14 @@ def show():
                                     (entry_id, line["account"], line["debit"], line["credit"])
                                 )
                             conn.commit()
+                            # 🆕 تسجيل في سجل التدقيق
+                            log_action(
+                                username=st.session_state.user.get('username', 'admin'),
+                                action="قيد يومية",
+                                table_name="journal_entries",
+                                record_id=entry_id,
+                                new_value=f"البيان: {description}"
+                            )
                             st.success("تم تسجيل القيد بنجاح")
                             st.rerun()
                         except Exception as e:
@@ -95,7 +103,6 @@ def show():
                 conn, params=(selected_account,)
             )
             if not ledger.empty:
-                # حساب الرصيد التراكمي (مدين - دائن)
                 ledger["balance"] = (ledger["debit"] - ledger["credit"]).cumsum()
                 st.dataframe(ledger, use_container_width=True)
                 st.markdown(f"**الرصيد النهائي: {ledger['balance'].iloc[-1]:,.2f}**")
