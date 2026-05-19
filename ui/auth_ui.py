@@ -1,4 +1,4 @@
-# ui/auth_ui.py - واجهة تسجيل الدخول وتغيير كلمة المرور (تصميم زجاجي فخم)
+# ui/auth_ui.py - واجهة تسجيل الدخول وتغيير كلمة المرور (تصميم زجاجي فخم - بدون إطار الحقول)
 import streamlit as st
 from database import init_db
 from services.auth_service import (
@@ -21,41 +21,35 @@ ACCENT_RED = "#EF4444"
 ACCENT_PURPLE = "#8B5CF6"
 
 def login_form():
-    """نموذج تسجيل الدخول بتصميم زجاجي فخم"""
+    """نموذج تسجيل الدخول بتصميم زجاجي فخم (بدون إطار حول الحقول)"""
     
-    # شعار XD بتوهج
+    # شعار XD بتوهج فخم
     st.markdown(f"""
-    <div style="text-align:center; margin-bottom:0.5rem;">
+    <div style="text-align:center; margin-bottom:2rem;">
         <div style="
-            width:100px; height:100px; margin:0 auto 1rem auto;
-            background:{GLASS_BG}; backdrop-filter:blur(10px);
-            border:2px solid {GLASS_BORDER}; border-radius:30px;
+            width:120px; height:120px; margin:0 auto 1.5rem auto;
+            background:{GLASS_BG}; backdrop-filter:blur(20px);
+            border:2px solid {GLASS_BORDER}; border-radius:35px;
             display:flex; align-items:center; justify-content:center;
-            box-shadow:0 0 40px rgba(139, 92, 246, 0.3);
+            box-shadow:0 0 60px rgba(139, 92, 246, 0.4), 0 0 120px rgba(59, 130, 246, 0.2);
+            animation: pulse 2s infinite;
         ">
-            <span style="font-size:3rem; font-weight:900; 
-                background:linear-gradient(135deg, {ACCENT_PURPLE}, {ACCENT_BLUE});
+            <span style="font-size:3.5rem; font-weight:900; 
+                background:linear-gradient(135deg, {ACCENT_PURPLE}, {ACCENT_BLUE}, {ACCENT_GREEN});
                 -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+                text-shadow: none;
             ">X</span>
         </div>
-        <h1 style="color:{TEXT_PRIMARY}; font-size:2.2rem; margin:0; letter-spacing:2px;">XD ERP</h1>
-        <p style="color:{TEXT_SECONDARY}; margin-top:0.5rem;">نظام تخطيط موارد المؤسسات</p>
+        <h1 style="color:{TEXT_PRIMARY}; font-size:2.8rem; margin:0; font-weight:800; letter-spacing:3px; text-shadow:0 0 30px rgba(139, 92, 246, 0.5);">XD ERP</h1>
+        <p style="color:{TEXT_SECONDARY}; margin-top:0.8rem; font-size:1.1rem; letter-spacing:1px;">نظام تخطيط موارد المؤسسات</p>
     </div>
     """, unsafe_allow_html=True)
     
-    # بطاقة تسجيل الدخول الزجاجية
-    st.markdown(f"""
-    <div style="
-        background:{GLASS_BG}; backdrop-filter:blur(15px);
-        border:1px solid {GLASS_BORDER}; border-radius:24px;
-        padding:2rem; margin:1rem 0;
-        box-shadow:{GLASS_SHADOW};
-    ">
-    """, unsafe_allow_html=True)
+    # حقول الإدخال بدون إطار محيط
+    username = st.text_input("👤 اسم المستخدم", placeholder="أدخل اسم المستخدم", key="login_user")
+    password = st.text_input("🔒 كلمة المرور", type="password", placeholder="أدخل كلمة المرور", key="login_pass")
     
-    username = st.text_input("👤 اسم المستخدم", placeholder="أدخل اسم المستخدم")
-    password = st.text_input("🔒 كلمة المرور", type="password", placeholder="أدخل كلمة المرور")
-    
+    # أزرار متجاورة
     col1, col2 = st.columns([2, 1])
     with col1:
         login_btn = st.button("🚀 دخول", use_container_width=True, type="primary")
@@ -63,8 +57,6 @@ def login_form():
         if st.button("🔑 نسيت كلمة المرور", use_container_width=True):
             st.session_state.show_password_change = True
             st.rerun()
-    
-    st.markdown("</div>", unsafe_allow_html=True)
     
     if login_btn:
         user = verify_user(username, password)
@@ -77,35 +69,26 @@ def login_form():
     
     # تذييل
     st.markdown(f"""
-    <div style="text-align:center; margin-top:1rem;">
-        <p style="color:{TEXT_SECONDARY}; font-size:0.8rem;">© 2026 XD ERP. جميع الحقوق محفوظة.</p>
+    <div style="text-align:center; margin-top:2rem;">
+        <p style="color:{TEXT_SECONDARY}; font-size:0.8rem; opacity:0.7;">© 2026 XD ERP. جميع الحقوق محفوظة.</p>
     </div>
     """, unsafe_allow_html=True)
 
 def password_change_form():
-    """نموذج تغيير كلمة المرور بتصميم زجاجي"""
+    """نموذج تغيير كلمة المرور بتصميم زجاجي (بدون إطار)"""
     
     st.markdown(f"""
-    <div style="text-align:center; margin-bottom:1.5rem;">
-        <div style="font-size:3rem; margin-bottom:0.5rem;">🔑</div>
-        <h2 style="color:{TEXT_PRIMARY}; margin:0;">تغيير كلمة المرور</h2>
-        <p style="color:{TEXT_SECONDARY};">قم بتغيير كلمة المرور الافتراضية</p>
+    <div style="text-align:center; margin-bottom:2rem;">
+        <div style="font-size:4rem; margin-bottom:1rem;">🔑</div>
+        <h2 style="color:{TEXT_PRIMARY}; margin:0; font-weight:700;">تغيير كلمة المرور</h2>
+        <p style="color:{TEXT_SECONDARY}; margin-top:0.5rem;">قم بتغيير كلمة المرور الافتراضية إلى كلمة مرور جديدة</p>
     </div>
     """, unsafe_allow_html=True)
     
-    st.markdown(f"""
-    <div style="
-        background:{GLASS_BG}; backdrop-filter:blur(15px);
-        border:1px solid {GLASS_BORDER}; border-radius:24px;
-        padding:2rem; margin:1rem 0;
-        box-shadow:{GLASS_SHADOW};
-    ">
-    """, unsafe_allow_html=True)
-    
-    username = st.text_input("👤 اسم المستخدم", value="admin", disabled=True)
-    old_password = st.text_input("🔒 كلمة المرور الحالية", type="password", placeholder="أدخل كلمة المرور الحالية")
-    new_password = st.text_input("🆕 كلمة المرور الجديدة", type="password", placeholder="أدخل كلمة المرور الجديدة")
-    confirm_password = st.text_input("✅ تأكيد كلمة المرور الجديدة", type="password", placeholder="أعد إدخال كلمة المرور الجديدة")
+    username = st.text_input("👤 اسم المستخدم", value="admin", disabled=True, key="change_user")
+    old_password = st.text_input("🔒 كلمة المرور الحالية", type="password", placeholder="أدخل كلمة المرور الحالية", key="change_old")
+    new_password = st.text_input("🆕 كلمة المرور الجديدة", type="password", placeholder="أدخل كلمة المرور الجديدة", key="change_new")
+    confirm_password = st.text_input("✅ تأكيد كلمة المرور الجديدة", type="password", placeholder="أعد إدخال كلمة المرور الجديدة", key="change_confirm")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -128,8 +111,6 @@ def password_change_form():
         if st.button("↩️ العودة لتسجيل الدخول", use_container_width=True):
             st.session_state.show_password_change = False
             st.rerun()
-    
-    st.markdown("</div>", unsafe_allow_html=True)
 
 def show():
     """الدالة الرئيسية لعرض صفحة الدخول"""
