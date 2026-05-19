@@ -1,4 +1,4 @@
-# services/returns_service.py - منطق أعمال مرتجعات البضاعة (مع سبب المرتجعات)
+# services/returns_service.py - منطق أعمال مرتجعات البضاعة (مع الكمية المرتجعة)
 import sqlite3
 
 DB_PATH = "erp.db"
@@ -15,7 +15,7 @@ def add_reason_column():
         conn.execute("ALTER TABLE invoices ADD COLUMN reason TEXT")
         conn.commit()
     except sqlite3.OperationalError:
-        pass  # العمود موجود مسبقاً
+        pass
     finally:
         conn.close()
 
@@ -58,47 +58,30 @@ def get_invoice_items(invoice_id):
     return items
 
 def process_return(invoice_type, invoice_id, items_to_return, return_date, reason=""):
-    """
-    تنفيذ عملية المرتجع:
-    - invoice_type: 'sale' أو 'purchase'
-    - invoice_id: رقم الفاتورة
-    - items_to_return: قائمة من (product_name, quantity)
-    - return_date: تاريخ المرتجع
-    - reason: سبب الإرجاع
-    """
-    # التأكد من وجود عمود reason
+    """تنفيذ عملية المرتجع"""
     add_reason_column()
-    
     conn = get_connection()
-    
     try:
-        # 1. إنشاء فاتورة مرتجع مع سبب الإرجاع
         cursor = conn.execute("""
             INSERT INTO invoices (type, party_id, invoice_date, total, status, reason)
             VALUES (?, ?, ?, 0, 'completed', ?)
         """, (f'{invoice_type}_return', 0, return_date, reason))
         return_invoice_id = cursor.lastrowid
-        
         total_return = 0.0
-        
         for product_name, qty in items_to_return:
             product = conn.execute(
                 "SELECT id, purchase_price, selling_price FROM products WHERE name = ?",
                 (product_name,)
             ).fetchone()
-            
             if not product:
                 continue
-            
             unit_price = product["selling_price"] if invoice_type == "sale" else product["purchase_price"]
             line_total = qty * unit_price
             total_return += line_total
-            
             conn.execute("""
                 INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price)
                 VALUES (?, ?, ?, ?)
             """, (return_invoice_id, product["id"], qty, unit_price))
-            
             if invoice_type == "sale":
                 conn.execute("UPDATE products SET quantity = quantity + ? WHERE id = ?", (qty, product["id"]))
                 conn.execute("""
@@ -111,7 +94,6 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
                     INSERT INTO stock_movements (product_id, type, quantity, date, reference)
                     VALUES (?, 'out', ?, ?, ?)
                 """, (product["id"], qty, return_date, f"مرتجع مشتريات #{return_invoice_id}"))
-        
         conn.execute("UPDATE invoices SET total = ? WHERE id = ?", (total_return, return_invoice_id))
         conn.commit()
         return True, return_invoice_id, total_return
@@ -122,14 +104,21 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
         conn.close()
 
 def get_return_history():
-    """سجل المرتجعات مع سبب الإرجاع"""
-    add_reason_column()  # التأكد من وجود العمود قبل القراءة
+    """سجل المرتجعات مع سبب الإرجاع والكمية المرتجعة"""
+    add_reason_column()
     conn = get_connection()
     returns = conn.execute("""
-        SELECT id, type, invoice_date, total, status, reason
-        FROM invoices
-        WHERE type IN ('sale_return', 'purchase_return')
-        ORDER BY id DESC
+        SELECT 
+            i.id, 
+            i.type, 
+            i.invoice_date, 
+            i.total, 
+            i.status, 
+            i.reason,
+            (SELECT SUM(ii.quantity) FROM invoice_items ii WHERE ii.invoice_id = i.id) as total_qty
+        FROM invoices i
+        WHERE i.type IN ('sale_return', 'purchase_return')
+        ORDER BY i.id DESC
         LIMIT 50
     """).fetchall()
     conn.close()
