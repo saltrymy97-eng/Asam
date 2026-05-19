@@ -1,7 +1,8 @@
-# modules/hr.py - إدارة الموارد البشرية
+# hr.py - إدارة الموارد البشرية (مع سجل التدقيق)
 import streamlit as st
 import pandas as pd
 from database import get_connection
+from services.audit_service import log_action  # 🆕
 
 def show():
     st.title("👥 الموارد البشرية")
@@ -36,6 +37,13 @@ def show():
                         (name, position, salary, join_date.strftime("%Y-%m-%d"))
                     )
                     conn.commit()
+                    # 🆕 تسجيل في سجل التدقيق
+                    log_action(
+                        username=st.session_state.user.get('username', 'admin'),
+                        action="إضافة موظف",
+                        table_name="employees",
+                        new_value=f"الموظف: {name}, المنصب: {position}"
+                    )
                     st.success(f"تمت إضافة الموظف '{name}'")
                     st.rerun()
 
@@ -57,6 +65,13 @@ def show():
                     (emp_id, date.strftime("%Y-%m-%d"), status)
                 )
                 conn.commit()
+                # 🆕 تسجيل في سجل التدقيق
+                log_action(
+                    username=st.session_state.user.get('username', 'admin'),
+                    action="تسجيل حضور",
+                    table_name="attendance",
+                    new_value=f"الموظف: {selected_emp}, التاريخ: {date.strftime('%Y-%m-%d')}, الحالة: {status}"
+                )
                 st.success("تم تسجيل الحضور")
 
             st.markdown("---")
