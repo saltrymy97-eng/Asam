@@ -21,7 +21,7 @@ def verify_user(username, password):
     c.execute("SELECT password, full_name, role FROM users WHERE username=?", (username,))
     row = c.fetchone()
     conn.close()
-    if row and bcrypt.checkpw(password.encode(), row[0]):
+    if row and bcrypt.checkpw(password.encode(), row[0].encode()):
         return {"username": username, "full_name": row[1], "role": row[2]}
     return None
 
@@ -31,7 +31,7 @@ def change_password(username, old_password, new_password):
     c = conn.cursor()
     c.execute("SELECT password FROM users WHERE username=?", (username,))
     row = c.fetchone()
-    if not row or not bcrypt.checkpw(old_password.encode(), row[0]):
+    if not row or not bcrypt.checkpw(old_password.encode(), row[0].encode()):
         conn.close()
         return False, "كلمة المرور الحالية غير صحيحة"
     
