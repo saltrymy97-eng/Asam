@@ -1,7 +1,8 @@
-# modules/inventory.py - إدارة المخزون
+# inventory.py - إدارة المخزون
 import streamlit as st
 import pandas as pd
 from database import get_connection
+from services.audit_service import log_action  # 🆕
 
 def show():
     st.title("📦 إدارة المخزون")
@@ -43,6 +44,13 @@ def show():
                             (name, barcode if barcode else None, category, purchase_price, selling_price, quantity, reorder_level)
                         )
                         conn.commit()
+                        # 🆕 تسجيل في سجل التدقيق
+                        log_action(
+                            username=st.session_state.user.get('username', 'admin'),
+                            action="إضافة منتج",
+                            table_name="products",
+                            new_value=f"المنتج: {name}, السعر: {selling_price}"
+                        )
                         st.success(f"تمت إضافة المنتج '{name}' بنجاح")
                         st.rerun()
                     except Exception as e:
@@ -51,7 +59,6 @@ def show():
     # ---------- التبويب 3: حركة المخزون ----------
     with tab3:
         st.subheader("تسجيل حركة مخزون")
-        # جلب المنتجات لعرضها في قائمة منسدلة
         products_list = pd.read_sql_query("SELECT id, name FROM products", conn)
         if not products_list.empty:
             product_names = products_list["name"].tolist()
@@ -71,19 +78,24 @@ def show():
                         "INSERT INTO stock_movements (product_id, type, quantity, date, reference) VALUES (?, ?, ?, date('now'), ?)",
                         (product_id, type_en, quantity, reference)
                     )
-                    # تحديث الكمية في جدول المنتجات
                     sign = 1 if type_en == "in" else -1
                     conn.execute(
                         "UPDATE products SET quantity = quantity + ? WHERE id = ?",
                         (sign * quantity, product_id)
                     )
                     conn.commit()
+                    # 🆕 تسجيل حركة المخزون
+                    log_action(
+                        username=st.session_state.user.get('username', 'admin'),
+                        action="حركة مخزون",
+                        table_name="stock_movements",
+                        new_value=f"{move_type} - المنتج: {selected_product}, الكمية: {quantity}"
+                    )
                     st.success("تم تسجيل الحركة بنجاح")
                     st.rerun()
         else:
             st.warning("لا توجد منتجات، أضف منتجاً أولاً")
 
-        # عرض حركات المخزون
         st.markdown("---")
         st.subheader("سجل حركات المخزون")
         movements_df = pd.read_sql_query("""
