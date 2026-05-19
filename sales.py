@@ -1,7 +1,8 @@
-# modules/sales.py - إدارة المبيعات
+# sales.py - إدارة المبيعات (مع سجل التدقيق)
 import streamlit as st
 import pandas as pd
 from database import get_connection
+from services.audit_service import log_action  # 🆕
 
 def show():
     st.title("🛒 إدارة المبيعات")
@@ -13,7 +14,6 @@ def show():
     with tab1:
         st.subheader("إنشاء فاتورة مبيعات جديدة")
 
-        # جلب العملاء
         customers = pd.read_sql_query("SELECT id, name FROM customers", conn)
         if customers.empty:
             st.warning("لا يوجد عملاء. أضف عميلاً من تبويب 'العملاء' أولاً.")
@@ -22,13 +22,11 @@ def show():
             customer_name = st.selectbox("اختر العميل", customers["name"].tolist())
             customer_id = int(customers[customers["name"] == customer_name]["id"].values[0])
 
-        # جلب المنتجات
         products = pd.read_sql_query("SELECT id, name, selling_price, quantity FROM products", conn)
         if products.empty:
             st.warning("لا توجد منتجات. أضف منتجات من وحدة المخزون أولاً.")
             return
 
-        # إعداد قائمة المنتجات المختارة
         if 'invoice_items' not in st.session_state:
             st.session_state.invoice_items = []
 
@@ -50,7 +48,6 @@ def show():
                 st.session_state.invoice_items.append(item)
                 st.success(f"تمت إضافة {selected_product}")
 
-        # عرض بنود الفاتورة الحالية
         if st.session_state.invoice_items:
             st.markdown("---")
             st.subheader("بنود الفاتورة")
@@ -65,33 +62,37 @@ def show():
                     st.error("يجب اختيار عميل")
                 else:
                     try:
-                        # إدراج الفاتورة
                         cursor = conn.execute(
                             "INSERT INTO invoices (type, party_id, invoice_date, total, status) VALUES ('sale', ?, date('now'), ?, 'completed')",
                             (customer_id, total_invoice)
                         )
                         invoice_id = cursor.lastrowid
 
-                        # إدراج بنود الفاتورة وتحديث المخزون
                         for item in st.session_state.invoice_items:
                             conn.execute(
                                 "INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?)",
                                 (invoice_id, item["product_id"], item["quantity"], item["unit_price"])
                             )
-                            # تسجيل حركة مخزون (خارج)
                             conn.execute(
                                 "INSERT INTO stock_movements (product_id, type, quantity, date, reference) VALUES (?, 'out', ?, date('now'), ?)",
                                 (item["product_id"], item["quantity"], f"فاتورة مبيعات #{invoice_id}")
                             )
-                            # تقليل المخزون
                             conn.execute(
                                 "UPDATE products SET quantity = quantity - ? WHERE id = ?",
                                 (item["quantity"], item["product_id"])
                             )
 
                         conn.commit()
+                        # 🆕 تسجيل في سجل التدقيق
+                        log_action(
+                            username=st.session_state.user.get('username', 'admin'),
+                            action="فاتورة مبيعات",
+                            table_name="invoices",
+                            record_id=invoice_id,
+                            new_value=f"العميل: {customer_name}, الإجمالي: {total_invoice:,.2f}"
+                        )
                         st.success(f"تم حفظ الفاتورة رقم {invoice_id} بنجاح")
-                        st.session_state.invoice_items = []  # مسح البنود بعد الحفظ
+                        st.session_state.invoice_items = []
                         st.rerun()
                     except Exception as e:
                         st.error(f"فشل في حفظ الفاتورة: {e}")
@@ -112,7 +113,6 @@ def show():
         """, conn)
         if not invoices_df.empty:
             selected_invoice = st.selectbox("اختر فاتورة لعرض تفاصيلها", invoices_df["id"].tolist())
-            # عرض التفاصيل
             details = pd.read_sql_query("""
                 SELECT p.name, ii.quantity, ii.unit_price, (ii.quantity * ii.unit_price) as total
                 FROM invoice_items ii
@@ -141,12 +141,18 @@ def show():
                         (name, phone, address)
                     )
                     conn.commit()
+                    # 🆕 تسجيل في سجل التدقيق
+                    log_action(
+                        username=st.session_state.user.get('username', 'admin'),
+                        action="إضافة عميل",
+                        table_name="customers",
+                        new_value=f"العميل: {name}, الهاتف: {phone}"
+                    )
                     st.success(f"تمت إضافة العميل '{name}'")
                     st.rerun()
                 else:
                     st.error("اسم العميل مطلوب")
 
-        # عرض العملاء الحاليين
         existing_customers = pd.read_sql_query("SELECT * FROM customers", conn)
         if not existing_customers.empty:
             st.dataframe(existing_customers, use_container_width=True)
