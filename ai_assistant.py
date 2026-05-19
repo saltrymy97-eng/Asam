@@ -1,5 +1,6 @@
 # ai_assistant.py – مساعد ذكي بواجهة زجاجية فخمة وألوان زاهية
 # يدعم القيود المركبة وتسجيل القيد مباشرة في قاعدة البيانات
+# المساعد المحاسبي الآن يرى كل بيانات النظام
 import streamlit as st
 import sqlite3
 import pandas as pd
@@ -53,24 +54,74 @@ def query_groq(system_prompt, user_query):
             {"role": "user", "content": user_query}
         ],
         temperature=0.3,
-        max_tokens=1000
+        max_tokens=1500
     )
     return response.choices[0].message.content
 
-def get_financial_summary():
+def get_comprehensive_data():
+    """جمع جميع بيانات النظام للمساعد المحاسبي"""
     conn = get_conn()
+    
+    # 1. الملخص المالي
     revenue = conn.execute("SELECT COALESCE(SUM(jl.credit)-SUM(jl.debit),0) FROM journal_lines jl WHERE jl.account_name LIKE '4%'").fetchone()[0]
     expenses = conn.execute("SELECT COALESCE(SUM(jl.debit)-SUM(jl.credit),0) FROM journal_lines jl WHERE jl.account_name LIKE '5%'").fetchone()[0]
     assets = conn.execute("SELECT COALESCE(SUM(jl.debit)-SUM(jl.credit),0) FROM journal_lines jl WHERE jl.account_name LIKE '1%'").fetchone()[0]
     liabilities = conn.execute("SELECT COALESCE(SUM(jl.credit)-SUM(jl.debit),0) FROM journal_lines jl WHERE jl.account_name LIKE '2%'").fetchone()[0]
     equity = conn.execute("SELECT COALESCE(SUM(jl.credit)-SUM(jl.debit),0) FROM journal_lines jl WHERE jl.account_name LIKE '3%'").fetchone()[0]
-    products = conn.execute("SELECT COUNT(*) FROM products").fetchone()[0]
-    customers = conn.execute("SELECT COUNT(*) FROM customers").fetchone()[0]
+    
+    # 2. المنتجات
+    products = conn.execute("SELECT name, quantity, reorder_level, selling_price, purchase_price FROM products").fetchall()
+    products_list = [dict(p) for p in products]
+    
+    # 3. العملاء
+    customers = conn.execute("SELECT name, phone FROM customers").fetchall()
+    customers_list = [dict(c) for c in customers]
+    
+    # 4. الموردين
+    suppliers = conn.execute("SELECT name, phone FROM suppliers").fetchall()
+    suppliers_list = [dict(s) for s in suppliers]
+    
+    # 5. الموظفين
+    employees = conn.execute("""
+        SELECT e.name, e.position, es.basic_salary, es.housing_allowance, es.transport_allowance, es.deductions
+        FROM employees e
+        LEFT JOIN employee_salaries es ON e.id = es.employee_id
+    """).fetchall()
+    employees_list = [dict(emp) for emp in employees]
+    
+    # 6. آخر الفواتير
+    invoices = conn.execute("""
+        SELECT i.type, i.invoice_date, i.total, i.status
+        FROM invoices i
+        ORDER BY i.id DESC LIMIT 10
+    """).fetchall()
+    invoices_list = [dict(inv) for inv in invoices]
+    
+    # 7. حركات المخزون الأخيرة
+    stock = conn.execute("""
+        SELECT sm.type, sm.quantity, sm.date, p.name
+        FROM stock_movements sm
+        JOIN products p ON sm.product_id = p.id
+        ORDER BY sm.id DESC LIMIT 10
+    """).fetchall()
+    stock_list = [dict(s) for s in stock]
+    
+    # 8. آخر القيود
+    entries = conn.execute("SELECT date, description FROM journal_entries ORDER BY id DESC LIMIT 5").fetchall()
+    entries_list = [dict(e) for e in entries]
+    
     conn.close()
+    
     return {
         "revenue": revenue, "expenses": expenses, "net_income": revenue - expenses,
         "assets": assets, "liabilities": liabilities, "equity": equity,
-        "products_count": products, "customers_count": customers
+        "products": products_list,
+        "customers": customers_list,
+        "suppliers": suppliers_list,
+        "employees": employees_list,
+        "recent_invoices": invoices_list,
+        "recent_stock": stock_list,
+        "recent_entries": entries_list
     }
 
 def get_inventory_data():
@@ -124,21 +175,20 @@ def show():
         "💬 شات الموظفين", "📝 قيود تلقائية", "🔍 كشف الاحتيال"
     ])
 
-    # ---------- 1. مساعد محاسبي ----------
+    # ---------- 1. مساعد محاسبي (يرى كل البيانات الآن) ----------
     with tab1:
-        st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>اسأل عن أي شيء في حساباتك</h3>", unsafe_allow_html=True)
-        question = st.text_input("سؤالك:", placeholder="مثال: كم صافي الربح هذا الشهر؟", key="q1")
+        st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>اسأل عن أي شيء في النظام</h3>", unsafe_allow_html=True)
+        question = st.text_input("سؤالك:", placeholder="مثال: كم مخزون جالكسي؟ أو من هم الموردين؟", key="q1")
         if st.button("🔮 اسأل الخبير", key="ask_finance"):
             if question:
-                data = get_financial_summary()
-                prompt = f"""أنت مساعد محاسبي خبير. استخدم البيانات التالية للإجابة:
-الإيرادات: {data['revenue']:,.2f}
-المصروفات: {data['expenses']:,.2f}
-صافي الدخل: {data['net_income']:,.2f}
-الأصول: {data['assets']:,.2f}
-الخصوم: {data['liabilities']:,.2f}
-حقوق الملكية: {data['equity']:,.2f}
-أجب بالعربية على السؤال التالي:"""
+                data = get_comprehensive_data()
+                # تحويل البيانات إلى نص
+                import json
+                data_str = json.dumps(data, ensure_ascii=False, indent=2, default=str)
+                prompt = f"""أنت مساعد ذكي خبير في نظام ERP. لديك إمكانية الوصول إلى جميع بيانات النظام التالية:
+{data_str}
+
+أجب عن السؤال التالي بالعربية بناءً على هذه البيانات. إذا كانت البيانات لا تحتوي على إجابة، فقل "لا توجد معلومات كافية في النظام للإجابة على هذا السؤال." لا تختلق أي بيانات غير موجودة."""
                 with st.spinner("🧠 التفكير..."):
                     answer = query_groq(prompt, question)
                 st.markdown(f"""
@@ -151,7 +201,7 @@ def show():
     with tab2:
         st.markdown(f"<h3 style='color:{ACCENT_GREEN};'>تحليل القوائم المالية وتوصيات</h3>", unsafe_allow_html=True)
         if st.button("📈 حلل القوائم المالية الآن", key="analyze_fin"):
-            data = get_financial_summary()
+            data = get_comprehensive_data()
             prompt = f"""أنت محلل مالي خبير. حلل البيانات التالية وقدم توصيات:
 - الإيرادات: {data['revenue']:,.2f}
 - المصروفات: {data['expenses']:,.2f}
@@ -229,13 +279,11 @@ def show():
                     if not entry_data["lines"]:
                         st.error("لا توجد أسطر لتسجيلها.")
                     else:
-                        # التحقق من وجود الحسابات
                         conn = get_conn()
                         valid_lines = []
                         errors = []
                         for line in entry_data["lines"]:
                             account_name = line["account"]
-                            # البحث عن كود الحساب
                             acc = conn.execute("SELECT code FROM accounts WHERE name = ?", (account_name,)).fetchone()
                             if acc:
                                 valid_lines.append((acc["code"], line["debit"], line["credit"]))
@@ -285,7 +333,6 @@ def show():
                 entry_text = query_groq(prompt, text)
             st.code(entry_text)
 
-            # تحليل النص المسترجع إلى قائمة أسطر
             lines = [l.strip() for l in entry_text.splitlines() if l.strip()]
             entry_lines = []
             for line in lines:
@@ -306,19 +353,15 @@ def show():
                 st.session_state.generated_entry = {"lines": entry_lines}
                 st.rerun()
 
-        # عرض القيد بشكل جميل باستخدام DataFrame داخل بطاقة زجاجية
         if st.session_state.generated_entry is not None:
             lines = st.session_state.generated_entry["lines"]
             st.markdown(f"<h4 style='color:{TEXT_PRIMARY}; margin-top:1rem;'>القيد المقترح</h4>", unsafe_allow_html=True)
-            # بناء DataFrame
             df = pd.DataFrame(lines)
             total_debit = df["debit"].sum()
             total_credit = df["credit"].sum()
-            # صف المجاميع
             summary = pd.DataFrame([{"account": "المجموع", "debit": total_debit, "credit": total_credit}])
             df_display = pd.concat([df, summary], ignore_index=True)
             df_display = df_display.rename(columns={"account": "الحساب", "debit": "مدين", "credit": "دائن"})
-            # تطبيق تنسيق الأرقام
             st.dataframe(
                 df_display.style.format({"مدين": "{:,.2f}", "دائن": "{:,.2f}"}),
                 use_container_width=True,
