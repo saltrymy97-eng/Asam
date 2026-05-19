@@ -6,8 +6,11 @@ import database
 database.init_db()
 database.create_default_admin()
 
+# استيراد وحدات المصادقة الجديدة
+from ui.auth_ui import show as auth_show
+from services.auth_service import logout_session
+
 # استيراد الوحدات القديمة
-import auth
 import dashboard
 import inventory
 import sales
@@ -26,7 +29,7 @@ import ai_assistant
 import closing_entries  # قيد إغلاق الحسابات
 from ui.returns import show as returns_show  # مرتجعات البضاعة
 from ui.audit_log import show as audit_show  # سجل التدقيق
-from ui.backup import show as backup_show    # 🆕 النسخ الاحتياطي
+from ui.backup import show as backup_show    # النسخ الاحتياطي
 
 st.set_page_config(page_title="XD ERP", layout="wide")
 
@@ -42,7 +45,7 @@ if 'user' not in st.session_state:
     st.session_state.user = None
 
 if not st.session_state.logged_in:
-    auth.show()
+    auth_show()
 else:
     with st.sidebar:
         st.markdown(f"### أهلاً، {st.session_state.user.get('full_name', '')}")
@@ -65,7 +68,7 @@ else:
                 "كشف الرواتب",
                 "المساعد الذكي",
                 "سجل التدقيق",
-                "نسخ احتياطي",         # 🆕
+                "نسخ احتياطي",
                 "تسجيل الخروج"
             ],
             icons=[
@@ -85,7 +88,7 @@ else:
                 "cash-coin",
                 "robot",
                 "shield-check",
-                "cloud-upload",        # 🆕 أيقونة النسخ الاحتياطي
+                "cloud-upload",
                 "box-arrow-right"
             ],
             menu_icon="cast",
@@ -124,7 +127,7 @@ else:
         ai_assistant.show()
     elif selected == "سجل التدقيق":
         audit_show()
-    elif selected == "نسخ احتياطي":     # 🆕
+    elif selected == "نسخ احتياطي":
         backup_show()
     elif selected == "تسجيل الخروج":
-        auth.logout()
+        logout_session()
