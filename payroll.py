@@ -1,7 +1,9 @@
+# payroll.py - كشف الرواتب (مع سجل التدقيق)
 import streamlit as st
 import sqlite3
 import pandas as pd
 from datetime import date
+from services.audit_service import log_action  # 🆕
 
 DB_PATH = "erp.db"
 
@@ -12,7 +14,6 @@ def get_conn():
 
 def create_payroll_tables():
     conn = get_conn()
-    # جدول إعدادات الراتب لكل موظف
     conn.execute("""
         CREATE TABLE IF NOT EXISTS employee_salaries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,7 +26,6 @@ def create_payroll_tables():
             FOREIGN KEY (employee_id) REFERENCES employees(id)
         )
     """)
-    # جدول سجل الرواتب الشهرية
     conn.execute("""
         CREATE TABLE IF NOT EXISTS payroll_runs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,24 +93,19 @@ def run_payroll(employee_id, month):
     
     conn = get_conn()
     
-    # إنشاء قيد اليومية
     desc = f"راتب شهر {month}"
     cur = conn.execute("INSERT INTO journal_entries (date, description, reference) VALUES (?, ?, ?)",
                        (date.today().strftime("%Y-%m-%d"), desc, month))
     entry_id = cur.lastrowid
     
-    # مدين: مصروفات الرواتب (5xxxxx)
     conn.execute("INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, 'مصروف الرواتب', ?, 0)",
                  (entry_id, basic + total_allowances))
-    # دائن: البنك أو الصندوق (1xxxxx) بصافي المبلغ
     conn.execute("INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, 'البنك', 0, ?)",
                  (entry_id, net))
-    # إذا وجدت خصومات، تقيد كدائن لحساب الخصومات
     if deductions > 0:
         conn.execute("INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, 'خصومات الموظفين', 0, ?)",
                      (entry_id, deductions))
     
-    # حفظ سجل الراتب
     conn.execute("""
         INSERT INTO payroll_runs (employee_id, month, basic_salary, housing_allowance, transport_allowance,
         other_allowances, total_allowances, deductions, net_salary, journal_entry_id)
@@ -173,6 +168,13 @@ def show():
             
             if st.form_submit_button("💾 حفظ الإعدادات"):
                 save_salary_config(emp_id, basic, housing, transport, other, deductions)
+                # 🆕 تسجيل في سجل التدقيق
+                log_action(
+                    username=st.session_state.user.get('username', 'admin'),
+                    action="إعداد الراتب",
+                    table_name="employee_salaries",
+                    new_value=f"الموظف: {selected}, الأساسي: {basic:,.2f}"
+                )
                 st.success("تم حفظ إعدادات الراتب")
                 st.rerun()
     
@@ -202,6 +204,13 @@ def show():
                 if error:
                     st.error(error)
                 else:
+                    # 🆕 تسجيل في سجل التدقيق
+                    log_action(
+                        username=st.session_state.user.get('username', 'admin'),
+                        action="تشغيل كشف راتب",
+                        table_name="payroll_runs",
+                        new_value=f"الموظف: {selected}, الشهر: {month}, الصافي: {net_amount:,.2f}"
+                    )
                     st.success(f"تم تشغيل كشف راتب {month} للموظف {selected}، صافي الراتب: {net_amount:,.2f} وتم إنشاء القيد المحاسبي.")
                     st.rerun()
         else:
