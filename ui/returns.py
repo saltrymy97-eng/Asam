@@ -1,4 +1,4 @@
-# ui/returns.py - واجهة مرتجعات البضاعة
+# ui/returns.py - واجهة مرتجعات البضاعة (المفاتيح الفريدة تعمل)
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -40,16 +40,14 @@ def show():
                     
                     return_items = []
                     for item in items:
-                        col1, col2 = st.columns([3, 1])
-                        max_qty = int(item["quantity"])
-                        qty = col2.number_input(
-                            f"كمية {item['name']}",
+                        unique_key = f"ret_{inv['id']}_{item['id']}"
+                        qty = st.number_input(
+                            f"كمية {item['name']} (المتاح: {item['quantity']})",
                             min_value=0,
-                            max_value=max_qty,
+                            max_value=int(item["quantity"]),
                             value=0,
-                            key=f"ret_{item['id']}"
+                            key=unique_key
                         )
-                        col1.write(f"**{item['name']}** - المتاح: {max_qty}")
                         if qty > 0:
                             return_items.append((item["name"], qty))
                     
@@ -57,7 +55,7 @@ def show():
                         return_date = st.date_input("تاريخ المرتجع", value=date.today())
                         reason = st.text_area("سبب الإرجاع (اختياري)")
                         
-                        if st.button("✅ تأكيد مرتجع المبيعات", key="confirm_sale_return"):
+                        if st.button("✅ تأكيد مرتجع المبيعات", key="confirm_sale_return", type="primary"):
                             success, result, total = process_return(
                                 "sale", inv["id"], return_items,
                                 return_date.strftime("%Y-%m-%d"), reason
@@ -67,6 +65,8 @@ def show():
                                 st.rerun()
                             else:
                                 st.error(f"فشل العملية: {result}")
+                    else:
+                        st.info("حدد كمية لمنتج واحد على الأقل")
     
     # ---------- مرتجع مشتريات ----------
     with tab2:
@@ -93,16 +93,14 @@ def show():
                     
                     return_items = []
                     for item in items:
-                        col1, col2 = st.columns([3, 1])
-                        max_qty = int(item["quantity"])
-                        qty = col2.number_input(
-                            f"كمية {item['name']}",
+                        unique_key = f"pret_{inv['id']}_{item['id']}"
+                        qty = st.number_input(
+                            f"كمية {item['name']} (المتاح: {item['quantity']})",
                             min_value=0,
-                            max_value=max_qty,
+                            max_value=int(item["quantity"]),
                             value=0,
-                            key=f"pret_{item['id']}"
+                            key=unique_key
                         )
-                        col1.write(f"**{item['name']}** - المتاح: {max_qty}")
                         if qty > 0:
                             return_items.append((item["name"], qty))
                     
@@ -110,7 +108,7 @@ def show():
                         return_date = st.date_input("تاريخ المرتجع", value=date.today(), key="purchase_ret_date")
                         reason = st.text_area("سبب الإرجاع (اختياري)", key="purchase_ret_reason")
                         
-                        if st.button("✅ تأكيد مرتجع المشتريات", key="confirm_purchase_return"):
+                        if st.button("✅ تأكيد مرتجع المشتريات", key="confirm_purchase_return", type="primary"):
                             success, result, total = process_return(
                                 "purchase", inv["id"], return_items,
                                 return_date.strftime("%Y-%m-%d"), reason
@@ -120,6 +118,8 @@ def show():
                                 st.rerun()
                             else:
                                 st.error(f"فشل العملية: {result}")
+                    else:
+                        st.info("حدد كمية لمنتج واحد على الأقل")
     
     # ---------- سجل المرتجعات ----------
     with tab3:
