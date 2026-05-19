@@ -123,6 +123,7 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
 
 def get_return_history():
     """سجل المرتجعات مع سبب الإرجاع"""
+    add_reason_column()  # التأكد من وجود العمود قبل القراءة
     conn = get_connection()
     returns = conn.execute("""
         SELECT id, type, invoice_date, total, status, reason
