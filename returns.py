@@ -1,14 +1,8 @@
-# ui/returns.py - واجهة مرتجعات البضاعة
+# returns.py - واجهة مرتجعات البضاعة
 import streamlit as st
 import pandas as pd
 from datetime import date
-from services.returns_service import (
-    get_sales_invoices,
-    get_purchase_invoices,
-    get_invoice_items,
-    process_return,
-    get_return_history
-)
+import returns_service  # <-- الاستيراد المباشر من الجذر
 
 def show():
     st.title("🔄 مرتجعات البضاعة")
@@ -18,7 +12,7 @@ def show():
     # ---------- مرتجع مبيعات ----------
     with tab1:
         st.subheader("إرجاع بضاعة من عميل")
-        invoices = get_sales_invoices()
+        invoices = returns_service.get_sales_invoices()
         
         if not invoices:
             st.info("لا توجد فواتير مبيعات مكتملة")
@@ -29,7 +23,7 @@ def show():
         
         if selected:
             inv = invoice_options[selected]
-            items = get_invoice_items(inv["id"])
+            items = returns_service.get_invoice_items(inv["id"])
             
             if items:
                 st.markdown("**بنود الفاتورة:**")
@@ -59,7 +53,7 @@ def show():
                     reason = st.text_area("سبب الإرجاع (اختياري)")
                     
                     if st.button("✅ تأكيد مرتجع المبيعات", key="confirm_sale_return"):
-                        success, result, total = process_return(
+                        success, result, total = returns_service.process_return(
                             "sale", inv["id"], return_items,
                             return_date.strftime("%Y-%m-%d"), reason
                         )
@@ -72,7 +66,7 @@ def show():
     # ---------- مرتجع مشتريات ----------
     with tab2:
         st.subheader("إرجاع بضاعة للمورد")
-        invoices = get_purchase_invoices()
+        invoices = returns_service.get_purchase_invoices()
         
         if not invoices:
             st.info("لا توجد فواتير مشتريات مكتملة")
@@ -83,7 +77,7 @@ def show():
         
         if selected:
             inv = invoice_options[selected]
-            items = get_invoice_items(inv["id"])
+            items = returns_service.get_invoice_items(inv["id"])
             
             if items:
                 st.markdown("**بنود الفاتورة:**")
@@ -113,7 +107,7 @@ def show():
                     reason = st.text_area("سبب الإرجاع (اختياري)", key="purchase_ret_reason")
                     
                     if st.button("✅ تأكيد مرتجع المشتريات", key="confirm_purchase_return"):
-                        success, result, total = process_return(
+                        success, result, total = returns_service.process_return(
                             "purchase", inv["id"], return_items,
                             return_date.strftime("%Y-%m-%d"), reason
                         )
@@ -126,7 +120,7 @@ def show():
     # ---------- سجل المرتجعات ----------
     with tab3:
         st.subheader("سجل عمليات المرتجعات")
-        returns = get_return_history()
+        returns = returns_service.get_return_history()
         if returns:
             df = pd.DataFrame(returns)
             df["type"] = df["type"].map({
