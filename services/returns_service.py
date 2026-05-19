@@ -1,4 +1,4 @@
-# services/returns_service.py - منطق أعمال مرتجعات البضاعة
+# services/returns_service.py - منطق أعمال مرتجعات البضاعة (مع سبب المرتجعات)
 import sqlite3
 
 DB_PATH = "erp.db"
@@ -7,6 +7,17 @@ def get_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+def add_reason_column():
+    """إضافة عمود reason لجدول invoices إذا لم يكن موجوداً"""
+    conn = get_connection()
+    try:
+        conn.execute("ALTER TABLE invoices ADD COLUMN reason TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # العمود موجود مسبقاً
+    finally:
+        conn.close()
 
 def get_sales_invoices():
     """جلب فواتير المبيعات المكتملة"""
@@ -55,20 +66,22 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
     - return_date: تاريخ المرتجع
     - reason: سبب الإرجاع
     """
+    # التأكد من وجود عمود reason
+    add_reason_column()
+    
     conn = get_connection()
     
     try:
-        # 1. إنشاء فاتورة مرتجع
+        # 1. إنشاء فاتورة مرتجع مع سبب الإرجاع
         cursor = conn.execute("""
-            INSERT INTO invoices (type, party_id, invoice_date, total, status)
-            VALUES (?, ?, ?, 0, 'completed')
-        """, (f'{invoice_type}_return', 0, return_date))
+            INSERT INTO invoices (type, party_id, invoice_date, total, status, reason)
+            VALUES (?, ?, ?, 0, 'completed', ?)
+        """, (f'{invoice_type}_return', 0, return_date, reason))
         return_invoice_id = cursor.lastrowid
         
         total_return = 0.0
         
         for product_name, qty in items_to_return:
-            # جلب المنتج من جدول products
             product = conn.execute(
                 "SELECT id, purchase_price, selling_price FROM products WHERE name = ?",
                 (product_name,)
@@ -77,62 +90,33 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
             if not product:
                 continue
             
-            # تحديد السعر حسب نوع الفاتورة
             unit_price = product["selling_price"] if invoice_type == "sale" else product["purchase_price"]
             line_total = qty * unit_price
             total_return += line_total
             
-            # إضافة بند المرتجع
             conn.execute("""
                 INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price)
                 VALUES (?, ?, ?, ?)
             """, (return_invoice_id, product["id"], qty, unit_price))
             
-            # تحديث المخزون (عكس حركة الفاتورة الأصلية)
             if invoice_type == "sale":
-                # مرتجع مبيعات: زيادة المخزون
-                conn.execute(
-                    "UPDATE products SET quantity = quantity + ? WHERE id = ?",
-                    (qty, product["id"])
-                )
+                conn.execute("UPDATE products SET quantity = quantity + ? WHERE id = ?", (qty, product["id"]))
                 conn.execute("""
                     INSERT INTO stock_movements (product_id, type, quantity, date, reference)
                     VALUES (?, 'in', ?, ?, ?)
                 """, (product["id"], qty, return_date, f"مرتجع مبيعات #{return_invoice_id}"))
             else:
-                # مرتجع مشتريات: تقليل المخزون
-                conn.execute(
-                    "UPDATE products SET quantity = quantity - ? WHERE id = ?",
-                    (qty, product["id"])
-                )
+                conn.execute("UPDATE products SET quantity = quantity - ? WHERE id = ?", (qty, product["id"]))
                 conn.execute("""
                     INSERT INTO stock_movements (product_id, type, quantity, date, reference)
                     VALUES (?, 'out', ?, ?, ?)
                 """, (product["id"], qty, return_date, f"مرتجع مشتريات #{return_invoice_id}"))
         
-        # تحديث إجمالي فاتورة المرتجع
-        conn.execute(
-            "UPDATE invoices SET total = ? WHERE id = ?",
-            (total_return, return_invoice_id)
-        )
-        
+        conn.execute("UPDATE invoices SET total = ? WHERE id = ?", (total_return, return_invoice_id))
         conn.commit()
         return True, return_invoice_id, total_return
     except Exception as e:
         conn.rollback()
         return False, str(e), 0
     finally:
-        conn.close()
-
-def get_return_history():
-    """سجل المرتجعات"""
-    conn = get_connection()
-    returns = conn.execute("""
-        SELECT id, type, invoice_date, total, status
-        FROM invoices
-        WHERE type IN ('sale_return', 'purchase_return')
-        ORDER BY id DESC
-        LIMIT 50
-    """).fetchall()
-    conn.close()
-    return returns
+        conn.close
