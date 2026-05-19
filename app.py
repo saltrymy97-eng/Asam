@@ -24,8 +24,9 @@ import fifo_inventory
 import payroll
 import ai_assistant
 import closing_entries  # قيد إغلاق الحسابات
-from ui.returns import show as returns_show  # مرتجعات البضاعة (من مجلد ui)
-from ui.audit_log import show as audit_show  # 🆕 سجل التدقيق
+from ui.returns import show as returns_show  # مرتجعات البضاعة
+from ui.audit_log import show as audit_show  # سجل التدقيق
+from ui.backup import show as backup_show    # 🆕 النسخ الاحتياطي
 
 st.set_page_config(page_title="XD ERP", layout="wide")
 
@@ -63,7 +64,8 @@ else:
                 "FIFO المخزون",
                 "كشف الرواتب",
                 "المساعد الذكي",
-                "سجل التدقيق",          # 🆕
+                "سجل التدقيق",
+                "نسخ احتياطي",         # 🆕
                 "تسجيل الخروج"
             ],
             icons=[
@@ -82,7 +84,8 @@ else:
                 "boxes",
                 "cash-coin",
                 "robot",
-                "shield-check",        # 🆕 أيقونة سجل التدقيق
+                "shield-check",
+                "cloud-upload",        # 🆕 أيقونة النسخ الاحتياطي
                 "box-arrow-right"
             ],
             menu_icon="cast",
@@ -119,7 +122,9 @@ else:
         payroll.show()
     elif selected == "المساعد الذكي":
         ai_assistant.show()
-    elif selected == "سجل التدقيق":     # 🆕
+    elif selected == "سجل التدقيق":
         audit_show()
+    elif selected == "نسخ احتياطي":     # 🆕
+        backup_show()
     elif selected == "تسجيل الخروج":
         auth.logout()
