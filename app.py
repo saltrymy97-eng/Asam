@@ -24,7 +24,8 @@ import fifo_inventory
 import payroll
 import ai_assistant
 import closing_entries  # قيد إغلاق الحسابات
-from ui.returns import show as returns_show  # 🆕 مرتجعات البضاعة (من مجلد ui)
+from ui.returns import show as returns_show  # مرتجعات البضاعة (من مجلد ui)
+from ui.audit_log import show as audit_show  # 🆕 سجل التدقيق
 
 st.set_page_config(page_title="XD ERP", layout="wide")
 
@@ -51,7 +52,7 @@ else:
                 "المخزون",
                 "المبيعات",
                 "المشتريات",
-                "مرتجعات البضاعة",       # 🆕
+                "مرتجعات البضاعة",
                 "الحسابات",
                 "الموارد البشرية",
                 "شجرة الحسابات",
@@ -62,6 +63,7 @@ else:
                 "FIFO المخزون",
                 "كشف الرواتب",
                 "المساعد الذكي",
+                "سجل التدقيق",          # 🆕
                 "تسجيل الخروج"
             ],
             icons=[
@@ -69,7 +71,7 @@ else:
                 "box",
                 "cart",
                 "truck",
-                "arrow-repeat",          # 🆕 أيقونة المرتجعات
+                "arrow-repeat",
                 "calculator",
                 "people",
                 "diagram-3",
@@ -80,6 +82,7 @@ else:
                 "boxes",
                 "cash-coin",
                 "robot",
+                "shield-check",        # 🆕 أيقونة سجل التدقيق
                 "box-arrow-right"
             ],
             menu_icon="cast",
@@ -94,7 +97,7 @@ else:
         sales.show()
     elif selected == "المشتريات":
         purchases.show()
-    elif selected == "مرتجعات البضاعة":   # 🆕
+    elif selected == "مرتجعات البضاعة":
         returns_show()
     elif selected == "الحسابات":
         accounting.show()
@@ -116,5 +119,7 @@ else:
         payroll.show()
     elif selected == "المساعد الذكي":
         ai_assistant.show()
+    elif selected == "سجل التدقيق":     # 🆕
+        audit_show()
     elif selected == "تسجيل الخروج":
         auth.logout()
