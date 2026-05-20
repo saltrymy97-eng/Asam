@@ -1,4 +1,4 @@
-# services/accounting_service.py - منطق الحسابات وقيود اليومية
+# services/accounting_service.py - منطق الحسابات وقيود اليومية (إصدار محسن)
 import sqlite3
 from datetime import date
 
@@ -11,13 +11,35 @@ def get_conn():
 
 def get_account_code(account_input):
     """تحويل اسم الحساب إلى كود، أو إرجاع الكود إذا كان رقماً"""
+    if not account_input or not account_input.strip():
+        return None
+    
+    account_input = account_input.strip()
+    
+    # إذا كان رقماً (كود)، أرجعه كما هو
+    if account_input.isdigit():
+        return account_input
+    
     conn = get_conn()
-    if account_input.strip().isdigit():
-        conn.close()
-        return account_input.strip()
-    row = conn.execute("SELECT code FROM accounts WHERE name = ?", (account_input.strip(),)).fetchone()
+    
+    # 🔍 البحث بطرق متعددة لضمان الوصول للحساب
+    row = conn.execute(
+        "SELECT code FROM accounts WHERE name = ? OR name LIKE ? OR code = ?",
+        (account_input, f"%{account_input}%", account_input)
+    ).fetchone()
+    
     conn.close()
-    return row["code"] if row else None
+    
+    if row:
+        return row["code"]
+    
+    # 🆕 تحقق إضافي: إذا كان الإدخال يبدأ برقم (مثلاً "1-الأصول")
+    if account_input[0].isdigit():
+        code_part = account_input.split("-")[0].strip()
+        if code_part.isdigit():
+            return code_part
+    
+    return None
 
 def save_journal_entry(description, lines, entry_date=None):
     """حفظ قيد يومية جديد وإرجاع (entry_id, error_message)"""
@@ -31,11 +53,20 @@ def save_journal_entry(description, lines, entry_date=None):
             (entry_date, description, "")
         )
         entry_id = cur.lastrowid
+        
         for line in lines:
+            # 🔍 محاولة أخيرة لتحويل الاسم إلى كود قبل الحفظ
+            account_name = line["account"]
+            if not account_name.isdigit():
+                code = get_account_code(account_name)
+                if code:
+                    account_name = code
+            
             conn.execute(
                 "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, ?, ?, ?)",
-                (entry_id, line["account"], line["debit"], line["credit"])
+                (entry_id, account_name, line["debit"], line["credit"])
             )
+        
         conn.commit()
         return entry_id, None
     except Exception as e:
