@@ -21,7 +21,7 @@ from ui.financial_ui import show as financial_show  # القوائم المال�
 import roles_permissions
 import period_closing
 import fifo_inventory
-import payroll
+from ui.payroll_ui import show as payroll_show  # 🆕 كشف الرواتب (منفصلة)
 import ai_assistant
 import closing_entries  # قيد إغلاق الحسابات
 from ui.returns import show as returns_show  # مرتجعات البضاعة
@@ -30,7 +30,7 @@ from ui.backup import show as backup_show    # النسخ الاحتياطي
 from ui.pdf_reports import show as pdf_show  # تقارير PDF
 from ui.accounting_ui import show as accounting_show  # الحسابات (منفصلة)
 from ui.sales_ui import show as sales_show  # المبيعات (منفصلة)
-from ui.purchases_ui import show as purchases_show  # 🆕 المشتريات (منفصلة)
+from ui.purchases_ui import show as purchases_show  # المشتريات (منفصلة)
 
 st.set_page_config(page_title="XD ERP", layout="wide")
 
@@ -105,7 +105,7 @@ else:
     elif selected == "المبيعات":
         sales_show()
     elif selected == "المشتريات":
-        purchases_show()  # 🆕 تم الاستدعاء من الوحدة المنفصلة
+        purchases_show()
     elif selected == "مرتجعات البضاعة":
         returns_show()
     elif selected == "الحسابات":
@@ -125,7 +125,7 @@ else:
     elif selected == "FIFO المخزون":
         fifo_inventory.show()
     elif selected == "كشف الرواتب":
-        payroll.show()
+        payroll_show()  # 🆕 تم الاستدعاء من الوحدة المنفصلة
     elif selected == "المساعد الذكي":
         ai_assistant.show()
     elif selected == "سجل التدقيق":
