@@ -1,6 +1,7 @@
-# ui/accounting_ui.py - واجهة الحسابات (تصميم زجاجي فخم)
+# ui/accounting_ui.py - واجهة الحسابات (تصميم زجاجي فخم + قوائم منسدلة)
 import streamlit as st
 import pandas as pd
+import sqlite3
 from datetime import date
 from services.accounting_service import (
     get_account_code,
@@ -13,6 +14,8 @@ from services.accounting_service import (
 )
 from services.audit_service import log_action
 
+DB_PATH = "erp.db"
+
 # ========== ألوان التصميم ==========
 GLASS_BG = "rgba(255, 255, 255, 0.12)"
 GLASS_BORDER = "rgba(255, 255, 255, 0.25)"
@@ -24,6 +27,14 @@ ACCENT_GREEN = "#10B981"
 ACCENT_ORANGE = "#F59E0B"
 ACCENT_RED = "#EF4444"
 ACCENT_PURPLE = "#8B5CF6"
+
+def get_accounts_list():
+    """جلب جميع الحسابات من شجرة الحسابات"""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    accounts = conn.execute("SELECT code, name FROM accounts ORDER BY code").fetchall()
+    conn.close()
+    return [f"{a['code']} - {a['name']}" for a in accounts]
 
 def show():
     st.markdown(f"""
@@ -39,44 +50,46 @@ def show():
     with tab1:
         st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>تسجيل قيد يومية</h3>", unsafe_allow_html=True)
         
-        with st.form("journal_entry_form"):
-            entry_date = st.date_input("التاريخ", value=date.today())
-            description = st.text_input("البيان", placeholder="أدخل وصف العملية المالية")
-            
-            st.markdown(f"<p style='color:{TEXT_SECONDARY}; margin-top:1rem;'>الأسطر المحاسبية (حتى 4 أسطر)</p>", unsafe_allow_html=True)
-            
-            lines = []
-            for i in range(4):
-                cols = st.columns([3, 2, 2])
-                account = cols[0].text_input(f"الحساب {i+1}", placeholder="اسم الحساب أو الكود", key=f"acc_{i}")
-                debit = cols[1].number_input(f"مدين {i+1}", min_value=0.0, step=0.01, key=f"deb_{i}")
-                credit = cols[2].number_input(f"دائن {i+1}", min_value=0.0, step=0.01, key=f"cred_{i}")
-                if account:
-                    lines.append({"account": account, "debit": debit, "credit": credit})
+        # 🆕 جلب قائمة الحسابات مرة واحدة
+        accounts_list = get_accounts_list()
+        
+        if not accounts_list:
+            st.warning("لا توجد حسابات. أضف حسابات من شجرة الحسابات أولاً.")
+        else:
+            with st.form("journal_entry_form"):
+                entry_date = st.date_input("التاريخ", value=date.today())
+                description = st.text_input("البيان", placeholder="أدخل وصف العملية المالية")
+                
+                st.markdown(f"<p style='color:{TEXT_SECONDARY}; margin-top:1rem;'>الأسطر المحاسبية (حتى 4 أسطر)</p>", unsafe_allow_html=True)
+                
+                lines = []
+                for i in range(4):
+                    cols = st.columns([3, 2, 2])
+                    # 🆕 قائمة منسدلة بدلاً من حقل نصي
+                    account = cols[0].selectbox(
+                        f"الحساب {i+1}",
+                        [""] + accounts_list,
+                        key=f"acc_{i}"
+                    )
+                    debit = cols[1].number_input(f"مدين {i+1}", min_value=0.0, step=0.01, key=f"deb_{i}")
+                    credit = cols[2].number_input(f"دائن {i+1}", min_value=0.0, step=0.01, key=f"cred_{i}")
+                    if account:
+                        # استخراج الكود من النص المختار (مثلاً "4 - الإيرادات" → "4")
+                        code = account.split(" - ")[0]
+                        lines.append({"account": code, "debit": debit, "credit": credit})
 
-            submitted = st.form_submit_button("💾 حفظ القيد", type="primary")
-            
-            if submitted:
-                if not description:
-                    st.error("البيان مطلوب")
-                elif not lines:
-                    st.error("أضف سطراً محاسبياً واحداً على الأقل")
-                else:
-                    total_debit = sum(l["debit"] for l in lines)
-                    total_credit = sum(l["credit"] for l in lines)
-                    if abs(total_debit - total_credit) > 0.001:
-                        st.error(f"القيد غير متوازن! المدين: {total_debit:,.2f} ، الدائن: {total_credit:,.2f}")
+                submitted = st.form_submit_button("💾 حفظ القيد", type="primary")
+                
+                if submitted:
+                    if not description:
+                        st.error("البيان مطلوب")
+                    elif not lines:
+                        st.error("أضف سطراً محاسبياً واحداً على الأقل")
                     else:
-                        # تحويل أسماء الحسابات إلى أكواد
-                        errors = []
-                        for line in lines:
-                            code = get_account_code(line["account"])
-                            if code:
-                                line["account"] = code
-                            else:
-                                errors.append(line["account"])
-                        if errors:
-                            st.error("حسابات غير موجودة: " + ", ".join(errors))
+                        total_debit = sum(l["debit"] for l in lines)
+                        total_credit = sum(l["credit"] for l in lines)
+                        if abs(total_debit - total_credit) > 0.001:
+                            st.error(f"القيد غير متوازن! المدين: {total_debit:,.2f} ، الدائن: {total_credit:,.2f}")
                         else:
                             entry_id, error = save_journal_entry(description, lines, entry_date.strftime("%Y-%m-%d"))
                             if error:
