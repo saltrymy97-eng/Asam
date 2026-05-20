@@ -1,11 +1,24 @@
-# services/pdf_service.py – خدمة تقارير PDF (fpdf2 + معالجة الجداول الفارغة)
+# services/pdf_service.py – خدمة تقارير PDF (fpdf2 + تحميل خط عربي تلقائي)
 import sqlite3
 import os
+import requests
 from datetime import datetime
 from fpdf import FPDF
 
 DB_PATH = "erp.db"
 OUTPUT_DIR = "pdf_reports"
+FONT_DIR = "fonts"
+FONT_FILE = os.path.join(FONT_DIR, "NotoNaskhArabic.ttf")
+FONT_URL = "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoNaskhArabic/NotoNaskhArabic-Regular.ttf"
+
+def ensure_font():
+    """تحميل الخط العربي إذا لم يكن موجوداً"""
+    if not os.path.exists(FONT_FILE):
+        if not os.path.exists(FONT_DIR):
+            os.makedirs(FONT_DIR)
+        response = requests.get(FONT_URL)
+        with open(FONT_FILE, "wb") as f:
+            f.write(response.content)
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
@@ -19,8 +32,9 @@ def ensure_output_dir():
 class ArabicPDF(FPDF):
     def __init__(self):
         super().__init__()
-        self.add_font("Arabic", "", "DejaVuSans.ttf", uni=True)
-        self.add_font("Arabic", "B", "DejaVuSans.ttf", uni=True)
+        ensure_font()
+        self.add_font("Arabic", "", FONT_FILE, uni=True)
+        self.add_font("Arabic", "B", FONT_FILE, uni=True)
         self.set_auto_page_break(True, 15)
 
     def header(self):
