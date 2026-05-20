@@ -1,4 +1,4 @@
-# services/financial_service.py - منطق القوائم المالية
+# services/financial_service.py - منطق القوائم المالية (يبحث بالاسم والكود)
 import sqlite3
 
 DB_PATH = "erp.db"
@@ -8,15 +8,16 @@ def get_conn():
     conn.row_factory = sqlite3.Row
     return conn
 
-def get_account_balance(account_code):
-    """جلب رصيد حساب محدد من قيود اليومية"""
+def get_account_balance(account_input):
+    """جلب رصيد حساب محدد (يبحث بالكود أو الاسم)"""
     conn = get_conn()
+    # البحث بالكود أو الاسم
     query = """
         SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) AS balance
         FROM journal_lines
-        WHERE account_name = ?
+        WHERE account_name = ? OR account_name = (SELECT name FROM accounts WHERE code = ?)
     """
-    result = conn.execute(query, (account_code,)).fetchone()
+    result = conn.execute(query, (account_input, account_input)).fetchone()
     conn.close()
     return result["balance"] if result else 0
 
@@ -30,13 +31,16 @@ def get_accounts_by_prefix(prefix):
                   CASE
                     WHEN jl.account_name LIKE '1%' THEN 'debit'
                     WHEN jl.account_name LIKE '5%' THEN 'debit'
-                    ELSE 'credit'
+                    WHEN jl.account_name LIKE '4%' THEN 'credit'
+                    WHEN jl.account_name LIKE '2%' THEN 'credit'
+                    WHEN jl.account_name LIKE '3%' THEN 'credit'
+                    ELSE 'debit'
                   END) as is_debit
         FROM journal_lines jl
-        LEFT JOIN accounts a ON jl.account_name = a.code
-        WHERE jl.account_name LIKE ?
+        LEFT JOIN accounts a ON jl.account_name = a.code OR jl.account_name = a.name
+        WHERE jl.account_name LIKE ? OR a.code LIKE ?
         ORDER BY jl.account_name
-    """, (prefix + "%",)).fetchall()
+    """, (prefix + "%", prefix + "%")).fetchall()
     conn.close()
     return accounts
 
@@ -98,7 +102,6 @@ def get_balance_sheet():
         total_equity += amount
         equity_data.append({"code": acc["code"], "name": acc["name"], "amount": amount})
 
-    # حساب صافي الدخل لإضافته لحقوق الملكية
     rev_total = sum(-get_account_balance(acc["code"]) if acc["is_debit"]=="credit" else get_account_balance(acc["code"]) for acc in get_accounts_by_prefix("4"))
     exp_total = sum(get_account_balance(acc["code"]) if acc["is_debit"]=="debit" else -get_account_balance(acc["code"]) for acc in get_accounts_by_prefix("5"))
     net = rev_total - exp_total
