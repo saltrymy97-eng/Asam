@@ -4,11 +4,10 @@ from datetime import date
 from database import get_connection
 from services.audit_service import log_action
 
-DB_PATH = "erp.db"
-
 def get_customers():
     """جلب العملاء"""
     conn = get_connection()
+    conn.row_factory = sqlite3.Row
     customers = conn.execute("SELECT id, name FROM customers ORDER BY name").fetchall()
     conn.close()
     return [dict(c) for c in customers]
@@ -16,6 +15,7 @@ def get_customers():
 def get_products_for_sale():
     """جلب المنتجات المتاحة للبيع (الكمية > 0)"""
     conn = get_connection()
+    conn.row_factory = sqlite3.Row
     products = conn.execute("SELECT id, name, selling_price, quantity FROM products WHERE quantity > 0 ORDER BY name").fetchall()
     conn.close()
     return [dict(p) for p in products]
@@ -28,30 +28,26 @@ def create_sale_invoice(customer_id, items, username="admin"):
     """
     total = sum(item["quantity"] * item["unit_price"] for item in items)
     conn = get_connection()
+    conn.row_factory = sqlite3.Row
     
     try:
         conn.execute("BEGIN")
         
-        # 1. إنشاء الفاتورة
         cur = conn.execute(
             "INSERT INTO invoices (type, party_id, invoice_date, total, status) VALUES ('sale', ?, date('now'), ?, 'completed')",
             (customer_id, total)
         )
         invoice_id = cur.lastrowid
         
-        # 2. إدراج البنود وتحديث المخزون
         for item in items:
-            # إدراج بند الفاتورة
             conn.execute(
                 "INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?)",
                 (invoice_id, item["product_id"], item["quantity"], item["unit_price"])
             )
-            # تسجيل حركة مخزون (خارج)
             conn.execute(
                 "INSERT INTO stock_movements (product_id, type, quantity, date, reference) VALUES (?, 'out', ?, date('now'), ?)",
                 (item["product_id"], item["quantity"], f"فاتورة مبيعات #{invoice_id}")
             )
-            # تقليل المخزون
             conn.execute(
                 "UPDATE products SET quantity = quantity - ? WHERE id = ?",
                 (item["quantity"], item["product_id"])
@@ -59,7 +55,6 @@ def create_sale_invoice(customer_id, items, username="admin"):
         
         conn.commit()
         
-        # تسجيل في سجل التدقيق
         customer_name = "غير معروف"
         try:
             row = conn.execute("SELECT name FROM customers WHERE id = ?", (customer_id,)).fetchone()
@@ -87,6 +82,7 @@ def create_sale_invoice(customer_id, items, username="admin"):
 def get_sale_invoices():
     """جلب فواتير المبيعات المسجلة"""
     conn = get_connection()
+    conn.row_factory = sqlite3.Row
     invoices = conn.execute("""
         SELECT i.id, c.name as customer, i.invoice_date, i.total, i.status
         FROM invoices i
@@ -100,6 +96,7 @@ def get_sale_invoices():
 def get_invoice_details(invoice_id):
     """جلب تفاصيل فاتورة محددة"""
     conn = get_connection()
+    conn.row_factory = sqlite3.Row
     details = conn.execute("""
         SELECT p.name, ii.quantity, ii.unit_price, (ii.quantity * ii.unit_price) as total
         FROM invoice_items ii
@@ -130,6 +127,7 @@ def add_customer(name, phone, address, username="admin"):
 def get_all_customers():
     """جلب جميع العملاء"""
     conn = get_connection()
+    conn.row_factory = sqlite3.Row
     customers = conn.execute("SELECT * FROM customers ORDER BY id DESC").fetchall()
     conn.close()
     return [dict(c) for c in customers]
