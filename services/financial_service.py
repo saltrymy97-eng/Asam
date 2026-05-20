@@ -1,4 +1,4 @@
-# services/financial_service.py - منطق القوائم المالية (إصدار تشخيصي)
+# services/financial_service.py - منطق القوائم المالية
 import sqlite3
 
 DB_PATH = "erp.db"
@@ -38,27 +38,6 @@ def get_accounts_by_prefix(prefix):
 
 def get_income_statement():
     """قائمة الدخل"""
-    conn = get_conn()
-    
-    # 🆕 تشخيص: عرض جميع البيانات المخزنة
-    import streamlit as st
-    all_data = conn.execute("""
-        SELECT account_name, SUM(debit) as total_debit, SUM(credit) as total_credit
-        FROM journal_lines
-        GROUP BY account_name
-        ORDER BY account_name
-    """).fetchall()
-    
-    if all_data:
-        st.write("### 🔍 البيانات المخزنة في قاعدة البيانات:")
-        for row in all_data:
-            st.write(f"- account_name: `{row['account_name']}` | مدين: {row['total_debit']} | دائن: {row['total_credit']}")
-    else:
-        st.warning("لا توجد أي قيود في قاعدة البيانات")
-    
-    conn.close()
-    
-    # الحساب العادي
     rev_accounts = get_accounts_by_prefix("4")
     revenue_list = []
     total_revenue = 0
