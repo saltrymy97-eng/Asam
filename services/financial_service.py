@@ -1,4 +1,4 @@
-# services/financial_service.py - منطق القوائم المالية (نظيف، بدون تشخيص)
+# services/financial_service.py - منطق القوائم المالية (إصدار احترافي)
 import sqlite3
 
 DB_PATH = "erp.db"
@@ -17,24 +17,27 @@ def get_account_balance(account_code):
     return debit, credit
 
 def get_accounts_by_prefix(prefix):
-    """جلب الحسابات المستخدمة في القيود"""
+    """جلب الحسابات المستخدمة في القيود - احترافي: مع أو بدون شجرة الحسابات"""
     conn = get_conn()
+    # أولاً: نجلب الحسابات من القيود مباشرة
     accounts = conn.execute("""
-        SELECT DISTINCT jl.account_name as code,
-               COALESCE(a.name, jl.account_name) as name,
-               COALESCE(a.is_debit,
-                  CASE
-                    WHEN jl.account_name LIKE '1%' THEN 'debit'
-                    WHEN jl.account_name LIKE '5%' THEN 'debit'
-                    ELSE 'credit'
-                  END) as is_debit
+        SELECT DISTINCT jl.account_name as code
         FROM journal_lines jl
-        LEFT JOIN accounts a ON jl.account_name = a.code OR jl.account_name = a.name
         WHERE jl.account_name LIKE ?
         ORDER BY jl.account_name
     """, (prefix + "%",)).fetchall()
+    
+    # ثانياً: نبحث عن أسمائها في شجرة الحسابات
+    result = []
+    for acc in accounts:
+        code = acc["code"]
+        # محاولة جلب الاسم من شجرة الحسابات
+        name_row = conn.execute("SELECT name FROM accounts WHERE code=?", (code,)).fetchone()
+        name = name_row["name"] if name_row else code
+        result.append({"code": code, "name": name})
+    
     conn.close()
-    return accounts
+    return result
 
 def get_income_statement():
     """قائمة الدخل"""
