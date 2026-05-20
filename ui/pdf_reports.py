@@ -1,7 +1,6 @@
-# ui/pdf_reports.py – واجهة تقارير PDF (مع معالجة الجداول الفارغة)
+# ui/pdf_reports.py – واجهة تقارير HTML (تصميم زجاجي فخم)
 import streamlit as st
 import os
-from datetime import datetime
 from services.pdf_service import (
     generate_income_statement,
     generate_balance_sheet,
@@ -24,17 +23,46 @@ ACCENT_ORANGE = "#F59E0B"
 ACCENT_RED = "#EF4444"
 ACCENT_PURPLE = "#8B5CF6"
 ACCENT_CYAN = "#06B6D4"
-ACCENT_PINK = "#EC4899"
+
+def glass_card(icon, title, desc, color):
+    """بطاقة زجاجية موحدة"""
+    return f"""
+    <div style="
+        background:{GLASS_BG}; backdrop-filter:blur(10px);
+        border:1px solid {GLASS_BORDER}; border-radius:20px;
+        padding:1.5rem; text-align:center; box-shadow:{GLASS_SHADOW};
+        margin-bottom:1rem;
+    ">
+        <div style="font-size:2.5rem; margin-bottom:0.3rem;">{icon}</div>
+        <div style="color:{color}; font-size:1.2rem; font-weight:700;">{title}</div>
+        <div style="color:{TEXT_SECONDARY}; font-size:0.9rem;">{desc}</div>
+    </div>
+    """
 
 def show():
     ensure_output_dir()
 
     st.markdown(f"""
     <div style="margin-bottom:2rem; text-align:right;">
-        <h1 style="color:{TEXT_PRIMARY}; font-size:2.8rem; margin:0; text-shadow:0 0 20px {ACCENT_CYAN};">📄 تقارير PDF</h1>
-        <p style="color:{TEXT_SECONDARY}; font-size:1.2rem;">حمّل تقاريرك المالية والإدارية بصيغة PDF بضغطة زر</p>
+        <h1 style="color:{TEXT_PRIMARY}; font-size:2.8rem; margin:0; text-shadow:0 0 20px {ACCENT_CYAN};">📄 تقارير HTML</h1>
+        <p style="color:{TEXT_SECONDARY}; font-size:1.2rem;">حمّل تقاريرك المالية والإدارية بصيغة HTML بضغطة زر</p>
     </div>
     """, unsafe_allow_html=True)
+
+    # بطاقات اختيار التقرير
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown(glass_card("📊", "قائمة الدخل", "الإيرادات والمصروفات وصافي الدخل", ACCENT_GREEN), unsafe_allow_html=True)
+    with col2:
+        st.markdown(glass_card("⚖️", "الميزانية العمومية", "الأصول والخصوم وحقوق الملكية", ACCENT_CYAN), unsafe_allow_html=True)
+    with col3:
+        st.markdown(glass_card("📦", "تقرير المخزون", "المنتجات والكميات وحدود إعادة الطلب", ACCENT_ORANGE), unsafe_allow_html=True)
+    
+    col4, col5 = st.columns(2)
+    with col4:
+        st.markdown(glass_card("🛡️", "سجل التدقيق", "آخر 100 عملية في النظام", ACCENT_RED), unsafe_allow_html=True)
+    with col5:
+        st.markdown(glass_card("🧾", "فاتورة محددة", "فاتورة برقم محدد", ACCENT_PURPLE), unsafe_allow_html=True)
 
     report_type = st.selectbox(
         "اختر نوع التقرير",
@@ -51,7 +79,7 @@ def show():
     if "فاتورة" in report_type:
         invoice_id = st.number_input("رقم الفاتورة", min_value=1, step=1)
 
-    if st.button("🚀 توليد التقرير PDF", type="primary", use_container_width=True):
+    if st.button("🚀 توليد التقرير", type="primary", use_container_width=True):
         with st.spinner("📄 جاري إنشاء التقرير..."):
             try:
                 path = None
@@ -81,14 +109,15 @@ def show():
 
                 if path:
                     filename = os.path.basename(path)
-                    with open(path, "rb") as f:
-                        st.download_button(
-                            label=f"📥 تحميل {filename}",
-                            data=f,
-                            file_name=filename,
-                            mime="application/pdf",
-                            type="primary"
-                        )
+                    with open(path, "r", encoding="utf-8") as f:
+                        html_content = f.read()
+                    st.download_button(
+                        label=f"📥 تحميل {filename}",
+                        data=html_content,
+                        file_name=filename,
+                        mime="text/html",
+                        type="primary"
+                    )
                     st.success(f"✅ تم إنشاء التقرير بنجاح: {filename}")
 
             except Exception as e:
@@ -98,7 +127,7 @@ def show():
     st.markdown("---")
     st.markdown(f"<h3 style='color:{TEXT_PRIMARY};'>📋 التقارير السابقة</h3>", unsafe_allow_html=True)
     if os.path.exists(OUTPUT_DIR):
-        files = sorted([f for f in os.listdir(OUTPUT_DIR) if f.endswith(".pdf")], reverse=True)
+        files = sorted([f for f in os.listdir(OUTPUT_DIR) if f.endswith(".html")], reverse=True)
         if files:
             for file in files[:10]:
                 path = os.path.join(OUTPUT_DIR, file)
@@ -109,8 +138,8 @@ def show():
                 with col2:
                     st.write(f"{size_kb:.1f} KB")
                 with col3:
-                    with open(path, "rb") as f:
-                        st.download_button(label="📥", data=f, file_name=file, key=f"dl_{file}")
+                    with open(path, "r", encoding="utf-8") as f:
+                        st.download_button(label="📥", data=f.read(), file_name=file, key=f"dl_{file}")
         else:
             st.info("لا توجد تقارير سابقة")
     else:
