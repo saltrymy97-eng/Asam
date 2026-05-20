@@ -16,7 +16,6 @@ def get_account_balance(account_code):
         SELECT
             COALESCE(SUM(jl.debit), 0) - COALESCE(SUM(jl.credit), 0) AS balance
         FROM journal_lines jl
-        JOIN journal_entries je ON jl.entry_id = je.id
         WHERE jl.account_name = ?
     """
     result = conn.execute(query, (account_code,)).fetchone()
@@ -24,12 +23,23 @@ def get_account_balance(account_code):
     return result["balance"] if result else 0
 
 def get_accounts_by_prefix(prefix):
-    """جلب جميع الحسابات التي تبدأ كوداتها بالبادئة المحددة"""
+    """جلب جميع الحسابات المستخدمة في القيود التي تبدأ كوداتها بالبادئة"""
     conn = get_conn()
-    accounts = conn.execute(
-        "SELECT code, name, is_debit FROM accounts WHERE code LIKE ? ORDER BY code",
-        (prefix + "%",)
-    ).fetchall()
+    # 🆕 يبحث في قيود اليومية مباشرة، مع محاولة جلب الاسم من شجرة الحسابات
+    accounts = conn.execute("""
+        SELECT DISTINCT jl.account_name as code, 
+               COALESCE(a.name, jl.account_name) as name,
+               COALESCE(a.is_debit, 
+                  CASE 
+                    WHEN jl.account_name LIKE '1%' THEN 'debit'
+                    WHEN jl.account_name LIKE '5%' THEN 'debit'
+                    ELSE 'credit'
+                  END) as is_debit
+        FROM journal_lines jl
+        LEFT JOIN accounts a ON jl.account_name = a.code
+        WHERE jl.account_name LIKE ?
+        ORDER BY jl.account_name
+    """, (prefix + "%",)).fetchall()
     conn.close()
     return accounts
 
@@ -48,7 +58,6 @@ def show():
         revenue_data = []
         for acc in revenue_accounts:
             balance = get_account_balance(acc["code"])
-            # حسابات الإيرادات دائنة بطبيعتها، الرصيد الدائن يعني إيراد
             revenue_amount = -balance if acc["is_debit"] == "credit" else balance
             total_revenue += revenue_amount
             revenue_data.append({
@@ -63,7 +72,6 @@ def show():
         expense_data = []
         for acc in expense_accounts:
             balance = get_account_balance(acc["code"])
-            # حسابات المصروفات مدينة بطبيعتها، الرصيد المدين يعني مصروف
             expense_amount = balance if acc["is_debit"] == "debit" else -balance
             total_expenses += expense_amount
             expense_data.append({
@@ -81,7 +89,7 @@ def show():
                 st.dataframe(pd.DataFrame(revenue_data), use_container_width=True, hide_index=True)
                 st.markdown(f"**إجمالي الإيرادات: {total_revenue:,.2f}**")
             else:
-                st.info("لا توجد حسابات إيرادات (كود 4)")
+                st.info("لا توجد إيرادات مسجلة (حسابات تبدأ بـ 4)")
 
         with col2:
             st.markdown("**المصروفات**")
@@ -89,7 +97,7 @@ def show():
                 st.dataframe(pd.DataFrame(expense_data), use_container_width=True, hide_index=True)
                 st.markdown(f"**إجمالي المصروفات: {total_expenses:,.2f}**")
             else:
-                st.info("لا توجد حسابات مصروفات (كود 5)")
+                st.info("لا توجد مصروفات مسجلة (حسابات تبدأ بـ 5)")
 
         st.markdown("---")
         st.markdown(f"### صافي الدخل: {net_income:,.2f}")
@@ -108,7 +116,6 @@ def show():
         asset_data = []
         for acc in asset_accounts:
             balance = get_account_balance(acc["code"])
-            # الأصول مدينة
             amount = balance if acc["is_debit"] == "debit" else -balance
             total_assets += amount
             asset_data.append({
@@ -123,7 +130,6 @@ def show():
         liability_data = []
         for acc in liability_accounts:
             balance = get_account_balance(acc["code"])
-            # الخصوم دائنة
             amount = -balance if acc["is_debit"] == "credit" else balance
             total_liabilities += amount
             liability_data.append({
@@ -138,7 +144,6 @@ def show():
         equity_data = []
         for acc in equity_accounts:
             balance = get_account_balance(acc["code"])
-            # حقوق الملكية دائنة
             amount = -balance if acc["is_debit"] == "credit" else balance
             total_equity += amount
             equity_data.append({
@@ -147,8 +152,7 @@ def show():
                 "المبلغ": amount
             })
 
-        # نضيف صافي الدخل إلى حقوق الملكية (الأرباح المحتجزة)
-        # نحسب صافي الدخل مرة أخرى لإضافته
+        # نضيف صافي الدخل إلى حقوق الملكية
         rev_total = sum(-get_account_balance(acc["code"]) if acc["is_debit"]=="credit" else get_account_balance(acc["code"]) for acc in get_accounts_by_prefix("4"))
         exp_total = sum(get_account_balance(acc["code"]) if acc["is_debit"]=="debit" else -get_account_balance(acc["code"]) for acc in get_accounts_by_prefix("5"))
         net = rev_total - exp_total
@@ -166,7 +170,7 @@ def show():
                 st.dataframe(pd.DataFrame(asset_data), use_container_width=True, hide_index=True)
                 st.markdown(f"**إجمالي الأصول: {total_assets:,.2f}**")
             else:
-                st.info("لا توجد حسابات أصول (كود 1)")
+                st.info("لا توجد أصول مسجلة (حسابات تبدأ بـ 1)")
 
         with col2:
             st.markdown("**الخصوم وحقوق الملكية**")
@@ -176,7 +180,7 @@ def show():
                 st.markdown(f"**إجمالي الخصوم: {total_liabilities:,.2f}**")
                 st.markdown(f"**إجمالي حقوق الملكية: {total_equity:,.2f}**")
             else:
-                st.info("لا توجد حسابات خصوم (2) أو حقوق ملكية (3)")
+                st.info("لا توجد خصوم أو حقوق ملكية مسجلة")
 
         total_liab_equity = total_liabilities + total_equity
 
