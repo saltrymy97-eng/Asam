@@ -1,7 +1,7 @@
-# ui/financial_ui.py - واجهة القوائم المالية (تصميم زجاجي فخم + زر تشخيص)
+# ui/financial_ui.py - واجهة القوائم المالية (تصميم زجاجي فخم)
 import streamlit as st
 import pandas as pd
-from services.financial_service import get_income_statement, get_balance_sheet, diagnose
+from services.financial_service import get_income_statement, get_balance_sheet
 
 # ========== ألوان التصميم ==========
 GLASS_BG = "rgba(255, 255, 255, 0.12)"
@@ -47,6 +47,20 @@ def show():
         
         income = get_income_statement()
         
+        # 🆕 فحص سريع: إذا لا توجد بيانات، اشرح السبب
+        if income['total_revenue'] == 0 and income['total_expenses'] == 0:
+            st.warning("""
+            ⚠️ **لا توجد بيانات مالية لعرضها.**
+            
+            الأسباب المحتملة:
+            1. لم تسجل أي قيد محاسبي بعد.
+            2. القيود مسجلة بأسماء حسابات غير معروفة (مثل 'ايرادات' بدلاً من الكود '4').
+            3. القيود لا تستخدم أكواد الحسابات (1,2,3,4,5).
+            
+            ✅ **الحل:** سجل قيداً باستخدام القائمة المنسدلة في وحدة الحسابات.
+            """)
+            return
+        
         col1, col2, col3 = st.columns(3)
         with col1:
             st.markdown(glass_card("الإيرادات", "📈", f"{income['total_revenue']:,.2f}", ACCENT_GREEN), unsafe_allow_html=True)
@@ -80,6 +94,19 @@ def show():
         st.markdown(f"<h3 style='color:{ACCENT_CYAN};'>الميزانية العمومية</h3>", unsafe_allow_html=True)
         
         balance = get_balance_sheet()
+        
+        # 🆕 فحص سريع
+        if balance['total_assets'] == 0 and balance['total_liabilities'] == 0:
+            st.warning("""
+            ⚠️ **لا توجد بيانات للميزانية العمومية.**
+            
+            الأسباب المحتملة:
+            1. لم تسجل أي قيد محاسبي بعد.
+            2. القيود لا تستخدم أكواد الحسابات (1,2,3).
+            
+            ✅ **الحل:** سجل قيداً باستخدام القائمة المنسدلة في وحدة الحسابات.
+            """)
+            return
         
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -120,27 +147,3 @@ def show():
             st.success("الميزانية متوازنة ✅")
         else:
             st.error("الميزانية غير متوازنة ⚠️")
-
-    # ========== 🆕 زر التشخيص ==========
-    st.markdown("---")
-    with st.expander("🔧 تشخيص النظام (للمطور)"):
-        if st.button("🔍 تشغيل التشخيص"):
-            diag = diagnose()
-            
-            st.subheader("📋 جميع القيود")
-            if diag["all_lines"]:
-                st.dataframe(pd.DataFrame(diag["all_lines"]), use_container_width=True)
-            else:
-                st.warning("لا توجد قيود")
-            
-            st.subheader("🌳 شجرة الحسابات")
-            if diag["all_accounts"]:
-                st.dataframe(pd.DataFrame(diag["all_accounts"]), use_container_width=True)
-            else:
-                st.warning("لا توجد حسابات")
-            
-            st.subheader("📊 ملخص الأرصدة")
-            if diag["summary"]:
-                st.dataframe(pd.DataFrame(diag["summary"]), use_container_width=True)
-            else:
-                st.warning("لا توجد أرصدة")
