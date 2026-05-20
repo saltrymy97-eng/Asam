@@ -13,10 +13,10 @@ from services.auth_service import logout_session
 # استيراد الوحدات القديمة
 import dashboard
 from ui.inventory_ui import show as inventory_show  # المخزون (منفصلة)
-from ui.hr_ui import show as hr_show  # 🆕 الموارد البشرية (منفصلة)
+from ui.hr_ui import show as hr_show  # الموارد البشرية (منفصلة)
 
 # استيراد الوحدات الجديدة
-import chart_of_accounts
+from ui.chart_ui import show as chart_show  # 🆕 شجرة الحسابات (منفصلة)
 from ui.financial_ui import show as financial_show  # القوائم المالية (منفصلة)
 import roles_permissions
 import period_closing
@@ -111,9 +111,9 @@ else:
     elif selected == "الحسابات":
         accounting_show()
     elif selected == "الموارد البشرية":
-        hr_show()  # 🆕 تم الاستدعاء من الوحدة المنفصلة
+        hr_show()
     elif selected == "شجرة الحسابات":
-        chart_of_accounts.show()
+        chart_show()  # 🆕 تم الاستدعاء من الوحدة المنفصلة
     elif selected == "القوائم المالية":
         financial_show()
     elif selected == "الصلاحيات":
