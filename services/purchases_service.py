@@ -7,6 +7,7 @@ from services.audit_service import log_action
 def get_suppliers():
     """جلب الموردين"""
     conn = get_connection()
+    conn.row_factory = sqlite3.Row  # 🆕
     suppliers = conn.execute("SELECT id, name FROM suppliers ORDER BY name").fetchall()
     conn.close()
     return [dict(s) for s in suppliers]
@@ -14,6 +15,7 @@ def get_suppliers():
 def get_products_for_purchase():
     """جلب جميع المنتجات للشراء"""
     conn = get_connection()
+    conn.row_factory = sqlite3.Row  # 🆕
     products = conn.execute("SELECT id, name, purchase_price FROM products ORDER BY name").fetchall()
     conn.close()
     return [dict(p) for p in products]
@@ -26,19 +28,18 @@ def create_purchase_invoice(supplier_id, items, username="admin"):
     """
     total = sum(item["quantity"] * item["unit_price"] for item in items)
     conn = get_connection()
+    conn.row_factory = sqlite3.Row  # 🆕
     conn.execute("PRAGMA foreign_keys = OFF")
     
     try:
         conn.execute("BEGIN")
         
-        # التحقق من وجود المورد
         supplier_check = conn.execute("SELECT id FROM suppliers WHERE id = ?", (supplier_id,)).fetchone()
         if not supplier_check:
             conn.rollback()
             conn.close()
             return None, 0, "المورد غير موجود"
         
-        # التحقق من وجود المنتجات
         for item in items:
             product_check = conn.execute("SELECT id FROM products WHERE id = ?", (item["product_id"],)).fetchone()
             if not product_check:
@@ -46,14 +47,12 @@ def create_purchase_invoice(supplier_id, items, username="admin"):
                 conn.close()
                 return None, 0, f"المنتج {item.get('name', item['product_id'])} غير موجود"
         
-        # إنشاء الفاتورة
         cur = conn.execute(
             "INSERT INTO invoices (type, party_id, invoice_date, total, status) VALUES ('purchase', ?, date('now'), ?, 'completed')",
             (supplier_id, total)
         )
         invoice_id = cur.lastrowid
         
-        # إدراج البنود وتحديث المخزون
         for item in items:
             conn.execute(
                 "INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?)",
@@ -70,7 +69,6 @@ def create_purchase_invoice(supplier_id, items, username="admin"):
         
         conn.commit()
         
-        # تسجيل في سجل التدقيق
         supplier_name = "غير معروف"
         try:
             row = conn.execute("SELECT name FROM suppliers WHERE id = ?", (supplier_id,)).fetchone()
@@ -98,6 +96,7 @@ def create_purchase_invoice(supplier_id, items, username="admin"):
 def get_purchase_invoices():
     """جلب فواتير المشتريات المسجلة"""
     conn = get_connection()
+    conn.row_factory = sqlite3.Row  # 🆕
     invoices = conn.execute("""
         SELECT i.id, s.name as supplier, i.invoice_date, i.total, i.status
         FROM invoices i
@@ -111,6 +110,7 @@ def get_purchase_invoices():
 def get_invoice_details(invoice_id):
     """جلب تفاصيل فاتورة محددة"""
     conn = get_connection()
+    conn.row_factory = sqlite3.Row  # 🆕
     details = conn.execute("""
         SELECT p.name, ii.quantity, ii.unit_price, (ii.quantity * ii.unit_price) as total
         FROM invoice_items ii
@@ -141,6 +141,7 @@ def add_supplier(name, phone, address, username="admin"):
 def get_all_suppliers():
     """جلب جميع الموردين"""
     conn = get_connection()
+    conn.row_factory = sqlite3.Row  # 🆕
     suppliers = conn.execute("SELECT * FROM suppliers ORDER BY id DESC").fetchall()
     conn.close()
     return [dict(s) for s in suppliers]
