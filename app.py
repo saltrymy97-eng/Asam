@@ -19,7 +19,7 @@ import hr
 
 # استيراد الوحدات الجديدة
 import chart_of_accounts
-import financial_reports
+from ui.financial_ui import show as financial_show  # 🆕 القوائم المالية (منفصلة)
 import roles_permissions
 import period_closing
 import fifo_inventory
@@ -30,7 +30,7 @@ from ui.returns import show as returns_show  # مرتجعات البضاعة
 from ui.audit_log import show as audit_show  # سجل التدقيق
 from ui.backup import show as backup_show    # النسخ الاحتياطي
 from ui.pdf_reports import show as pdf_show  # تقارير PDF
-from ui.accounting_ui import show as accounting_show  # 🆕 الحسابات (منفصلة)
+from ui.accounting_ui import show as accounting_show  # الحسابات (منفصلة)
 
 st.set_page_config(page_title="XD ERP", layout="wide")
 
@@ -109,13 +109,13 @@ else:
     elif selected == "مرتجعات البضاعة":
         returns_show()
     elif selected == "الحسابات":
-        accounting_show()  # 🆕 تم الاستدعاء من الوحدة المنفصلة
+        accounting_show()
     elif selected == "الموارد البشرية":
         hr.show()
     elif selected == "شجرة الحسابات":
         chart_of_accounts.show()
     elif selected == "القوائم المالية":
-        financial_reports.show()
+        financial_show()  # 🆕 تم الاستدعاء من الوحدة المنفصلة
     elif selected == "الصلاحيات":
         roles_permissions.show()
     elif selected == "إغلاق الفترات":
