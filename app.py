@@ -12,8 +12,8 @@ from services.auth_service import logout_session
 
 # استيراد الوحدات القديمة
 import dashboard
-from ui.inventory_ui import show as inventory_show  # 🆕 المخزون (منفصلة)
-import hr
+from ui.inventory_ui import show as inventory_show  # المخزون (منفصلة)
+from ui.hr_ui import show as hr_show  # 🆕 الموارد البشرية (منفصلة)
 
 # استيراد الوحدات الجديدة
 import chart_of_accounts
@@ -101,7 +101,7 @@ else:
     if selected == "لوحة المعلومات":
         dashboard.show()
     elif selected == "المخزون":
-        inventory_show()  # 🆕 تم الاستدعاء من الوحدة المنفصلة
+        inventory_show()
     elif selected == "المبيعات":
         sales_show()
     elif selected == "المشتريات":
@@ -111,7 +111,7 @@ else:
     elif selected == "الحسابات":
         accounting_show()
     elif selected == "الموارد البشرية":
-        hr.show()
+        hr_show()  # 🆕 تم الاستدعاء من الوحدة المنفصلة
     elif selected == "شجرة الحسابات":
         chart_of_accounts.show()
     elif selected == "القوائم المالية":
