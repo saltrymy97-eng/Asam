@@ -1,7 +1,7 @@
-# ui/financial_ui.py - واجهة القوائم المالية (تصميم زجاجي فخم)
+# ui/financial_ui.py - واجهة القوائم المالية (تصميم زجاجي فخم + زر تشخيص)
 import streamlit as st
 import pandas as pd
-from services.financial_service import get_income_statement, get_balance_sheet
+from services.financial_service import get_income_statement, get_balance_sheet, diagnose
 
 # ========== ألوان التصميم ==========
 GLASS_BG = "rgba(255, 255, 255, 0.12)"
@@ -47,14 +47,14 @@ def show():
         
         income = get_income_statement()
         
-        # بطاقات ملخصة
         col1, col2, col3 = st.columns(3)
         with col1:
             st.markdown(glass_card("الإيرادات", "📈", f"{income['total_revenue']:,.2f}", ACCENT_GREEN), unsafe_allow_html=True)
         with col2:
             st.markdown(glass_card("المصروفات", "📉", f"{income['total_expenses']:,.2f}", ACCENT_RED), unsafe_allow_html=True)
         with col3:
-            st.markdown(glass_card("صافي الدخل", "💎", f"{income['net_income']:,.2f}", ACCENT_GREEN if income['net_income'] >= 0 else ACCENT_RED, "ربح ✅" if income['net_income'] >= 0 else "خسارة ⚠️"), unsafe_allow_html=True)
+            net = income['net_income']
+            st.markdown(glass_card("صافي الدخل", "💎", f"{net:,.2f}", ACCENT_GREEN if net >= 0 else ACCENT_RED, "ربح ✅" if net >= 0 else "خسارة ⚠️"), unsafe_allow_html=True)
 
         st.markdown("---")
         
@@ -62,8 +62,7 @@ def show():
         with col1:
             st.markdown(f"<h4 style='color:{ACCENT_GREEN};'>الإيرادات</h4>", unsafe_allow_html=True)
             if income['revenue']:
-                df_r = pd.DataFrame(income['revenue'])
-                df_r = df_r.rename(columns={"code": "الكود", "name": "الحساب", "amount": "المبلغ"})
+                df_r = pd.DataFrame(income['revenue']).rename(columns={"code": "الكود", "name": "الحساب", "amount": "المبلغ"})
                 st.dataframe(df_r, use_container_width=True, hide_index=True)
             else:
                 st.info("لا توجد إيرادات مسجلة")
@@ -71,8 +70,7 @@ def show():
         with col2:
             st.markdown(f"<h4 style='color:{ACCENT_RED};'>المصروفات</h4>", unsafe_allow_html=True)
             if income['expenses']:
-                df_e = pd.DataFrame(income['expenses'])
-                df_e = df_e.rename(columns={"code": "الكود", "name": "الحساب", "amount": "المبلغ"})
+                df_e = pd.DataFrame(income['expenses']).rename(columns={"code": "الكود", "name": "الحساب", "amount": "المبلغ"})
                 st.dataframe(df_e, use_container_width=True, hide_index=True)
             else:
                 st.info("لا توجد مصروفات مسجلة")
@@ -83,7 +81,6 @@ def show():
         
         balance = get_balance_sheet()
         
-        # بطاقات ملخصة
         col1, col2, col3 = st.columns(3)
         with col1:
             st.markdown(glass_card("الأصول", "🏢", f"{balance['total_assets']:,.2f}", ACCENT_BLUE), unsafe_allow_html=True)
@@ -98,8 +95,7 @@ def show():
         with col1:
             st.markdown(f"<h4 style='color:{ACCENT_BLUE};'>الأصول</h4>", unsafe_allow_html=True)
             if balance['assets']:
-                df_a = pd.DataFrame(balance['assets'])
-                df_a = df_a.rename(columns={"code": "الكود", "name": "الحساب", "amount": "المبلغ"})
+                df_a = pd.DataFrame(balance['assets']).rename(columns={"code": "الكود", "name": "الحساب", "amount": "المبلغ"})
                 st.dataframe(df_a, use_container_width=True, hide_index=True)
             else:
                 st.info("لا توجد أصول مسجلة")
@@ -108,13 +104,11 @@ def show():
             st.markdown(f"<h4 style='color:{ACCENT_ORANGE};'>الخصوم وحقوق الملكية</h4>", unsafe_allow_html=True)
             combined = balance['liabilities'] + balance['equity']
             if combined:
-                df_c = pd.DataFrame(combined)
-                df_c = df_c.rename(columns={"code": "الكود", "name": "الحساب", "amount": "المبلغ"})
+                df_c = pd.DataFrame(combined).rename(columns={"code": "الكود", "name": "الحساب", "amount": "المبلغ"})
                 st.dataframe(df_c, use_container_width=True, hide_index=True)
             else:
                 st.info("لا توجد خصوم أو حقوق ملكية مسجلة")
 
-        # التحقق من توازن الميزانية
         st.markdown("---")
         col3, col4 = st.columns(2)
         with col3:
@@ -126,3 +120,27 @@ def show():
             st.success("الميزانية متوازنة ✅")
         else:
             st.error("الميزانية غير متوازنة ⚠️")
+
+    # ========== 🆕 زر التشخيص ==========
+    st.markdown("---")
+    with st.expander("🔧 تشخيص النظام (للمطور)"):
+        if st.button("🔍 تشغيل التشخيص"):
+            diag = diagnose()
+            
+            st.subheader("📋 جميع القيود")
+            if diag["all_lines"]:
+                st.dataframe(pd.DataFrame(diag["all_lines"]), use_container_width=True)
+            else:
+                st.warning("لا توجد قيود")
+            
+            st.subheader("🌳 شجرة الحسابات")
+            if diag["all_accounts"]:
+                st.dataframe(pd.DataFrame(diag["all_accounts"]), use_container_width=True)
+            else:
+                st.warning("لا توجد حسابات")
+            
+            st.subheader("📊 ملخص الأرصدة")
+            if diag["summary"]:
+                st.dataframe(pd.DataFrame(diag["summary"]), use_container_width=True)
+            else:
+                st.warning("لا توجد أرصدة")
