@@ -13,7 +13,6 @@ from services.auth_service import logout_session
 # استيراد الوحدات القديمة
 import dashboard
 import inventory
-import purchases
 import hr
 
 # استيراد الوحدات الجديدة
@@ -30,7 +29,8 @@ from ui.audit_log import show as audit_show  # سجل التدقيق
 from ui.backup import show as backup_show    # النسخ الاحتياطي
 from ui.pdf_reports import show as pdf_show  # تقارير PDF
 from ui.accounting_ui import show as accounting_show  # الحسابات (منفصلة)
-from ui.sales_ui import show as sales_show  # 🆕 المبيعات (منفصلة)
+from ui.sales_ui import show as sales_show  # المبيعات (منفصلة)
+from ui.purchases_ui import show as purchases_show  # 🆕 المشتريات (منفصلة)
 
 st.set_page_config(page_title="XD ERP", layout="wide")
 
@@ -103,9 +103,9 @@ else:
     elif selected == "المخزون":
         inventory.show()
     elif selected == "المبيعات":
-        sales_show()  # 🆕 تم الاستدعاء من الوحدة المنفصلة
+        sales_show()
     elif selected == "المشتريات":
-        purchases.show()
+        purchases_show()  # 🆕 تم الاستدعاء من الوحدة المنفصلة
     elif selected == "مرتجعات البضاعة":
         returns_show()
     elif selected == "الحسابات":
