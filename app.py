@@ -16,9 +16,9 @@ from ui.inventory_ui import show as inventory_show  # المخزون (منفصل
 from ui.hr_ui import show as hr_show  # الموارد البشرية (منفصلة)
 
 # استيراد الوحدات الجديدة
-from ui.chart_ui import show as chart_show  # 🆕 شجرة الحسابات (منفصلة)
+from ui.chart_ui import show as chart_show  # شجرة الحسابات (منفصلة)
 from ui.financial_ui import show as financial_show  # القوائم المالية (منفصلة)
-import roles_permissions
+from ui.roles_ui import show as roles_show  # 🆕 الصلاحيات (منفصلة)
 import period_closing
 import fifo_inventory
 from ui.payroll_ui import show as payroll_show  # كشف الرواتب (منفصلة)
@@ -113,11 +113,11 @@ else:
     elif selected == "الموارد البشرية":
         hr_show()
     elif selected == "شجرة الحسابات":
-        chart_show()  # 🆕 تم الاستدعاء من الوحدة المنفصلة
+        chart_show()
     elif selected == "القوائم المالية":
         financial_show()
     elif selected == "الصلاحيات":
-        roles_permissions.show()
+        roles_show()  # 🆕 تم الاستدعاء من الوحدة المنفصلة
     elif selected == "إغلاق الفترات":
         period_closing.show()
     elif selected == "إغلاق الحسابات":
