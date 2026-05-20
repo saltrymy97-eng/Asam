@@ -1,4 +1,4 @@
-# services/financial_service.py - منطق القوائم المالية (يبحث بالاسم والكود)
+# services/financial_service.py - منطق القوائم المالية (مع دوال التشخيص)
 import sqlite3
 
 DB_PATH = "erp.db"
@@ -8,21 +8,16 @@ def get_conn():
     conn.row_factory = sqlite3.Row
     return conn
 
-def get_account_balance(account_input):
-    """جلب رصيد حساب محدد (يبحث بالكود أو الاسم)"""
+def get_account_balance(account_code):
+    """جلب رصيد حساب محدد"""
     conn = get_conn()
-    # البحث بالكود أو الاسم
-    query = """
-        SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) AS balance
-        FROM journal_lines
-        WHERE account_name = ? OR account_name = (SELECT name FROM accounts WHERE code = ?)
-    """
-    result = conn.execute(query, (account_input, account_input)).fetchone()
+    debit = conn.execute("SELECT COALESCE(SUM(debit),0) FROM journal_lines WHERE account_name=?", (account_code,)).fetchone()[0]
+    credit = conn.execute("SELECT COALESCE(SUM(credit),0) FROM journal_lines WHERE account_name=?", (account_code,)).fetchone()[0]
     conn.close()
-    return result["balance"] if result else 0
+    return debit, credit
 
 def get_accounts_by_prefix(prefix):
-    """جلب جميع الحسابات المستخدمة في القيود التي تبدأ كوداتها بالبادئة"""
+    """جلب الحسابات المستخدمة في القيود"""
     conn = get_conn()
     accounts = conn.execute("""
         SELECT DISTINCT jl.account_name as code,
@@ -31,89 +26,122 @@ def get_accounts_by_prefix(prefix):
                   CASE
                     WHEN jl.account_name LIKE '1%' THEN 'debit'
                     WHEN jl.account_name LIKE '5%' THEN 'debit'
-                    WHEN jl.account_name LIKE '4%' THEN 'credit'
-                    WHEN jl.account_name LIKE '2%' THEN 'credit'
-                    WHEN jl.account_name LIKE '3%' THEN 'credit'
-                    ELSE 'debit'
+                    ELSE 'credit'
                   END) as is_debit
         FROM journal_lines jl
         LEFT JOIN accounts a ON jl.account_name = a.code OR jl.account_name = a.name
-        WHERE jl.account_name LIKE ? OR a.code LIKE ?
+        WHERE jl.account_name LIKE ?
         ORDER BY jl.account_name
-    """, (prefix + "%", prefix + "%")).fetchall()
+    """, (prefix + "%",)).fetchall()
     conn.close()
     return accounts
 
 def get_income_statement():
-    """توليد بيانات قائمة الدخل"""
-    revenue_accounts = get_accounts_by_prefix("4")
+    """قائمة الدخل"""
+    rev_accounts = get_accounts_by_prefix("4")
+    revenue_list = []
     total_revenue = 0
-    revenue_data = []
-    for acc in revenue_accounts:
-        balance = get_account_balance(acc["code"])
-        amount = -balance if acc["is_debit"] == "credit" else balance
-        total_revenue += amount
-        revenue_data.append({"code": acc["code"], "name": acc["name"], "amount": amount})
+    for acc in rev_accounts:
+        debit, credit = get_account_balance(acc["code"])
+        amount = credit - debit
+        if amount != 0:
+            total_revenue += amount
+            revenue_list.append({"code": acc["code"], "name": acc["name"], "amount": amount})
 
-    expense_accounts = get_accounts_by_prefix("5")
+    exp_accounts = get_accounts_by_prefix("5")
+    expense_list = []
     total_expenses = 0
-    expense_data = []
-    for acc in expense_accounts:
-        balance = get_account_balance(acc["code"])
-        amount = balance if acc["is_debit"] == "debit" else -balance
-        total_expenses += amount
-        expense_data.append({"code": acc["code"], "name": acc["name"], "amount": amount})
+    for acc in exp_accounts:
+        debit, credit = get_account_balance(acc["code"])
+        amount = debit - credit
+        if amount != 0:
+            total_expenses += amount
+            expense_list.append({"code": acc["code"], "name": acc["name"], "amount": amount})
 
-    net_income = total_revenue - total_expenses
     return {
-        "revenue": revenue_data,
+        "revenue": revenue_list,
         "total_revenue": total_revenue,
-        "expenses": expense_data,
+        "expenses": expense_list,
         "total_expenses": total_expenses,
-        "net_income": net_income
+        "net_income": total_revenue - total_expenses
     }
 
 def get_balance_sheet():
-    """توليد بيانات الميزانية العمومية"""
+    """الميزانية العمومية"""
     asset_accounts = get_accounts_by_prefix("1")
+    asset_list = []
     total_assets = 0
-    asset_data = []
     for acc in asset_accounts:
-        balance = get_account_balance(acc["code"])
-        amount = balance if acc["is_debit"] == "debit" else -balance
-        total_assets += amount
-        asset_data.append({"code": acc["code"], "name": acc["name"], "amount": amount})
+        debit, credit = get_account_balance(acc["code"])
+        amount = debit - credit
+        if amount != 0:
+            total_assets += amount
+            asset_list.append({"code": acc["code"], "name": acc["name"], "amount": amount})
 
-    liability_accounts = get_accounts_by_prefix("2")
+    liab_accounts = get_accounts_by_prefix("2")
+    liability_list = []
     total_liabilities = 0
-    liability_data = []
-    for acc in liability_accounts:
-        balance = get_account_balance(acc["code"])
-        amount = -balance if acc["is_debit"] == "credit" else balance
-        total_liabilities += amount
-        liability_data.append({"code": acc["code"], "name": acc["name"], "amount": amount})
+    for acc in liab_accounts:
+        debit, credit = get_account_balance(acc["code"])
+        amount = credit - debit
+        if amount != 0:
+            total_liabilities += amount
+            liability_list.append({"code": acc["code"], "name": acc["name"], "amount": amount})
 
-    equity_accounts = get_accounts_by_prefix("3")
+    eq_accounts = get_accounts_by_prefix("3")
+    equity_list = []
     total_equity = 0
-    equity_data = []
-    for acc in equity_accounts:
-        balance = get_account_balance(acc["code"])
-        amount = -balance if acc["is_debit"] == "credit" else balance
-        total_equity += amount
-        equity_data.append({"code": acc["code"], "name": acc["name"], "amount": amount})
+    for acc in eq_accounts:
+        debit, credit = get_account_balance(acc["code"])
+        amount = credit - debit
+        if amount != 0:
+            total_equity += amount
+            equity_list.append({"code": acc["code"], "name": acc["name"], "amount": amount})
 
-    rev_total = sum(-get_account_balance(acc["code"]) if acc["is_debit"]=="credit" else get_account_balance(acc["code"]) for acc in get_accounts_by_prefix("4"))
-    exp_total = sum(get_account_balance(acc["code"]) if acc["is_debit"]=="debit" else -get_account_balance(acc["code"]) for acc in get_accounts_by_prefix("5"))
-    net = rev_total - exp_total
+    rev_debit = sum(get_account_balance(acc["code"])[0] for acc in get_accounts_by_prefix("4"))
+    rev_credit = sum(get_account_balance(acc["code"])[1] for acc in get_accounts_by_prefix("4"))
+    exp_debit = sum(get_account_balance(acc["code"])[0] for acc in get_accounts_by_prefix("5"))
+    exp_credit = sum(get_account_balance(acc["code"])[1] for acc in get_accounts_by_prefix("5"))
+    net = (rev_credit - rev_debit) - (exp_debit - exp_credit)
     total_equity += net
-    equity_data.append({"code": "", "name": "صافي الدخل (أرباح محتجزة)", "amount": net})
+    equity_list.append({"code": "", "name": "صافي الدخل (أرباح محتجزة)", "amount": net})
 
     return {
-        "assets": asset_data,
+        "assets": asset_list,
         "total_assets": total_assets,
-        "liabilities": liability_data,
+        "liabilities": liability_list,
         "total_liabilities": total_liabilities,
-        "equity": equity_data,
+        "equity": equity_list,
         "total_equity": total_equity,
         "total_liab_equity": total_liabilities + total_equity
+    }
+
+# ========== دوال التشخيص ==========
+
+def diagnose():
+    """تشخيص كامل للبيانات - يُظهر كل شيء"""
+    conn = get_conn()
+    
+    all_lines = conn.execute("""
+        SELECT jl.account_name, jl.debit, jl.credit, je.description, je.date
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.entry_id = je.id
+        ORDER BY je.id
+    """).fetchall()
+    
+    all_accounts = conn.execute("SELECT code, name, is_debit FROM accounts").fetchall()
+    
+    summary = conn.execute("""
+        SELECT account_name, SUM(debit) as total_debit, SUM(credit) as total_credit
+        FROM journal_lines
+        GROUP BY account_name
+        ORDER BY account_name
+    """).fetchall()
+    
+    conn.close()
+    
+    return {
+        "all_lines": [dict(l) for l in all_lines],
+        "all_accounts": [dict(a) for a in all_accounts],
+        "summary": [dict(s) for s in summary]
     }
