@@ -12,7 +12,7 @@ from services.auth_service import logout_session
 
 # استيراد الوحدات القديمة
 import dashboard
-import inventory
+from ui.inventory_ui import show as inventory_show  # 🆕 المخزون (منفصلة)
 import hr
 
 # استيراد الوحدات الجديدة
@@ -21,7 +21,7 @@ from ui.financial_ui import show as financial_show  # القوائم المال�
 import roles_permissions
 import period_closing
 import fifo_inventory
-from ui.payroll_ui import show as payroll_show  # 🆕 كشف الرواتب (منفصلة)
+from ui.payroll_ui import show as payroll_show  # كشف الرواتب (منفصلة)
 import ai_assistant
 import closing_entries  # قيد إغلاق الحسابات
 from ui.returns import show as returns_show  # مرتجعات البضاعة
@@ -101,7 +101,7 @@ else:
     if selected == "لوحة المعلومات":
         dashboard.show()
     elif selected == "المخزون":
-        inventory.show()
+        inventory_show()  # 🆕 تم الاستدعاء من الوحدة المنفصلة
     elif selected == "المبيعات":
         sales_show()
     elif selected == "المشتريات":
@@ -125,7 +125,7 @@ else:
     elif selected == "FIFO المخزون":
         fifo_inventory.show()
     elif selected == "كشف الرواتب":
-        payroll_show()  # 🆕 تم الاستدعاء من الوحدة المنفصلة
+        payroll_show()
     elif selected == "المساعد الذكي":
         ai_assistant.show()
     elif selected == "سجل التدقيق":
