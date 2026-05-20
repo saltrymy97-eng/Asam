@@ -1,4 +1,4 @@
-# services/pdf_service.py – خدمة تقارير PDF (fpdf2 + تحميل خط عربي تلقائي)
+# services/pdf_service.py – خدمة تقارير PDF (تنسيق عربي محسّن)
 import sqlite3
 import os
 import requests
@@ -12,7 +12,6 @@ FONT_FILE = os.path.join(FONT_DIR, "NotoNaskhArabic.ttf")
 FONT_URL = "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoNaskhArabic/NotoNaskhArabic-Regular.ttf"
 
 def ensure_font():
-    """تحميل الخط العربي إذا لم يكن موجوداً"""
     if not os.path.exists(FONT_FILE):
         if not os.path.exists(FONT_DIR):
             os.makedirs(FONT_DIR)
