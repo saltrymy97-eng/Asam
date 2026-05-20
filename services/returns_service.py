@@ -19,6 +19,7 @@ def add_reason_column():
 def get_sales_invoices():
     """جلب فواتير المبيعات المكتملة"""
     conn = get_connection()
+    conn.row_factory = sqlite3.Row  # 🆕
     invoices = conn.execute("""
         SELECT i.id, i.invoice_date, c.name as customer, i.total
         FROM invoices i
@@ -32,6 +33,7 @@ def get_sales_invoices():
 def get_purchase_invoices():
     """جلب فواتير المشتريات المكتملة"""
     conn = get_connection()
+    conn.row_factory = sqlite3.Row  # 🆕
     invoices = conn.execute("""
         SELECT i.id, i.invoice_date, s.name as supplier, i.total
         FROM invoices i
@@ -45,6 +47,7 @@ def get_purchase_invoices():
 def get_invoice_items(invoice_id):
     """جلب بنود فاتورة محددة مع اسم المنتج"""
     conn = get_connection()
+    conn.row_factory = sqlite3.Row  # 🆕
     items = conn.execute("""
         SELECT ii.id, ii.quantity, ii.unit_price, p.name
         FROM invoice_items ii
@@ -58,6 +61,8 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
     """تنفيذ عملية المرتجع مع إدارة العمليات"""
     add_reason_column()
     conn = get_connection()
+    conn.row_factory = sqlite3.Row  # 🆕
+    conn.execute("PRAGMA foreign_keys = OFF")
     
     try:
         conn.execute("BEGIN")
@@ -102,7 +107,6 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
         conn.execute("UPDATE invoices SET total = ? WHERE id = ?", (total_return, return_invoice_id))
         conn.commit()
         
-        # تسجيل في سجل التدقيق
         return_type_name = "مرتجع مبيعات" if invoice_type == "sale" else "مرتجع مشتريات"
         log_action(
             username="admin",
@@ -124,6 +128,7 @@ def get_return_history():
     """سجل المرتجعات مع سبب الإرجاع والكمية المرتجعة"""
     add_reason_column()
     conn = get_connection()
+    conn.row_factory = sqlite3.Row  # 🆕
     returns = conn.execute("""
         SELECT 
             i.id, 
