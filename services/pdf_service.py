@@ -1,4 +1,4 @@
-# services/pdf_service.py – خدمة تقارير PDF (fpdf2 + دعم عربي بسيط)
+# services/pdf_service.py – خدمة تقارير PDF (fpdf2 + معالجة الجداول الفارغة)
 import sqlite3
 import os
 from datetime import datetime
@@ -19,7 +19,6 @@ def ensure_output_dir():
 class ArabicPDF(FPDF):
     def __init__(self):
         super().__init__()
-        # الخط Arabic (يحتوي على الأحرف العربية الأساسية)
         self.add_font("Arabic", "", "DejaVuSansCondensed.ttf", uni=True)
         self.add_font("Arabic", "B", "DejaVuSansCondensed.ttf", uni=True)
         self.set_auto_page_break(True, 15)
@@ -39,7 +38,6 @@ class ArabicPDF(FPDF):
         self.cell(0, 10, f"تم الإنشاء بواسطة XD ERP – {datetime.now().strftime('%Y-%m-%d %H:%M')}", align="C")
 
     def add_table(self, headers, data, col_widths=None):
-        """إضافة جدول منسق"""
         self.set_font("Arabic", "B", 10)
         self.set_fill_color(139, 92, 246)
         self.set_text_color(255, 255, 255)
@@ -57,8 +55,12 @@ class ArabicPDF(FPDF):
 
 def generate_income_statement():
     conn = get_conn()
-    revenue = conn.execute("SELECT COALESCE(SUM(jl.credit)-SUM(jl.debit),0) FROM journal_lines WHERE account_name LIKE '4%'").fetchone()[0]
-    expenses = conn.execute("SELECT COALESCE(SUM(jl.debit)-SUM(jl.credit),0) FROM journal_lines WHERE account_name LIKE '5%'").fetchone()[0]
+    count = conn.execute("SELECT COUNT(*) FROM journal_lines").fetchone()[0]
+    if count == 0:
+        conn.close()
+        return None
+    revenue = conn.execute("SELECT COALESCE(SUM(credit)-SUM(debit),0) FROM journal_lines WHERE account_name LIKE '4%'").fetchone()[0]
+    expenses = conn.execute("SELECT COALESCE(SUM(debit)-SUM(credit),0) FROM journal_lines WHERE account_name LIKE '5%'").fetchone()[0]
     conn.close()
     net = revenue - expenses
     pdf = ArabicPDF()
@@ -80,9 +82,13 @@ def generate_income_statement():
 
 def generate_balance_sheet():
     conn = get_conn()
-    assets = conn.execute("SELECT COALESCE(SUM(jl.debit)-SUM(jl.credit),0) FROM journal_lines WHERE account_name LIKE '1%'").fetchone()[0]
-    liabilities = conn.execute("SELECT COALESCE(SUM(jl.credit)-SUM(jl.debit),0) FROM journal_lines WHERE account_name LIKE '2%'").fetchone()[0]
-    equity = conn.execute("SELECT COALESCE(SUM(jl.credit)-SUM(jl.debit),0) FROM journal_lines WHERE account_name LIKE '3%'").fetchone()[0]
+    count = conn.execute("SELECT COUNT(*) FROM journal_lines").fetchone()[0]
+    if count == 0:
+        conn.close()
+        return None
+    assets = conn.execute("SELECT COALESCE(SUM(debit)-SUM(credit),0) FROM journal_lines WHERE account_name LIKE '1%'").fetchone()[0]
+    liabilities = conn.execute("SELECT COALESCE(SUM(credit)-SUM(debit),0) FROM journal_lines WHERE account_name LIKE '2%'").fetchone()[0]
+    equity = conn.execute("SELECT COALESCE(SUM(credit)-SUM(debit),0) FROM journal_lines WHERE account_name LIKE '3%'").fetchone()[0]
     conn.close()
     pdf = ArabicPDF()
     pdf.add_page()
@@ -103,6 +109,10 @@ def generate_balance_sheet():
 
 def generate_inventory_report():
     conn = get_conn()
+    count = conn.execute("SELECT COUNT(*) FROM products").fetchone()[0]
+    if count == 0:
+        conn.close()
+        return None
     rows = conn.execute("SELECT name, quantity, reorder_level FROM products").fetchall()
     conn.close()
     pdf = ArabicPDF()
@@ -120,6 +130,10 @@ def generate_inventory_report():
 
 def generate_audit_report():
     conn = get_conn()
+    count = conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+    if count == 0:
+        conn.close()
+        return None
     rows = conn.execute("SELECT username, action, table_name, timestamp FROM audit_log ORDER BY id DESC LIMIT 100").fetchall()
     conn.close()
     pdf = ArabicPDF()
