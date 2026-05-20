@@ -30,6 +30,7 @@ import closing_entries  # قيد إغلاق الحسابات
 from ui.returns import show as returns_show  # مرتجعات البضاعة
 from ui.audit_log import show as audit_show  # سجل التدقيق
 from ui.backup import show as backup_show    # النسخ الاحتياطي
+from ui.pdf_reports import show as pdf_show  # 🆕 تقارير PDF
 
 st.set_page_config(page_title="XD ERP", layout="wide")
 
@@ -69,6 +70,7 @@ else:
                 "المساعد الذكي",
                 "سجل التدقيق",
                 "نسخ احتياطي",
+                "تقارير PDF",          # 🆕
                 "تسجيل الخروج"
             ],
             icons=[
@@ -89,6 +91,7 @@ else:
                 "robot",
                 "shield-check",
                 "cloud-upload",
+                "file-earmark-pdf",    # 🆕 أيقونة تقارير PDF
                 "box-arrow-right"
             ],
             menu_icon="cast",
@@ -129,5 +132,7 @@ else:
         audit_show()
     elif selected == "نسخ احتياطي":
         backup_show()
+    elif selected == "تقارير PDF":       # 🆕
+        pdf_show()
     elif selected == "تسجيل الخروج":
         logout_session()
