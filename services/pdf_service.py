@@ -16,6 +16,14 @@ def ensure_output_dir():
     if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
 
+def safe_text(text, fallback="[N/A]"):
+    """استبدال النص غير اللاتيني بنص احتياطي لتجنب أخطاء الخط"""
+    try:
+        text.encode('latin-1')
+        return text
+    except UnicodeEncodeError:
+        return fallback
+
 class ReportPDF(FPDF):
     def __init__(self):
         super().__init__()
@@ -119,7 +127,7 @@ def generate_inventory_report():
     pdf.set_text_color(30, 30, 30)
     pdf.cell(0, 10, "Inventory Report", align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(8)
-    data = [[r['name'], str(r['quantity']), str(r['reorder_level'])] for r in rows]
+    data = [[safe_text(r['name'], "[Arabic Name]"), str(r['quantity']), str(r['reorder_level'])] for r in rows]
     pdf.add_table(["Product", "Qty", "Reorder Level"], data, [70, 60, 60])
     ensure_output_dir()
     path = os.path.join(OUTPUT_DIR, f"inventory_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
@@ -140,7 +148,7 @@ def generate_audit_report():
     pdf.set_text_color(30, 30, 30)
     pdf.cell(0, 10, "Audit Log", align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(8)
-    data = [[r['username'], r['action'], r['table_name'], r['timestamp']] for r in rows]
+    data = [[safe_text(r['username']), safe_text(r['action']), safe_text(r['table_name']), r['timestamp']] for r in rows]
     pdf.add_table(["User", "Action", "Table", "Timestamp"], data, [35, 45, 40, 70])
     ensure_output_dir()
     path = os.path.join(OUTPUT_DIR, f"audit_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
@@ -168,7 +176,7 @@ def generate_invoice_pdf(invoice_id):
     pdf.set_font("Helvetica", "", 10)
     pdf.cell(0, 8, f"Date: {inv['invoice_date']} | Total: {inv['total']:,.2f} SAR", align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(6)
-    data = [[it['name'], str(it['quantity']), f"{it['unit_price']:,.2f}", f"{it['total']:,.2f}"] for it in items]
+    data = [[safe_text(it['name'], "[Arabic Product]"), str(it['quantity']), f"{it['unit_price']:,.2f}", f"{it['total']:,.2f}"] for it in items]
     pdf.add_table(["Product", "Qty", "Unit Price", "Total"], data, [50, 40, 50, 50])
     ensure_output_dir()
     path = os.path.join(OUTPUT_DIR, f"invoice_{invoice_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
