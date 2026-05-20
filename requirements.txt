@@ -6,5 +6,4 @@ bcrypt
 streamlit-option-menu
 openpyxl
 groq
-requests
 fpdf2
