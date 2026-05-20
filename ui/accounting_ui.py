@@ -50,7 +50,6 @@ def show():
     with tab1:
         st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>تسجيل قيد يومية</h3>", unsafe_allow_html=True)
         
-        # 🆕 جلب قائمة الحسابات مرة واحدة
         accounts_list = get_accounts_list()
         
         if not accounts_list:
@@ -65,7 +64,6 @@ def show():
                 lines = []
                 for i in range(4):
                     cols = st.columns([3, 2, 2])
-                    # 🆕 قائمة منسدلة بدلاً من حقل نصي
                     account = cols[0].selectbox(
                         f"الحساب {i+1}",
                         [""] + accounts_list,
@@ -74,8 +72,8 @@ def show():
                     debit = cols[1].number_input(f"مدين {i+1}", min_value=0.0, step=0.01, key=f"deb_{i}")
                     credit = cols[2].number_input(f"دائن {i+1}", min_value=0.0, step=0.01, key=f"cred_{i}")
                     if account:
-                        # استخراج الكود من النص المختار (مثلاً "4 - الإيرادات" → "4")
-                        code = account.split(" - ")[0]
+                        # 🆕 استخراج الجزء الأخير بعد آخر شرطة (الكود)
+                        code = account.split(" - ")[-1]
                         lines.append({"account": code, "debit": debit, "credit": credit})
 
                 submitted = st.form_submit_button("💾 حفظ القيد", type="primary")
