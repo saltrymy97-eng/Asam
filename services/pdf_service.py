@@ -19,8 +19,8 @@ def ensure_output_dir():
 class ArabicPDF(FPDF):
     def __init__(self):
         super().__init__()
-        self.add_font("Arabic", "", "DejaVuSansCondensed.ttf", uni=True)
-        self.add_font("Arabic", "B", "DejaVuSansCondensed.ttf", uni=True)
+        self.add_font("Arabic", "", "DejaVuSans.ttf", uni=True)
+        self.add_font("Arabic", "B", "DejaVuSans.ttf", uni=True)
         self.set_auto_page_break(True, 15)
 
     def header(self):
