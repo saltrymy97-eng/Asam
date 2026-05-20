@@ -1,4 +1,4 @@
-# services/accounting_service.py - منطق الحسابات وقيود اليومية (إصدار محسن)
+# services/accounting_service.py - منطق الحسابات وقيود اليومية (مع إدارة العمليات)
 import sqlite3
 from datetime import date
 
@@ -16,13 +16,11 @@ def get_account_code(account_input):
     
     account_input = account_input.strip()
     
-    # إذا كان رقماً (كود)، أرجعه كما هو
     if account_input.isdigit():
         return account_input
     
     conn = get_conn()
     
-    # 🔍 البحث بطرق متعددة لضمان الوصول للحساب
     row = conn.execute(
         "SELECT code FROM accounts WHERE name = ? OR name LIKE ? OR code = ?",
         (account_input, f"%{account_input}%", account_input)
@@ -33,7 +31,6 @@ def get_account_code(account_input):
     if row:
         return row["code"]
     
-    # 🆕 تحقق إضافي: إذا كان الإدخال يبدأ برقم (مثلاً "1-الأصول")
     if account_input[0].isdigit():
         code_part = account_input.split("-")[0].strip()
         if code_part.isdigit():
@@ -42,12 +39,14 @@ def get_account_code(account_input):
     return None
 
 def save_journal_entry(description, lines, entry_date=None):
-    """حفظ قيد يومية جديد وإرجاع (entry_id, error_message)"""
+    """حفظ قيد يومية جديد مع إدارة العمليات"""
     if entry_date is None:
         entry_date = date.today().strftime("%Y-%m-%d")
     
     conn = get_conn()
     try:
+        conn.execute("BEGIN")  # 🆕 بداية العملية المحمية
+        
         cur = conn.execute(
             "INSERT INTO journal_entries (date, description, reference) VALUES (?, ?, ?)",
             (entry_date, description, "")
@@ -55,7 +54,6 @@ def save_journal_entry(description, lines, entry_date=None):
         entry_id = cur.lastrowid
         
         for line in lines:
-            # 🔍 محاولة أخيرة لتحويل الاسم إلى كود قبل الحفظ
             account_name = line["account"]
             if not account_name.isdigit():
                 code = get_account_code(account_name)
@@ -67,10 +65,10 @@ def save_journal_entry(description, lines, entry_date=None):
                 (entry_id, account_name, line["debit"], line["credit"])
             )
         
-        conn.commit()
+        conn.commit()  # 🆕 حفظ نهائي
         return entry_id, None
     except Exception as e:
-        conn.rollback()
+        conn.rollback()  # 🆕 إلغاء كل شيء عند الفشل
         return None, str(e)
     finally:
         conn.close()
