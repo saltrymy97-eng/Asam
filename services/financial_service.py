@@ -1,4 +1,4 @@
-# services/financial_service.py - منطق القوائم المالية (مع دوال التشخيص)
+# services/financial_service.py - منطق القوائم المالية (نظيف، بدون تشخيص)
 import sqlite3
 
 DB_PATH = "erp.db"
@@ -114,34 +114,4 @@ def get_balance_sheet():
         "equity": equity_list,
         "total_equity": total_equity,
         "total_liab_equity": total_liabilities + total_equity
-    }
-
-# ========== دوال التشخيص ==========
-
-def diagnose():
-    """تشخيص كامل للبيانات - يُظهر كل شيء"""
-    conn = get_conn()
-    
-    all_lines = conn.execute("""
-        SELECT jl.account_name, jl.debit, jl.credit, je.description, je.date
-        FROM journal_lines jl
-        JOIN journal_entries je ON jl.entry_id = je.id
-        ORDER BY je.id
-    """).fetchall()
-    
-    all_accounts = conn.execute("SELECT code, name, is_debit FROM accounts").fetchall()
-    
-    summary = conn.execute("""
-        SELECT account_name, SUM(debit) as total_debit, SUM(credit) as total_credit
-        FROM journal_lines
-        GROUP BY account_name
-        ORDER BY account_name
-    """).fetchall()
-    
-    conn.close()
-    
-    return {
-        "all_lines": [dict(l) for l in all_lines],
-        "all_accounts": [dict(a) for a in all_accounts],
-        "summary": [dict(s) for s in summary]
     }
