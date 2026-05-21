@@ -48,3 +48,16 @@ class StockMovementCreate(BaseModel):
     move_type: str
     quantity: int
     reference: str = ""
+
+# ========== نماذج الموارد البشرية ==========
+class EmployeeCreate(BaseModel):
+    name: str
+    position: str = ""
+    salary: float = 0.0
+    join_date: str = ""
+
+class AttendanceCreate(BaseModel):
+    employee_id: int
+    employee_name: str
+    date: str
+    status: str = "حاضر"
