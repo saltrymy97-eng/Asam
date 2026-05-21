@@ -1,16 +1,20 @@
-# ui/ai_ui.py – واجهة المساعد الذكي (زجاجية فخمة + نماذج + سجل + تحليل عميق)
+# ui/ai_ui.py – واجهة المساعد الذكي (زجاجية فخمة + تأكيد تسجيل القيد)
 import streamlit as st
 import pandas as pd
-from datetime import date, datetime
+from datetime import date
 import json
 from services.ai_service import (
-    create_ai_tables, query_groq, save_chat_history, get_chat_history,
-    get_chat_sessions, get_comprehensive_data, get_inventory_data,
-    get_employee_info, get_recent_entries, get_all_accounts, get_conn,
-    get_financial_ratios, get_trend_analysis, get_top_customers, get_top_suppliers
+    create_accounts_table,
+    query_groq,
+    get_comprehensive_data,
+    get_inventory_data,
+    get_employee_info,
+    get_recent_entries,
+    get_all_accounts,
+    get_conn
 )
 
-# ألوان التصميم
+# ========== ألوان التصميم ==========
 GLASS_BG = "rgba(255, 255, 255, 0.12)"
 GLASS_BORDER = "rgba(255, 255, 255, 0.25)"
 GLASS_SHADOW = "0 8px 32px 0 rgba(0,0,0,0.37)"
@@ -22,107 +26,50 @@ ACCENT_ORANGE = "#F59E0B"
 ACCENT_RED = "#EF4444"
 ACCENT_PURPLE = "#8B5CF6"
 ACCENT_CYAN = "#06B6D4"
-ACCENT_PINK = "#EC4899"
-
-AVAILABLE_MODELS = {
-    "Llama 3.3 70B (الأسرع)": "llama-3.3-70b-versatile",
-    "Mixtral 8x7B (متوازن)": "mixtral-8x7b-32768",
-    "Llama 2 70B (دقيق)": "llama2-70b-4096"
-}
 
 def show():
-    # رأس الصفحة
     st.markdown(f"""
     <div style="margin-bottom:2rem; text-align:right;">
         <h1 style="color:{TEXT_PRIMARY}; font-size:2.8rem; margin:0; text-shadow:0 0 20px {ACCENT_PURPLE};">🤖 المساعد الذكي XD</h1>
-        <p style="color:{TEXT_SECONDARY}; font-size:1.2rem;">ثمانية خبراء مع تحليلات عميقة وسجل محادثات</p>
+        <p style="color:{TEXT_SECONDARY}; font-size:1.2rem;">سبعة خبراء في مكان واحد لخدمة أعمالك</p>
     </div>
     """, unsafe_allow_html=True)
 
-    create_ai_tables()
+    create_accounts_table()
 
     if "GROQ_API_KEY" not in st.secrets:
-        st.error("الرجاء إضافة مفتاح `GROQ_API_KEY` في إعدادات Streamlit Secrets.")
+        st.error("❌ الرجاء إضافة `GROQ_API_KEY` في إعدادات Streamlit Cloud (Secrets).")
         return
 
-    # إعدادات النموذج والسجل
-    with st.sidebar:
-        st.markdown("### إعدادات المساعد")
-        selected_model_name = st.selectbox("اختر النموذج", list(AVAILABLE_MODELS.keys()))
-        selected_model = AVAILABLE_MODELS[selected_model_name]
-
-        st.markdown("---")
-        st.markdown("### سجل المحادثات")
-        sessions = get_chat_sessions()
-        if sessions:
-            for s in sessions:
-                if st.button(f"{s['session_id']} ({s['message_count']} رسالة)", key=s['session_id']):
-                    st.session_state.active_session = s['session_id']
-        else:
-            st.info("لا توجد محادثات سابقة")
-
-    if "active_session" not in st.session_state:
-        st.session_state.active_session = f"session_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-
-    # تبويبات
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "🧠 مساعد محاسبي", "📊 محلل مالي", "📦 توقع المخزون",
         "💬 شات الموظفين", "📝 قيود تلقائية", "🔍 كشف الاحتيال",
-        "🔮 تنبؤات مستقبلية", "📈 تحليل عميق"
+        "🔮 تنبؤات مستقبلية"
     ])
 
     # ---------- 1. مساعد محاسبي ----------
     with tab1:
         st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>اسأل عن أي شيء في النظام</h3>", unsafe_allow_html=True)
-        history = get_chat_history(st.session_state.active_session, 10)
-        for h in reversed(history):
-            if h['role'] == 'user':
-                st.chat_message("user").write(h['content'])
-            else:
-                st.chat_message("assistant").write(h['content'])
-
-        question = st.chat_input("اكتب سؤالك هنا...")
-        if question:
-            st.chat_message("user").write(question)
-            save_chat_history(st.session_state.active_session, "user", question, selected_model, "مساعد محاسبي")
-
-            data = get_comprehensive_data()
-            data_for_qa = {k: v for k, v in data.items() if k not in ["monthly_sales", "monthly_purchases"]}
-            data_str = json.dumps(data_for_qa, ensure_ascii=False, indent=2, default=str)
-            prompt = f"""أنت مساعد ذكي خبير في نظام ERP. لديك البيانات المالية والإدارية التالية:
-{data_str}
-
-أجب عن السؤال التالي بالعربية بناءً على هذه البيانات. إذا لم توجد إجابة، قل لا توجد معلومات كافية. لا تختلق بيانات."""
-
-            with st.spinner("🧠 التفكير..."):
-                answer = query_groq(prompt, question, model=selected_model)
-
-            st.chat_message("assistant").write(answer)
-            save_chat_history(st.session_state.active_session, "assistant", answer, selected_model, "مساعد محاسبي")
+        question = st.text_input("سؤالك:", placeholder="مثال: كم مخزون جالكسي؟", key="q1")
+        if st.button("🔮 اسأل الخبير", key="ask_finance"):
+            if question:
+                data = get_comprehensive_data()
+                data_for_qa = {k: v for k, v in data.items() if k not in ["monthly_sales", "monthly_purchases", "stock_consumption"]}
+                data_str = json.dumps(data_for_qa, ensure_ascii=False, indent=2, default=str)
+                prompt = f"""أنت مساعد ذكي خبير في نظام ERP. لديك البيانات التالية:\n{data_str}\nأجب عن السؤال بالعربية بناءً على هذه البيانات. إذا لم توجد إجابة، قل لا توجد معلومات كافية."""
+                with st.spinner("🧠 التفكير..."):
+                    answer = query_groq(prompt, question)
+                st.markdown(f"""<div style="background:{GLASS_BG}; backdrop-filter:blur(10px); border:1px solid {GLASS_BORDER}; border-radius:16px; padding:1.5rem; margin-top:1rem; box-shadow:{GLASS_SHADOW};"><p style="color:{TEXT_PRIMARY}; font-size:1.1rem; margin:0;">{answer}</p></div>""", unsafe_allow_html=True)
 
     # ---------- 2. محلل مالي ----------
     with tab2:
         st.markdown(f"<h3 style='color:{ACCENT_GREEN};'>تحليل القوائم المالية وتوصيات</h3>", unsafe_allow_html=True)
         if st.button("📈 حلل القوائم المالية الآن", key="analyze_fin"):
             data = get_comprehensive_data()
-            ratios = get_financial_ratios()
-
-            prompt = f"""أنت محلل مالي خبير. حلل البيانات التالية وقدم توصيات تفصيلية:
-- الإيرادات: {data['revenue']:,.2f}
-- المصروفات: {data['expenses']:,.2f}
-- صافي الدخل: {data['net_income']:,.2f}
-- الأصول: {data['assets']:,.2f}
-- الخصوم: {data['liabilities']:,.2f}
-- حقوق الملكية: {data['equity']:,.2f}
-- النسب المالية: {json.dumps(ratios, ensure_ascii=False)}
-
-قدم تحليلاً شاملاً بالعربية يشمل: تقييم الأداء المالي، تحليل النسب المالية، نقاط القوة والضعف، توصيات قابلة للتنفيذ."""
-
+            prompt = f"""أنت محلل مالي خبير. حلل: الإيرادات {data['revenue']:,.2f} المصروفات {data['expenses']:,.2f} صافي الدخل {data['net_income']:,.2f} الأصول {data['assets']:,.2f} الخصوم {data['liabilities']:,.2f} حقوق الملكية {data['equity']:,.2f}. قدم تحليلاً بالعربية مع توصيات."""
             with st.spinner("📊 التحليل..."):
-                analysis = query_groq(prompt, "حلل", model=selected_model, max_tokens=2000)
-
+                analysis = query_groq(prompt, "حلل")
             st.markdown(f"""<div style="background:{GLASS_BG}; backdrop-filter:blur(10px); border:1px solid {GLASS_BORDER}; border-radius:16px; padding:1.5rem; margin-top:1rem; box-shadow:{GLASS_SHADOW};"><div style="color:{TEXT_PRIMARY}; font-size:1.1rem;">{analysis}</div></div>""", unsafe_allow_html=True)
-            save_chat_history(st.session_state.active_session, "assistant", analysis, selected_model, "محلل مالي")
 
     # ---------- 3. توقع المخزون ----------
     with tab3:
@@ -133,9 +80,8 @@ def show():
                 df = pd.DataFrame(all_prods)
                 prompt = f"""أنت خبير مخزون. حلل بيانات المنتجات التالية وتوقع أيها سينفد قريباً:\n{df.to_string()}\nاذكر المنتجات المهددة بالنفاد والكميات المقترح طلبها."""
                 with st.spinner("📦 التحليل..."):
-                    prediction = query_groq(prompt, "توقع الطلب", model=selected_model)
+                    prediction = query_groq(prompt, "توقع الطلب")
                 st.markdown(f"""<div style="background:{GLASS_BG}; backdrop-filter:blur(10px); border:1px solid {GLASS_BORDER}; border-radius:16px; padding:1.5rem; margin-top:1rem; box-shadow:{GLASS_SHADOW};"><div style="color:{TEXT_PRIMARY}; font-size:1.1rem;">{prediction}</div></div>""", unsafe_allow_html=True)
-                save_chat_history(st.session_state.active_session, "assistant", prediction, selected_model, "توقع المخزون")
         if low:
             st.warning("⚠️ منتجات تحت الحد الأدنى حالياً:")
             st.dataframe(pd.DataFrame(low))
@@ -153,34 +99,89 @@ def show():
                     info += f", الراتب الأساسي: {sal['basic_salary']}, بدل السكن: {sal['housing_allowance']}, بدل النقل: {sal['transport_allowance']}, الخصومات: {sal['deductions']}"
                 prompt = f"أنت مساعد موارد بشرية. بيانات الموظف: {info}. أجب عن السؤال التالي بالعربية:"
                 with st.spinner("💬 البحث..."):
-                    ans = query_groq(prompt, emp_q, model=selected_model)
+                    ans = query_groq(prompt, emp_q)
                 st.markdown(f"""<div style="background:{GLASS_BG}; backdrop-filter:blur(10px); border:1px solid {GLASS_BORDER}; border-radius:16px; padding:1.5rem; margin-top:1rem; box-shadow:{GLASS_SHADOW};"><p style="color:{TEXT_PRIMARY}; font-size:1.1rem; margin:0;">{ans}</p></div>""", unsafe_allow_html=True)
-                save_chat_history(st.session_state.active_session, "user", f"{emp_name}: {emp_q}", selected_model, "شات الموظفين")
-                save_chat_history(st.session_state.active_session, "assistant", ans, selected_model, "شات الموظفين")
             else:
                 st.error("❌ لم يتم العثور على الموظف.")
 
-    # ---------- 5. قيود تلقائية ----------
+    # ---------- 5. قيود تلقائية (مع زر تأكيد) ----------
     with tab5:
         st.markdown(f"<h3 style='color:{ACCENT_RED};'>إنشاء قيد محاسبي مركب بلغة طبيعية</h3>", unsafe_allow_html=True)
-
+        text = st.text_area("اكتب العملية:", placeholder="مثال: اشتريت بضاعة بـ 5000 ومصاريف شحن بـ 200، دفعت 3000 نقداً والباقي على الحساب", key="entry_text")
+        
         if "generated_entry" not in st.session_state:
             st.session_state.generated_entry = None
         if "confirm_save" not in st.session_state:
             st.session_state.confirm_save = False
 
-        with st.form("entry_form"):
-            text = st.text_area("اكتب العملية:", placeholder="مثال: اشتريت بضاعة بـ 5000 ومصاريف شحن بـ 200، دفعت 3000 نقداً والباقي على الحساب", key="entry_text")
-            generate_btn = st.form_submit_button("📝 إنشاء القيد المركب")
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            generate_btn = st.button("📝 إنشاء القيد المركب", key="create_entry")
+        with col2:
+            if st.session_state.generated_entry is not None and not st.session_state.confirm_save:
+                if st.button("💾 تسجيل القيد في النظام", type="primary", key="save_entry"):
+                    st.session_state.confirm_save = True
+                    st.rerun()
+
+        # 🆕 زر التأكيد النهائي
+        if st.session_state.confirm_save and st.session_state.generated_entry is not None:
+            st.warning("⚠️ هل أنت متأكد من تسجيل هذا القيد؟")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("✅ نعم، سجل القيد", type="primary", key="confirm_yes"):
+                    entry_data = st.session_state.generated_entry
+                    conn = get_conn()
+                    valid_lines = []
+                    errors = []
+                    for line in entry_data["lines"]:
+                        account_name = line["account"]
+                        acc = conn.execute("SELECT code FROM accounts WHERE name = ?", (account_name,)).fetchone()
+                        if acc:
+                            valid_lines.append((acc["code"], line["debit"], line["credit"]))
+                        else:
+                            errors.append(f"الحساب '{account_name}' غير موجود في شجرة الحسابات.")
+                    
+                    if errors:
+                        for err in errors:
+                            st.error(err)
+                        st.session_state.confirm_save = False
+                    else:
+                        try:
+                            conn.execute("BEGIN")
+                            desc = f"قيد ذكي: {text[:50]}"
+                            cur = conn.execute(
+                                "INSERT INTO journal_entries (date, description, reference) VALUES (?, ?, ?)",
+                                (date.today().strftime("%Y-%m-%d"), desc, "")
+                            )
+                            entry_id = cur.lastrowid
+                            for code, debit, credit in valid_lines:
+                                conn.execute(
+                                    "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, ?, ?, ?)",
+                                    (entry_id, code, debit, credit)
+                                )
+                            conn.commit()
+                            st.success(f"✅ تم تسجيل القيد رقم {entry_id} بنجاح!")
+                            st.session_state.generated_entry = None
+                            st.session_state.confirm_save = False
+                            st.rerun()
+                        except Exception as e:
+                            conn.rollback()
+                            st.error(f"فشل التسجيل: {e}")
+                            st.session_state.confirm_save = False
+                    finally:
+                        conn.close()
+            with col2:
+                if st.button("❌ إلغاء", key="confirm_no"):
+                    st.session_state.confirm_save = False
+                    st.rerun()
 
         if generate_btn and text:
             accounts = get_all_accounts()
             acc_list = "\n".join([f"{a['code']} - {a['name']}" for a in accounts]) if accounts else "لا توجد حسابات مضافة بعد"
             prompt = f"""أنت محاسب خبير. حول العملية إلى قيد محاسبي مركب.\nالحسابات المتاحة:\n{acc_list}\nأعد القيد بالصيغة:\nمدين | اسم الحساب | المبلغ\nدائن | اسم الحساب | المبلغ\nيجب أن يتوازن القيد. العملية: {text}"""
             with st.spinner("📝 جاري إنشاء القيد..."):
-                entry_text = query_groq(prompt, text, model=selected_model)
+                entry_text = query_groq(prompt, text)
             st.code(entry_text)
-            save_chat_history(st.session_state.active_session, "assistant", entry_text, selected_model, "قيود تلقائية")
 
             lines = [l.strip() for l in entry_text.splitlines() if l.strip()]
             entry_lines = []
@@ -212,63 +213,11 @@ def show():
             summary = pd.DataFrame([{"account": "المجموع", "debit": total_debit, "credit": total_credit}])
             df_display = pd.concat([df, summary], ignore_index=True)
             df_display = df_display.rename(columns={"account": "الحساب", "debit": "مدين", "credit": "دائن"})
-            st.dataframe(df_display.style.format({"مدين": "{:,.2f}", "دائن": "{:,.2f}"}), use_container_width=True, hide_index=True)
-
-            if not st.session_state.confirm_save:
-                if st.button("💾 تسجيل القيد في النظام", type="primary"):
-                    st.session_state.confirm_save = True
-                    st.rerun()
-            else:
-                st.warning("⚠️ هل أنت متأكد من تسجيل هذا القيد؟")
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("✅ نعم، سجل القيد", type="primary", key="confirm_yes"):
-                        entry_data = st.session_state.generated_entry
-                        conn = get_conn()
-                        valid_lines = []
-                        errors = []
-                        for line in entry_data["lines"]:
-                            account_name = line["account"]
-                            acc = conn.execute("SELECT code FROM accounts WHERE name = ?", (account_name,)).fetchone()
-                            if acc:
-                                valid_lines.append((acc["code"], line["debit"], line["credit"]))
-                            else:
-                                errors.append(f"الحساب '{account_name}' غير موجود في شجرة الحسابات.")
-                        
-                        if errors:
-                            for err in errors:
-                                st.error(err)
-                            st.session_state.confirm_save = False
-                        else:
-                            try:
-                                conn.execute("BEGIN")
-                                desc = f"قيد ذكي: {text if text else 'AI'}"
-                                cur = conn.execute(
-                                    "INSERT INTO journal_entries (date, description, reference) VALUES (?, ?, ?)",
-                                    (date.today().strftime("%Y-%m-%d"), desc, "")
-                                )
-                                entry_id = cur.lastrowid
-                                for code, debit, credit in valid_lines:
-                                    conn.execute(
-                                        "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, ?, ?, ?)",
-                                        (entry_id, code, debit, credit)
-                                    )
-                                conn.commit()
-                                st.success(f"✅ تم تسجيل القيد رقم {entry_id} بنجاح!")
-                                save_chat_history(st.session_state.active_session, "assistant", f"تم تسجيل القيد رقم {entry_id}: {text[:50]}", selected_model, "قيود تلقائية")
-                                st.session_state.generated_entry = None
-                                st.session_state.confirm_save = False
-                                st.rerun()
-                            except Exception as e:
-                                conn.rollback()
-                                st.error(f"فشل التسجيل: {e}")
-                                st.session_state.confirm_save = False
-                        finally:
-                            conn.close()
-                with col2:
-                    if st.button("❌ إلغاء", key="confirm_no"):
-                        st.session_state.confirm_save = False
-                        st.rerun()
+            st.dataframe(
+                df_display.style.format({"مدين": "{:,.2f}", "دائن": "{:,.2f}"}),
+                use_container_width=True,
+                hide_index=True
+            )
 
     # ---------- 6. كشف الاحتيال ----------
     with tab6:
@@ -277,33 +226,31 @@ def show():
             entries = get_recent_entries()
             if entries:
                 df = pd.DataFrame(entries)
-                prompt = f"""أنت مدقق حسابات. افحص القيود التالية وابحث عن أي شذوذ أو علامات احتيال:\n{df.to_string()}\nاذكر القيود المشبوهة مع السبب."""
+                prompt = f"""أنت مدقق حسابات. افحص القيود التالية وابحث عن أي شذوذ:\n{df.to_string()}\nاذكر القيود المشبوهة مع السبب."""
                 with st.spinner("🔍 الفحص..."):
-                    audit = query_groq(prompt, "افحص", model=selected_model)
+                    audit = query_groq(prompt, "افحص")
                 st.markdown(f"""<div style="background:{GLASS_BG}; backdrop-filter:blur(10px); border:1px solid {GLASS_BORDER}; border-radius:16px; padding:1.5rem; margin-top:1rem; box-shadow:{GLASS_SHADOW};"><div style="color:{TEXT_PRIMARY}; font-size:1.1rem;">{audit}</div></div>""", unsafe_allow_html=True)
-                save_chat_history(st.session_state.active_session, "assistant", audit, selected_model, "كشف الاحتيال")
             else:
-                st.info("لا توجد قيود لفحصها.")
+                st.info("ℹ️ لا توجد قيود لفحصها.")
 
-    # ---------- 7. تنبؤات مستقبلية ----------
+    # ---------- 7. 🔮 تنبؤات مستقبلية ----------
     with tab7:
         st.markdown(f"<h3 style='color:{ACCENT_CYAN};'>🔮 تنبؤات مستقبلية شاملة</h3>", unsafe_allow_html=True)
         st.markdown(f"<p style='color:{TEXT_SECONDARY};'>تحليل البيانات الحالية وتوقع المبيعات والتدفق النقدي والمخزون والأرباح للفترة القادمة</p>", unsafe_allow_html=True)
-
+        
         forecast_period = st.selectbox("فترة التنبؤ", ["الشهر القادم", "الـ 3 أشهر القادمة", "الـ 6 أشهر القادمة", "السنة القادمة"], key="forecast_period")
-
+        
         if st.button("🔮 ابدأ التنبؤ", key="start_forecast", type="primary"):
             data = get_comprehensive_data()
             data_str = json.dumps(data, ensure_ascii=False, indent=2, default=str)
-
+            
             prompt = f"""أنت خبير تحليل مالي وتخطيط أعمال. لديك جميع بيانات النظام التالية:\n{data_str}\nالمطلوب: تقديم تنبؤات شاملة للفترة: {forecast_period}.\nقم بتقديم التحليل التالي بالعربية، مع أرقام تقديرية مبنية على البيانات الحالية والاتجاهات:\n1. توقع المبيعات\n2. توقع التدفق النقدي\n3. توقع نفاد المخزون\n4. توقع الأرباح\n5. المخاطر والتحديات"""
-
+            
             with st.spinner("🔮 جاري تحليل البيانات وتوليد التنبؤات..."):
-                forecast = query_groq(prompt, "قدم تنبؤات شاملة", model=selected_model, max_tokens=2500)
-
+                forecast = query_groq(prompt, "قدم تنبؤات شاملة", max_tokens=2500)
+            
             st.markdown(f"""<div style="background:{GLASS_BG}; backdrop-filter:blur(10px); border:1px solid {GLASS_BORDER}; border-radius:16px; padding:2rem; margin-top:1rem; box-shadow:{GLASS_SHADOW};"><div style="color:{TEXT_PRIMARY}; font-size:1rem; line-height:1.8;">{forecast}</div></div>""", unsafe_allow_html=True)
-            save_chat_history(st.session_state.active_session, "assistant", forecast, selected_model, "تنبؤات مستقبلية")
-
+            
             st.markdown("---")
             st.markdown(f"<h4 style='color:{TEXT_PRIMARY};'>📊 ملخص المؤشرات الحالية</h4>", unsafe_allow_html=True)
             col1, col2, col3, col4 = st.columns(4)
@@ -315,41 +262,3 @@ def show():
                 st.metric("عدد المنتجات", len(data['products']))
             with col4:
                 st.metric("عدد العملاء", len(data['customers']))
-
-    # ---------- 8. تحليل عميق ----------
-    with tab8:
-        st.markdown(f"<h3 style='color:{ACCENT_PINK};'>📈 تحليل مالي عميق</h3>", unsafe_allow_html=True)
-
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("📊 عرض النسب المالية", use_container_width=True):
-                ratios = get_financial_ratios()
-                for key, value in ratios.items():
-                    st.metric(key, value)
-
-        with col2:
-            if st.button("📈 تحليل الاتجاهات", use_container_width=True):
-                trends = get_trend_analysis()
-                if trends:
-                    df_trends = pd.DataFrame(trends)
-                    st.dataframe(df_trends, use_container_width=True, hide_index=True)
-                else:
-                    st.info("لا توجد بيانات اتجاهات")
-
-        st.markdown("---")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🏆 أفضل العملاء", use_container_width=True):
-                top_cust = get_top_customers()
-                if top_cust:
-                    st.dataframe(pd.DataFrame(top_cust), use_container_width=True, hide_index=True)
-                else:
-                    st.info("لا توجد بيانات عملاء")
-
-        with col2:
-            if st.button("🏢 أفضل الموردين", use_container_width=True):
-                top_supp = get_top_suppliers()
-                if top_supp:
-                    st.dataframe(pd.DataFrame(top_supp), use_container_width=True, hide_index=True)
-                else:
-                    st.info("لا توجد بيانات موردين")
