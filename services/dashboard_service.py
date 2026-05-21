@@ -38,6 +38,7 @@ def get_kpi_cards():
 def get_inventory_by_category():
     """توزيع المخزون حسب الفئة"""
     conn = get_connection()
+    conn.row_factory = sqlite3.Row  # 🆕 تم إضافة هذا السطر
     df = conn.execute("SELECT category, SUM(quantity) as total FROM products GROUP BY category").fetchall()
     conn.close()
     return [dict(row) for row in df]
