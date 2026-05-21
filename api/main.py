@@ -1,6 +1,6 @@
 # api/main.py
 from fastapi import FastAPI
-from api.routers import sales, inventory
+from api.routers import sales, inventory, purchases
 
 app = FastAPI(
     title="XD ERP API",
@@ -10,6 +10,7 @@ app = FastAPI(
 
 app.include_router(sales.router)
 app.include_router(inventory.router)
+app.include_router(purchases.router)
 
 @app.get("/")
 async def root():
