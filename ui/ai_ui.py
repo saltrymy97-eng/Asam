@@ -46,7 +46,7 @@ def show():
     st.markdown(f"""
     <div style="margin-bottom:2rem; text-align:right;">
         <h1 style="color:{TEXT_PRIMARY}; font-size:2.8rem; margin:0; text-shadow:0 0 20px {ACCENT_PURPLE};">🤖 المساعد الذكي XD</h1>
-        <p style="color:{TEXT_SECONDARY}; font-size:1.2rem;">سبعة خبراء مع تحليلات عميقة وسجل محادثات</p>
+        <p style="color:{TEXT_SECONDARY}; font-size:1.2rem;">ثمانية خبراء مع تحليلات عميقة وسجل محادثات</p>
     </div>
     """, unsafe_allow_html=True)
 
