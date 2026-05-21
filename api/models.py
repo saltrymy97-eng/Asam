@@ -31,3 +31,20 @@ class PurchaseInvoiceResponse(BaseModel):
     invoice_id: int
     total: float
     message: str
+
+# ========== نماذج المخزون ==========
+class ProductCreate(BaseModel):
+    name: str
+    barcode: Optional[str] = None
+    category: str = "أخرى"
+    purchase_price: float = 0.0
+    selling_price: float = 0.0
+    quantity: int = 0
+    reorder_level: int = 10
+
+class StockMovementCreate(BaseModel):
+    product_id: int
+    product_name: str
+    move_type: str
+    quantity: int
+    reference: str = ""
