@@ -61,3 +61,18 @@ class AttendanceCreate(BaseModel):
     employee_name: str
     date: str
     status: str = "حاضر"
+
+# ========== نماذج الحسابات ==========
+class JournalEntryLine(BaseModel):
+    account: str
+    debit: float = 0.0
+    credit: float = 0.0
+
+class JournalEntryCreate(BaseModel):
+    description: str
+    lines: List[JournalEntryLine]
+    entry_date: Optional[str] = None
+
+class JournalEntryResponse(BaseModel):
+    entry_id: int
+    message: str
