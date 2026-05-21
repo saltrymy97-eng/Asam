@@ -24,11 +24,11 @@ from ui.closing_ui import show as closing_show  # قيد إغلاق الحساب
 from ui.returns import show as returns_show  # مرتجعات البضاعة
 from ui.audit_log import show as audit_show  # سجل التدقيق
 from ui.backup import show as backup_show    # النسخ الاحتياطي
-from ui.pdf_reports import show as pdf_show  # تقارير HTMLL
+from ui.pdf_reports import show as pdf_show  # تقارير HTML
 from ui.accounting_ui import show as accounting_show  # الحسابات (منفصلة)
 from ui.sales_ui import show as sales_show  # المبيعات (منفصلة)
 from ui.purchases_ui import show as purchases_show  # المشتريات (منفصلة)
-import ai_assistant  # المساعد الذكي (لم يفصل بعد)
+from ui.ai_ui import show as ai_show  # 🆕 المساعد الذكي (منفصل ومطور)
 
 st.set_page_config(page_title="XD ERP", layout="wide")
 
@@ -125,7 +125,7 @@ else:
     elif selected == "كشف الرواتب":
         payroll_show()
     elif selected == "المساعد الذكي":
-        ai_assistant.show()
+        ai_show()  # 🆕 تم الاستدعاء من الوحدة المنفصلة والمطورة
     elif selected == "سجل التدقيق":
         audit_show()
     elif selected == "نسخ احتياطي":
