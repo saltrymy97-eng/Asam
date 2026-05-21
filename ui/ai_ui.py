@@ -1,4 +1,4 @@
-# ui/ai_ui.py – واجهة المساعد الذكي المطورة (تحليلات عميقة)
+# ui/ai_ui.py – واجهة المساعد الذكي المطورة (تحليلات عميقة + زر تسجيل القيد)
 import streamlit as st
 import pandas as pd
 import json
@@ -57,7 +57,7 @@ def show():
         "🧠 مساعد", "📊 محلل", "📦 مخزون", "💬 موظفين", "📝 قيود", "🔍 احتيال", "🔮 تنبؤات", "📈 تحليل"
     ])
 
-    # 1. مساعد محاسبي (محادثة عميقة)
+    # ---------- 1. مساعد محاسبي ----------
     with t1:
         h3("اسأل عن أي شيء في نظامك", BL)
         q = st.chat_input("اكتب سؤالك هنا...")
@@ -75,7 +75,7 @@ def show():
             save_chat_history(st.session_state.active_session, "user", q, model, "مساعد")
             save_chat_history(st.session_state.active_session, "assistant", ans, model, "مساعد")
 
-    # 2. محلل مالي (تحليل شامل)
+    # ---------- 2. محلل مالي ----------
     with t2:
         h3("تحليل مالي شامل وتوصيات", GR)
         if st.button("📈 تحليل شامل"):
@@ -102,7 +102,7 @@ def show():
                 ans = query_groq(prompt, "قدم تحليلاً شاملاً", model=model, max_tokens=3000)
             glass(ans)
 
-    # 3. توقع المخزون (تحليل عميق)
+    # ---------- 3. توقع المخزون ----------
     with t3:
         h3("تحليل المخزون وتوقع النفاد", OR)
         low, allp = get_inventory_data()
@@ -124,7 +124,7 @@ def show():
             st.warning("⚠️ منتجات تحت الحد الأدنى:")
             st.dataframe(pd.DataFrame(low))
 
-    # 4. شات الموظفين
+    # ---------- 4. شات الموظفين ----------
     with t4:
         h3("استفسارات الموظفين", PR)
         nm = st.text_input("اسمك:", key="ename")
@@ -141,10 +141,17 @@ def show():
             else:
                 st.error("غير موجود")
 
-    # 5. قيود تلقائية (ذكية)
+    # ---------- 5. قيود تلقائية (مع زر التسجيل) ----------
     with t5:
         h3("توليد قيود محاسبية ذكية", RD)
-        txt = st.text_area("اكتب العملية:", key="etxt")
+        
+        if "generated_entry" not in st.session_state:
+            st.session_state.generated_entry = None
+        if "confirm_save" not in st.session_state:
+            st.session_state.confirm_save = False
+
+        txt = st.text_area("اكتب العملية:", key="etxt", placeholder="مثال: اشتريت بضاعة بـ 5000 ومصاريف شحن بـ 200، دفعت 3000 نقداً والباقي على الحساب")
+        
         if st.button("📝 توليد القيد") and txt:
             accs = get_all_accounts()
             alist = "\n".join([f"{a['code']} - {a['name']}" for a in accs]) if accs else "لا حسابات"
@@ -159,10 +166,100 @@ def show():
 تأكد من توازن القيد (مجموع المدين = مجموع الدائن).
 العملية: {txt}"""
             with st.spinner("📝..."):
-                ans = query_groq(prompt, txt, model=model)
-            st.code(ans)
+                entry_text = query_groq(prompt, txt, model=model)
+            st.code(entry_text)
+            
+            lines = [l.strip() for l in entry_text.splitlines() if l.strip()]
+            entry_lines = []
+            for line in lines:
+                parts = [p.strip() for p in line.split("|")]
+                if len(parts) >= 3 and (parts[0].startswith("مدين") or parts[0].startswith("دائن")):
+                    side = "debit" if parts[0].startswith("مدين") else "credit"
+                    account = parts[1]
+                    try:
+                        amount = float(parts[2].replace(",", ""))
+                    except ValueError:
+                        continue
+                    entry_lines.append({
+                        "account": account,
+                        "debit": amount if side == "debit" else 0.0,
+                        "credit": amount if side == "credit" else 0.0
+                    })
+            if entry_lines:
+                st.session_state.generated_entry = {"lines": entry_lines}
+                st.session_state.confirm_save = False
+                st.rerun()
 
-    # 6. كشف احتيال (تدقيق عميق)
+        if st.session_state.generated_entry is not None:
+            lines = st.session_state.generated_entry["lines"]
+            st.markdown("---")
+            st.markdown("**📋 القيد المقترح:**")
+            
+            df = pd.DataFrame(lines)
+            total_debit = df["debit"].sum()
+            total_credit = df["credit"].sum()
+            summary = pd.DataFrame([{"account": "المجموع", "debit": total_debit, "credit": total_credit}])
+            df_display = pd.concat([df, summary], ignore_index=True)
+            df_display = df_display.rename(columns={"account": "الحساب", "debit": "مدين", "credit": "دائن"})
+            st.dataframe(df_display.style.format({"مدين": "{:,.2f}", "دائن": "{:,.2f}"}), use_container_width=True, hide_index=True)
+
+            if not st.session_state.confirm_save:
+                if st.button("💾 تسجيل القيد في النظام", type="primary"):
+                    st.session_state.confirm_save = True
+                    st.rerun()
+            else:
+                st.warning("⚠️ هل أنت متأكد من تسجيل هذا القيد؟")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✅ نعم، سجل القيد", type="primary", key="confirm_yes"):
+                        entry_data = st.session_state.generated_entry
+                        conn = get_conn()
+                        valid_lines = []
+                        errors = []
+                        for line in entry_data["lines"]:
+                            account_name = line["account"]
+                            acc = conn.execute("SELECT code FROM accounts WHERE name = ?", (account_name,)).fetchone()
+                            if acc:
+                                valid_lines.append((acc["code"], line["debit"], line["credit"]))
+                            else:
+                                errors.append(f"الحساب '{account_name}' غير موجود في شجرة الحسابات.")
+                        
+                        if errors:
+                            for err in errors:
+                                st.error(err)
+                            st.session_state.confirm_save = False
+                        else:
+                            try:
+                                conn.execute("BEGIN")
+                                desc = f"قيد ذكي: {txt[:50] if txt else 'AI'}"
+                                cur = conn.execute(
+                                    "INSERT INTO journal_entries (date, description, reference) VALUES (?, ?, ?)",
+                                    (date.today().strftime("%Y-%m-%d"), desc, "")
+                                )
+                                entry_id = cur.lastrowid
+                                for code, debit, credit in valid_lines:
+                                    conn.execute(
+                                        "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, ?, ?, ?)",
+                                        (entry_id, code, debit, credit)
+                                    )
+                                conn.commit()
+                                st.success(f"✅ تم تسجيل القيد رقم {entry_id} بنجاح!")
+                                save_chat_history(st.session_state.active_session, "assistant", f"تم تسجيل القيد رقم {entry_id}", model, "قيود")
+                                st.session_state.generated_entry = None
+                                st.session_state.confirm_save = False
+                                st.rerun()
+                            except Exception as e:
+                                conn.rollback()
+                                st.error(f"فشل التسجيل: {e}")
+                                st.session_state.confirm_save = False
+                        finally:
+                            conn.close()
+                with col2:
+                    if st.button("❌ إلغاء", key="confirm_no"):
+                        st.session_state.confirm_save = False
+                        st.rerun()
+
+    # ---------- 6. كشف احتيال ----------
     with t6:
         h3("تدقيق وكشف الاحتيال", RD)
         if st.button("🕵️ تدقيق شامل"):
@@ -182,7 +279,7 @@ def show():
             else:
                 st.info("لا قيود")
 
-    # 7. تنبؤات (تخطيط استراتيجي)
+    # ---------- 7. تنبؤات ----------
     with t7:
         h3("🔮 تنبؤات وتخطيط مالي", CY)
         period = st.selectbox("فترة التخطيط", ["الشهر القادم", "الربع القادم", "السنة القادمة"], key="fp")
@@ -203,7 +300,7 @@ def show():
                 ans = query_groq(prompt, "خطط", model=model, max_tokens=3000)
             glass(ans)
 
-    # 8. تحليل عميق (نسب واتجاهات)
+    # ---------- 8. تحليل عميق ----------
     with t8:
         h3("📈 تحليلات متقدمة", PR)
         c1, c2 = st.columns(2)
