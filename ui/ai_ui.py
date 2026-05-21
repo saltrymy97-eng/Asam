@@ -1,4 +1,4 @@
-# ui/ai_ui.py – واجهة المساعد الذكي المحسّنة (زجاجية فخمة + نماذج + سجل + تحليل عميق)
+# ui/ai_ui.py – واجهة المساعد الذكي (زجاجية فخمة + نماذج + سجل + تحليل عميق)
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime
@@ -33,7 +33,6 @@ ACCENT_ORANGE = "#F59E0B"
 ACCENT_RED = "#EF4444"
 ACCENT_PURPLE = "#8B5CF6"
 ACCENT_CYAN = "#06B6D4"
-ACCENT_PINK = "#EC4899"
 
 # ========== تعريف النماذج المتاحة ==========
 AVAILABLE_MODELS = {
@@ -46,7 +45,7 @@ def show():
     st.markdown(f"""
     <div style="margin-bottom:2rem; text-align:right;">
         <h1 style="color:{TEXT_PRIMARY}; font-size:2.8rem; margin:0; text-shadow:0 0 20px {ACCENT_PURPLE};">🤖 المساعد الذكي XD</h1>
-        <p style="color:{TEXT_SECONDARY}; font-size:1.2rem;">سبعة خبراء مع تحليلات عميقة وسجل محادثات</p>
+        <p style="color:{TEXT_SECONDARY}; font-size:1.2rem;">ثمانية خبراء مع تحليلات عميقة وسجل محادثات</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -56,7 +55,6 @@ def show():
         st.error("❌ الرجاء إضافة `GROQ_API_KEY` في إعدادات Streamlit Cloud (Secrets).")
         return
 
-    # ---------- إعدادات النموذج والسجل ----------
     with st.sidebar:
         st.markdown(f"### ⚙️ إعدادات المساعد")
         selected_model_name = st.selectbox("اختر النموذج", list(AVAILABLE_MODELS.keys()))
@@ -72,7 +70,6 @@ def show():
         else:
             st.info("لا توجد محادثات سابقة")
 
-    # ---------- جلسة المحادثة النشطة ----------
     if "active_session" not in st.session_state:
         st.session_state.active_session = f"session_{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
@@ -85,7 +82,6 @@ def show():
     # ---------- 1. مساعد محاسبي ----------
     with tab1:
         st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>اسأل عن أي شيء في النظام</h3>", unsafe_allow_html=True)
-        
         history = get_chat_history(st.session_state.active_session, 10)
         for h in reversed(history):
             if h['role'] == 'user':
@@ -138,7 +134,6 @@ def show():
                 analysis = query_groq(prompt, "حلل", model=selected_model, max_tokens=2000)
             
             st.markdown(f"""<div style="background:{GLASS_BG}; backdrop-filter:blur(10px); border:1px solid {GLASS_BORDER}; border-radius:16px; padding:1.5rem; margin-top:1rem; box-shadow:{GLASS_SHADOW};"><div style="color:{TEXT_PRIMARY}; font-size:1.1rem;">{analysis}</div></div>""", unsafe_allow_html=True)
-            
             save_chat_history(st.session_state.active_session, "assistant", analysis, selected_model, "محلل مالي")
 
     # ---------- 3. توقع المخزون ----------
@@ -180,73 +175,15 @@ def show():
     # ---------- 5. قيود تلقائية ----------
     with tab5:
         st.markdown(f"<h3 style='color:{ACCENT_RED};'>إنشاء قيد محاسبي مركب بلغة طبيعية</h3>", unsafe_allow_html=True)
-        text = st.text_area("اكتب العملية:", placeholder="مثال: اشتريت بضاعة بـ 5000 ومصاريف شحن بـ 200، دفعت 3000 نقداً والباقي على الحساب", key="entry_text")
         
         if "generated_entry" not in st.session_state:
             st.session_state.generated_entry = None
         if "confirm_save" not in st.session_state:
             st.session_state.confirm_save = False
 
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            generate_btn = st.button("📝 إنشاء القيد المركب", key="create_entry")
-        with col2:
-            if st.session_state.generated_entry is not None and not st.session_state.confirm_save:
-                if st.button("💾 تسجيل القيد في النظام", type="primary", key="save_entry"):
-                    st.session_state.confirm_save = True
-                    st.rerun()
-
-        if st.session_state.confirm_save and st.session_state.generated_entry is not None:
-            st.warning("⚠️ هل أنت متأكد من تسجيل هذا القيد؟")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("✅ نعم، سجل القيد", type="primary", key="confirm_yes"):
-                    entry_data = st.session_state.generated_entry
-                    conn = get_conn()
-                    valid_lines = []
-                    errors = []
-                    for line in entry_data["lines"]:
-                        account_name = line["account"]
-                        acc = conn.execute("SELECT code FROM accounts WHERE name = ?", (account_name,)).fetchone()
-                        if acc:
-                            valid_lines.append((acc["code"], line["debit"], line["credit"]))
-                        else:
-                            errors.append(f"الحساب '{account_name}' غير موجود في شجرة الحسابات.")
-                    
-                    if errors:
-                        for err in errors:
-                            st.error(err)
-                        st.session_state.confirm_save = False
-                    else:
-                        try:
-                            conn.execute("BEGIN")
-                            desc = f"قيد ذكي: {text[:50]}"
-                            cur = conn.execute(
-                                "INSERT INTO journal_entries (date, description, reference) VALUES (?, ?, ?)",
-                                (date.today().strftime("%Y-%m-%d"), desc, "")
-                            )
-                            entry_id = cur.lastrowid
-                            for code, debit, credit in valid_lines:
-                                conn.execute(
-                                    "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, ?, ?, ?)",
-                                    (entry_id, code, debit, credit)
-                                )
-                            conn.commit()
-                            st.success(f"✅ تم تسجيل القيد رقم {entry_id} بنجاح!")
-                            save_chat_history(st.session_state.active_session, "assistant", f"تم تسجيل القيد رقم {entry_id}: {text[:50]}", selected_model, "قيود تلقائية")
-                            st.session_state.generated_entry = None
-                            st.session_state.confirm_save = False
-                            st.rerun()
-                        except Exception as e:
-                            conn.rollback()
-                            st.error(f"فشل التسجيل: {e}")
-                            st.session_state.confirm_save = False
-                    finally:
-                        conn.close()
-            with col2:
-                if st.button("❌ إلغاء", key="confirm_no"):
-                    st.session_state.confirm_save = False
-                    st.rerun()
+        with st.form("entry_form"):
+            text = st.text_area("اكتب العملية:", placeholder="مثال: اشتريت بضاعة بـ 5000 ومصاريف شحن بـ 200، دفعت 3000 نقداً والباقي على الحساب", key="entry_text")
+            generate_btn = st.form_submit_button("📝 إنشاء القيد المركب")
 
         if generate_btn and text:
             accounts = get_all_accounts()
@@ -287,11 +224,64 @@ def show():
             summary = pd.DataFrame([{"account": "المجموع", "debit": total_debit, "credit": total_credit}])
             df_display = pd.concat([df, summary], ignore_index=True)
             df_display = df_display.rename(columns={"account": "الحساب", "debit": "مدين", "credit": "دائن"})
-            st.dataframe(
-                df_display.style.format({"مدين": "{:,.2f}", "دائن": "{:,.2f}"}),
-                use_container_width=True,
-                hide_index=True
-            )
+            st.dataframe(df_display.style.format({"مدين": "{:,.2f}", "دائن": "{:,.2f}"}), use_container_width=True, hide_index=True)
+
+            # أزرار التأكيد خارج الفورم
+            if not st.session_state.confirm_save:
+                if st.button("💾 تسجيل القيد في النظام", type="primary"):
+                    st.session_state.confirm_save = True
+                    st.rerun()
+            else:
+                st.warning("⚠️ هل أنت متأكد من تسجيل هذا القيد؟")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✅ نعم، سجل القيد", type="primary", key="confirm_yes"):
+                        entry_data = st.session_state.generated_entry
+                        conn = get_conn()
+                        valid_lines = []
+                        errors = []
+                        for line in entry_data["lines"]:
+                            account_name = line["account"]
+                            acc = conn.execute("SELECT code FROM accounts WHERE name = ?", (account_name,)).fetchone()
+                            if acc:
+                                valid_lines.append((acc["code"], line["debit"], line["credit"]))
+                            else:
+                                errors.append(f"الحساب '{account_name}' غير موجود في شجرة الحسابات.")
+                        
+                        if errors:
+                            for err in errors:
+                                st.error(err)
+                            st.session_state.confirm_save = False
+                        else:
+                            try:
+                                conn.execute("BEGIN")
+                                desc = f"قيد ذكي: {text if text else 'AI'}"
+                                cur = conn.execute(
+                                    "INSERT INTO journal_entries (date, description, reference) VALUES (?, ?, ?)",
+                                    (date.today().strftime("%Y-%m-%d"), desc, "")
+                                )
+                                entry_id = cur.lastrowid
+                                for code, debit, credit in valid_lines:
+                                    conn.execute(
+                                        "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, ?, ?, ?)",
+                                        (entry_id, code, debit, credit)
+                                    )
+                                conn.commit()
+                                st.success(f"✅ تم تسجيل القيد رقم {entry_id} بنجاح!")
+                                save_chat_history(st.session_state.active_session, "assistant", f"تم تسجيل القيد رقم {entry_id}: {text[:50]}", selected_model, "قيود تلقائية")
+                                st.session_state.generated_entry = None
+                                st.session_state.confirm_save = False
+                                st.rerun()
+                            except Exception as e:
+                                conn.rollback()
+                                st.error(f"فشل التسجيل: {e}")
+                                st.session_state.confirm_save = False
+                        finally:
+                            conn.close()
+                with col2:
+                    if st.button("❌ إلغاء", key="confirm_no"):
+                        st.session_state.confirm_save = False
+                        st.rerun()
 
     # ---------- 6. كشف الاحتيال ----------
     with tab6:
