@@ -6,3 +6,5 @@ bcrypt
 streamlit-option-menu
 openpyxl
 groq
+fastapi
+uvicorn[standard]
