@@ -76,3 +76,20 @@ class JournalEntryCreate(BaseModel):
 class JournalEntryResponse(BaseModel):
     entry_id: int
     message: str
+
+# ========== نماذج المرتجعات ==========
+class ReturnItem(BaseModel):
+    name: str
+    quantity: int
+
+class ReturnCreate(BaseModel):
+    invoice_type: str
+    invoice_id: int
+    items_to_return: List[ReturnItem]
+    return_date: str
+    reason: str = ""
+
+class ReturnResponse(BaseModel):
+    return_id: int
+    total: float
+    message: str
