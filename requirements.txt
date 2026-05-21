@@ -8,3 +8,4 @@ openpyxl
 groq
 fastapi
 uvicorn[standard]
+scalar-fastapi
