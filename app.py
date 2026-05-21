@@ -10,27 +10,25 @@ database.create_default_admin()
 from ui.auth_ui import show as auth_show
 from services.auth_service import logout_session
 
-# استيراد الوحدات القديمة
-import dashboard
+# استيراد الوحدات المفصولة كاملة (Services + UI)
+from ui.dashboard_ui import show as dashboard_show  # لوحة المعلومات (منفصلة)
 from ui.inventory_ui import show as inventory_show  # المخزون (منفصلة)
 from ui.hr_ui import show as hr_show  # الموارد البشرية (منفصلة)
-
-# استيراد الوحدات الجديدة
 from ui.chart_ui import show as chart_show  # شجرة الحسابات (منفصلة)
 from ui.financial_ui import show as financial_show  # القوائم المالية (منفصلة)
 from ui.roles_ui import show as roles_show  # الصلاحيات (منفصلة)
 from ui.period_ui import show as period_show  # إغلاق الفترات (منفصلة)
-from ui.fifo_ui import show as fifo_show  # 🆕 FIFO المخزون (منفصلة)
+from ui.fifo_ui import show as fifo_show  # FIFO المخزون (منفصلة)
 from ui.payroll_ui import show as payroll_show  # كشف الرواتب (منفصلة)
-import ai_assistant
 from ui.closing_ui import show as closing_show  # قيد إغلاق الحسابات (منفصلة)
 from ui.returns import show as returns_show  # مرتجعات البضاعة
 from ui.audit_log import show as audit_show  # سجل التدقيق
 from ui.backup import show as backup_show    # النسخ الاحتياطي
-from ui.pdf_reports import show as pdf_show  # تقارير PDF
+from ui.pdf_reports import show as pdf_show  # تقارير HTMLL
 from ui.accounting_ui import show as accounting_show  # الحسابات (منفصلة)
 from ui.sales_ui import show as sales_show  # المبيعات (منفصلة)
 from ui.purchases_ui import show as purchases_show  # المشتريات (منفصلة)
+import ai_assistant  # المساعد الذكي (لم يفصل بعد)
 
 st.set_page_config(page_title="XD ERP", layout="wide")
 
@@ -99,7 +97,7 @@ else:
         )
 
     if selected == "لوحة المعلومات":
-        dashboard.show()
+        dashboard_show()
     elif selected == "المخزون":
         inventory_show()
     elif selected == "المبيعات":
@@ -123,7 +121,7 @@ else:
     elif selected == "إغلاق الحسابات":
         closing_show()
     elif selected == "FIFO المخزون":
-        fifo_show()  # 🆕 تم الاستدعاء من الوحدة المنفصلة
+        fifo_show()
     elif selected == "كشف الرواتب":
         payroll_show()
     elif selected == "المساعد الذكي":
