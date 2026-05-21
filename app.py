@@ -68,7 +68,7 @@ else:
                 "المساعد الذكي",
                 "سجل التدقيق",
                 "نسخ احتياطي",
-                "تقارير PDF",
+                "تقارير HTML",           # 🆕 تم تغيير الاسم
                 "تسجيل الخروج"
             ],
             icons=[
@@ -89,7 +89,7 @@ else:
                 "robot",
                 "shield-check",
                 "cloud-upload",
-                "file-earmark-pdf",
+                "file-earmark-code",     # 🆕 تم تغيير الأيقونة
                 "box-arrow-right"
             ],
             menu_icon="cast",
@@ -125,12 +125,12 @@ else:
     elif selected == "كشف الرواتب":
         payroll_show()
     elif selected == "المساعد الذكي":
-        ai_show()  # 🆕 تم الاستدعاء من الوحدة المنفصلة والمطورة
+        ai_show()
     elif selected == "سجل التدقيق":
         audit_show()
     elif selected == "نسخ احتياطي":
         backup_show()
-    elif selected == "تقارير PDF":
+    elif selected == "تقارير HTML":       # 🆕 تم تغيير الاسم
         pdf_show()
     elif selected == "تسجيل الخروج":
         logout_session()
