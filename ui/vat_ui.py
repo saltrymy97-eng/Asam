@@ -1,6 +1,7 @@
 # ui/vat_ui.py – واجهة إدارة ضريبة القيمة المضافة (تصميم زجاجي فخم)
 import streamlit as st
 from datetime import date
+import pandas as pd
 from services.vat_service import (
     create_vat_table,
     get_vat_rate,
@@ -52,7 +53,7 @@ def show():
 
         col1, col2 = st.columns(2)
         with col1:
-            glass(f"النسبة الحالية: **{current_rate * 100:.0f}%**")
+            glass(f'النسبة الحالية: <span style="color:{GR};font-weight:800;">{current_rate * 100:.0f}%</span>')
         with col2:
             new_rate = st.number_input("تحديث النسبة (%)", min_value=0.0, max_value=100.0, value=current_rate * 100, step=0.5) / 100
             if st.button("💾 تحديث النسبة", type="primary"):
@@ -64,7 +65,6 @@ def show():
         h3("سجل التغييرات", PR)
         history = get_vat_history()
         if history:
-            import pandas as pd
             df = pd.DataFrame(history)
             df = df.rename(columns={"name": "الاسم", "rate": "النسبة", "is_active": "نشط", "created_at": "التاريخ"})
             df["النسبة"] = df["النسبة"].apply(lambda x: f"{x * 100:.0f}%")
@@ -102,7 +102,7 @@ def show():
                 start_date.strftime("%Y-%m-%d") if start_date else None,
                 end_date.strftime("%Y-%m-%d") if end_date else None
             )
-            glass(f"نسبة الضريبة المعتمدة: **{report['rate'] * 100:.0f}%**")
+            glass(f'نسبة الضريبة المعتمدة: <span style="color:{GR};font-weight:800;">{report["rate"] * 100:.0f}%</span>')
             
             col1, col2, col3, col4 = st.columns(4)
             with col1:
