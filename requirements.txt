@@ -9,3 +9,4 @@ groq
 fastapi
 uvicorn[standard]
 scalar-fastapi
+psycopg2-binary
