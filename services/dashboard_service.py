@@ -1,4 +1,4 @@
-# services/dashboard_service.py – منطق لوحة المعلومات والمؤشرات (PostgreSQL - معدل)
+# services/dashboard_service.py – منطق لوحة المعلومات والمؤشرات (PostgreSQL)
 import psycopg2.extras
 from database import get_connection
 
@@ -36,7 +36,7 @@ def get_kpi_cards():
     c.execute("SELECT COUNT(*) as cnt FROM employees")
     employees_count = c.fetchone()["cnt"]
 
-    # 🆕 استخدام cursor مختلف للقيم المفردة
+    # استخدام cursor مختلف للقيم المفردة
     c2 = _value_cursor(conn)
     c2.execute("SELECT COALESCE(SUM(credit)-SUM(debit),0) FROM journal_lines WHERE account_name LIKE '4%'")
     revenue = c2.fetchone()[0]
@@ -70,7 +70,7 @@ def get_inventory_by_category():
     return [dict(r) for r in rows]
 
 def get_monthly_sales():
-    """المبيعات الشهرية لآخر 12 شهر"""
+    """المبيعات الشهرية لآخر 12 شهر (PostgreSQL)"""
     conn = get_connection()
     c = _dict_cursor(conn)
     c.execute("""
