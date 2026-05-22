@@ -54,6 +54,14 @@ def calculate_vat(amount, rate=None):
         rate = get_vat_rate()
     return round(amount * rate, 2)
 
+def calculate_reverse_vat(total_amount, rate=None):
+    """حساب الضريبة العكسية (استخراج المبلغ قبل الضريبة وقيمة الضريبة من الإجمالي)"""
+    if rate is None:
+        rate = get_vat_rate()
+    amount_before_tax = round(total_amount / (1 + rate), 2)
+    vat_amount = round(total_amount - amount_before_tax, 2)
+    return amount_before_tax, vat_amount
+
 def get_vat_report(start_date=None, end_date=None):
     """تقرير الضريبة (المخرجات والمدخلات)"""
     conn = get_connection()
@@ -96,6 +104,59 @@ def get_vat_report(start_date=None, end_date=None):
         "output_vat": output_vat,
         "input_vat": input_vat,
         "net_vat": net_vat
+    }
+
+def get_tax_return_report(start_date=None, end_date=None):
+    """تقرير الإقرار الضريبي (Tax Return) باستخدام بيانات الضريبة الفعلية المخزنة"""
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+
+    # استعلامات لجلب بيانات الضريبة الفعلية من الفواتير
+    sales_query = """
+        SELECT COALESCE(SUM(vat_amount), 0) as total_output_vat,
+               COALESCE(SUM(total - vat_amount), 0) as total_sales_before_tax
+        FROM invoices
+        WHERE type = 'sale' AND status = 'completed'
+    """
+    purchases_query = """
+        SELECT COALESCE(SUM(vat_amount), 0) as total_input_vat,
+               COALESCE(SUM(total - vat_amount), 0) as total_purchases_before_tax
+        FROM invoices
+        WHERE type = 'purchase' AND status = 'completed'
+    """
+    
+    params = ()
+    if start_date and end_date:
+        date_filter = " AND invoice_date BETWEEN ? AND ?"
+        sales_query += date_filter
+        purchases_query += date_filter
+        params = (start_date, end_date)
+    
+    sales_data = conn.execute(sales_query, params).fetchone()
+    purchases_data = conn.execute(purchases_query, params).fetchone()
+    
+    # تفاصيل الفواتير (اختياري، لجعل التقرير أكثر تفصيلاً)
+    invoices_query = """
+        SELECT id, type, invoice_date, total, vat_amount, vat_rate
+        FROM invoices
+        WHERE status = 'completed'
+    """
+    if start_date and end_date:
+        invoices_query += " AND invoice_date BETWEEN ? AND ?"
+        invoices = conn.execute(invoices_query, params).fetchall()
+    else:
+        invoices = conn.execute(invoices_query).fetchall()
+    
+    conn.close()
+    
+    return {
+        "rate": get_vat_rate(),
+        "total_output_vat": sales_data["total_output_vat"],
+        "total_input_vat": purchases_data["total_input_vat"],
+        "net_vat": round(sales_data["total_output_vat"] - purchases_data["total_input_vat"], 2),
+        "sales_before_tax": sales_data["total_sales_before_tax"],
+        "purchases_before_tax": purchases_data["total_purchases_before_tax"],
+        "invoices": [dict(inv) for inv in invoices]
     }
 
 def get_vat_history():
