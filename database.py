@@ -1,214 +1,191 @@
-# database.py - قاعدة بيانات نظام ERP متوافقة مع PostgreSQL (Neon)
-import psycopg2
-import psycopg2.extras
+# database.py - قاعدة بيانات نظام ERP كاملة (SQLite)
+import sqlite3
 import bcrypt
-import streamlit as st
-from urllib.parse import urlparse, unquote
+
+DB_PATH = "erp.db"
 
 def get_connection():
-    """إنشاء اتصال بقاعدة بيانات PostgreSQL على Neon"""
-    db_url = st.secrets["DATABASE_URL"]
-    parsed = urlparse(db_url)
-    username = parsed.username
-    password = unquote(parsed.password) if parsed.password else ""
-    host = parsed.hostname
-    port = parsed.port or 5432
-    database = parsed.path.lstrip("/")
-
-    conn = psycopg2.connect(
-        host=host,
-        port=port,
-        database=database,
-        user=username,
-        password=password,
-        sslmode="require"
-    )
-    conn.autocommit = False
+    """إنشاء اتصال بقاعدة البيانات"""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 def init_db():
-    """إنشاء جميع جداول النظام إذا لم تكن موجودة (PostgreSQL)"""
+    """إنشاء جميع جداول النظام إذا لم تكن موجودة"""
     conn = get_connection()
     c = conn.cursor()
 
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            full_name TEXT,
-            role TEXT DEFAULT 'staff'
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS products (
-            id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            barcode TEXT UNIQUE,
-            category TEXT,
-            purchase_price REAL,
-            selling_price REAL,
-            quantity INTEGER DEFAULT 0,
-            reorder_level INTEGER DEFAULT 10
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS stock_movements (
-            id SERIAL PRIMARY KEY,
-            product_id INTEGER REFERENCES products(id),
-            type TEXT,
-            quantity INTEGER,
-            date TEXT,
-            reference TEXT
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS customers (
-            id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            phone TEXT,
-            address TEXT
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS suppliers (
-            id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            phone TEXT,
-            address TEXT
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS invoices (
-            id SERIAL PRIMARY KEY,
-            type TEXT NOT NULL,
-            party_id INTEGER,
-            invoice_date TEXT,
-            total REAL DEFAULT 0,
-            status TEXT DEFAULT 'draft'
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS invoice_items (
-            id SERIAL PRIMARY KEY,
-            invoice_id INTEGER REFERENCES invoices(id),
-            product_id INTEGER REFERENCES products(id),
-            quantity INTEGER,
-            unit_price REAL
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS journal_entries (
-            id SERIAL PRIMARY KEY,
-            date TEXT,
-            description TEXT,
-            reference TEXT
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS journal_lines (
-            id SERIAL PRIMARY KEY,
-            entry_id INTEGER REFERENCES journal_entries(id),
-            account_name TEXT,
-            debit REAL DEFAULT 0,
-            credit REAL DEFAULT 0
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS employees (
-            id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            position TEXT,
-            salary REAL,
-            join_date TEXT
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS attendance (
-            id SERIAL PRIMARY KEY,
-            employee_id INTEGER REFERENCES employees(id),
-            date TEXT,
-            status TEXT
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS accounts (
-            id SERIAL PRIMARY KEY,
-            code TEXT UNIQUE NOT NULL,
-            name TEXT NOT NULL,
-            parent_id INTEGER REFERENCES accounts(id),
-            level INTEGER DEFAULT 1,
-            is_debit TEXT DEFAULT 'debit'
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS inventory_batches (
-            id SERIAL PRIMARY KEY,
-            product_id INTEGER REFERENCES products(id),
-            quantity REAL NOT NULL,
-            unit_cost REAL NOT NULL,
-            batch_date TEXT NOT NULL,
-            reference TEXT
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS fifo_consumptions (
-            id SERIAL PRIMARY KEY,
-            batch_id INTEGER REFERENCES inventory_batches(id),
-            consumed_qty REAL NOT NULL,
-            consumption_date TEXT NOT NULL,
-            reference TEXT
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS employee_salaries (
-            id SERIAL PRIMARY KEY,
-            employee_id INTEGER UNIQUE REFERENCES employees(id),
-            basic_salary REAL DEFAULT 0,
-            housing_allowance REAL DEFAULT 0,
-            transport_allowance REAL DEFAULT 0,
-            other_allowances REAL DEFAULT 0,
-            deductions REAL DEFAULT 0
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS payroll_runs (
-            id SERIAL PRIMARY KEY,
-            employee_id INTEGER REFERENCES employees(id),
-            month TEXT NOT NULL,
-            basic_salary REAL,
-            housing_allowance REAL,
-            transport_allowance REAL,
-            other_allowances REAL,
-            total_allowances REAL,
-            deductions REAL,
-            net_salary REAL,
-            journal_entry_id INTEGER
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS closed_periods (
-            id SERIAL PRIMARY KEY,
-            period_type TEXT NOT NULL,
-            period_value TEXT NOT NULL,
-            closed_at TEXT NOT NULL,
-            closed_by TEXT NOT NULL,
-            UNIQUE(period_type, period_value)
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS roles (
-            id SERIAL PRIMARY KEY,
-            name TEXT UNIQUE NOT NULL
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS role_permissions (
-            id SERIAL PRIMARY KEY,
-            role_id INTEGER REFERENCES roles(id),
-            module TEXT NOT NULL
-        )
-    """)
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        full_name TEXT,
+        role TEXT DEFAULT 'staff'
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS products (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        barcode TEXT UNIQUE,
+        category TEXT,
+        purchase_price REAL,
+        selling_price REAL,
+        quantity INTEGER DEFAULT 0,
+        reorder_level INTEGER DEFAULT 10
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS stock_movements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER,
+        type TEXT,
+        quantity INTEGER,
+        date TEXT,
+        reference TEXT,
+        FOREIGN KEY (product_id) REFERENCES products(id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS customers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        phone TEXT,
+        address TEXT
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS suppliers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        phone TEXT,
+        address TEXT
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS invoices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL,
+        party_id INTEGER,
+        invoice_date TEXT,
+        total REAL DEFAULT 0,
+        status TEXT DEFAULT 'draft',
+        FOREIGN KEY (party_id) REFERENCES customers(id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS invoice_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        invoice_id INTEGER,
+        product_id INTEGER,
+        quantity INTEGER,
+        unit_price REAL,
+        FOREIGN KEY (invoice_id) REFERENCES invoices(id),
+        FOREIGN KEY (product_id) REFERENCES products(id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS journal_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT,
+        description TEXT,
+        reference TEXT
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS journal_lines (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entry_id INTEGER,
+        account_name TEXT,
+        debit REAL DEFAULT 0,
+        credit REAL DEFAULT 0,
+        FOREIGN KEY (entry_id) REFERENCES journal_entries(id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS employees (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        position TEXT,
+        salary REAL,
+        join_date TEXT
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS attendance (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        employee_id INTEGER,
+        date TEXT,
+        status TEXT,
+        FOREIGN KEY (employee_id) REFERENCES employees(id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS accounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        parent_id INTEGER,
+        level INTEGER DEFAULT 1,
+        is_debit TEXT DEFAULT 'debit',
+        FOREIGN KEY (parent_id) REFERENCES accounts(id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS inventory_batches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER,
+        quantity REAL NOT NULL,
+        unit_cost REAL NOT NULL,
+        batch_date TEXT NOT NULL,
+        reference TEXT,
+        FOREIGN KEY (product_id) REFERENCES products(id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS fifo_consumptions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        batch_id INTEGER,
+        consumed_qty REAL NOT NULL,
+        consumption_date TEXT NOT NULL,
+        reference TEXT,
+        FOREIGN KEY (batch_id) REFERENCES inventory_batches(id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS employee_salaries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        employee_id INTEGER UNIQUE,
+        basic_salary REAL DEFAULT 0,
+        housing_allowance REAL DEFAULT 0,
+        transport_allowance REAL DEFAULT 0,
+        other_allowances REAL DEFAULT 0,
+        deductions REAL DEFAULT 0,
+        FOREIGN KEY (employee_id) REFERENCES employees(id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS payroll_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        employee_id INTEGER,
+        month TEXT NOT NULL,
+        basic_salary REAL,
+        housing_allowance REAL,
+        transport_allowance REAL,
+        other_allowances REAL,
+        total_allowances REAL,
+        deductions REAL,
+        net_salary REAL,
+        journal_entry_id INTEGER,
+        FOREIGN KEY (employee_id) REFERENCES employees(id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS closed_periods (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        period_type TEXT NOT NULL,
+        period_value TEXT NOT NULL,
+        closed_at TEXT NOT NULL,
+        closed_by TEXT NOT NULL,
+        UNIQUE(period_type, period_value)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS roles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE NOT NULL
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS role_permissions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        role_id INTEGER,
+        module TEXT NOT NULL,
+        FOREIGN KEY (role_id) REFERENCES roles(id)
+    )''')
+
     conn.commit()
     conn.close()
 
@@ -219,9 +196,7 @@ def create_default_admin():
     c.execute("SELECT COUNT(*) FROM users")
     if c.fetchone()[0] == 0:
         hashed = bcrypt.hashpw("admin".encode(), bcrypt.gensalt())
-        c.execute(
-            "INSERT INTO users (username, password, full_name, role) VALUES (%s, %s, %s, %s)",
-            ("admin", hashed.decode(), "مدير النظام", "admin")
-        )
+        c.execute("INSERT INTO users (username, password, full_name, role) VALUES (?, ?, ?, ?)",
+                  ("admin", hashed, "مدير النظام", "admin"))
         conn.commit()
     conn.close()
