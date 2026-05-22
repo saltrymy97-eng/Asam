@@ -1,8 +1,9 @@
-# services/purchases_service.py – منطق أعمال المشتريات (SQLite)
+# services/purchases_service.py – منطق أعمال المشتريات (SQLite + VAT)
 import sqlite3
 from datetime import date
 from database import get_connection
 from services.audit_service import log_action
+from services.vat_service import get_vat_rate  # 🆕 استيراد نسبة الضريبة
 
 def get_suppliers():
     """جلب الموردين"""
@@ -21,8 +22,12 @@ def get_products_for_purchase():
     return [dict(p) for p in products]
 
 def create_purchase_invoice(supplier_id, items, username="admin"):
-    """إنشاء فاتورة مشتريات محمية"""
-    total = sum(item["quantity"] * item["unit_price"] for item in items)
+    """إنشاء فاتورة مشتريات محمية مع حساب الضريبة تلقائياً"""
+    subtotal = sum(item["quantity"] * item["unit_price"] for item in items)
+    vat_rate = get_vat_rate()  # 🆕 جلب نسبة الضريبة الحالية
+    vat_amount = round(subtotal * vat_rate, 2)  # 🆕 حساب قيمة الضريبة
+    total = round(subtotal + vat_amount, 2)  # 🆕 الإجمالي النهائي
+
     conn = get_connection()
 
     try:
@@ -41,9 +46,10 @@ def create_purchase_invoice(supplier_id, items, username="admin"):
                 conn.close()
                 return None, 0, f"المنتج {item.get('name', item['product_id'])} غير موجود"
 
+        # 🆕 إدراج الفاتورة مع أعمدة الضريبة
         cur = conn.execute(
-            "INSERT INTO invoices (type, party_id, invoice_date, total, status) VALUES ('purchase', ?, date('now'), ?, 'completed')",
-            (supplier_id, total)
+            "INSERT INTO invoices (type, party_id, invoice_date, total, status, vat_rate, vat_amount) VALUES ('purchase', ?, date('now'), ?, 'completed', ?, ?)",
+            (supplier_id, total, vat_rate, vat_amount)
         )
         invoice_id = cur.lastrowid
 
@@ -77,7 +83,7 @@ def create_purchase_invoice(supplier_id, items, username="admin"):
             action="فاتورة مشتريات",
             table_name="invoices",
             record_id=invoice_id,
-            new_value=f"المورد: {supplier_name}, الإجمالي: {total:,.2f}"
+            new_value=f"المورد: {supplier_name}, الإجمالي: {total:,.2f}, الضريبة: {vat_amount:,.2f}"
         )
 
         return invoice_id, total, None
@@ -93,7 +99,7 @@ def get_purchase_invoices():
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     invoices = conn.execute("""
-        SELECT i.id, s.name as supplier, i.invoice_date, i.total, i.status
+        SELECT i.id, s.name as supplier, i.invoice_date, i.total, i.status, i.vat_rate, i.vat_amount
         FROM invoices i
         LEFT JOIN suppliers s ON i.party_id = s.id
         WHERE i.type = 'purchase'
