@@ -1,4 +1,4 @@
-# database.py - قاعدة بيانات نظام ERP كاملة (SQLite)
+# database.py - قاعدة بيانات نظام ERP كاملة (SQLite) مع أعمدة VAT
 import sqlite3
 import bcrypt
 
@@ -58,6 +58,7 @@ def init_db():
         address TEXT
     )''')
 
+    # 🆕 جدول الفواتير مع أعمدة الضريبة
     c.execute('''CREATE TABLE IF NOT EXISTS invoices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
@@ -65,8 +66,20 @@ def init_db():
         invoice_date TEXT,
         total REAL DEFAULT 0,
         status TEXT DEFAULT 'draft',
+        vat_rate REAL DEFAULT 0.15,
+        vat_amount REAL DEFAULT 0,
         FOREIGN KEY (party_id) REFERENCES customers(id)
     )''')
+
+    # إضافة الأعمدة الجديدة إذا كان الجدول موجوداً مسبقاً
+    try:
+        c.execute("ALTER TABLE invoices ADD COLUMN vat_rate REAL DEFAULT 0.15")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE invoices ADD COLUMN vat_amount REAL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
 
     c.execute('''CREATE TABLE IF NOT EXISTS invoice_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
