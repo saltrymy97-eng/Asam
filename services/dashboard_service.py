@@ -6,6 +6,10 @@ def _dict_cursor(conn):
     """إرجاع cursor بقاموس للقراءة فقط"""
     return conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
+def _value_cursor(conn):
+    """إرجاع cursor عادي للقيم المفردة"""
+    return conn.cursor()
+
 def get_kpi_cards():
     """جلب بيانات البطاقات الإحصائية"""
     conn = get_connection()
@@ -32,11 +36,13 @@ def get_kpi_cards():
     c.execute("SELECT COUNT(*) as cnt FROM employees")
     employees_count = c.fetchone()["cnt"]
 
-    c.execute("SELECT COALESCE(SUM(credit)-SUM(debit),0) FROM journal_lines WHERE account_name LIKE '4%'")
-    revenue = c.fetchone()[0]
+    # 🆕 استخدام cursor مختلف للقيم المفردة
+    c2 = _value_cursor(conn)
+    c2.execute("SELECT COALESCE(SUM(credit)-SUM(debit),0) FROM journal_lines WHERE account_name LIKE '4%'")
+    revenue = c2.fetchone()[0]
 
-    c.execute("SELECT COALESCE(SUM(debit)-SUM(credit),0) FROM journal_lines WHERE account_name LIKE '5%'")
-    expenses = c.fetchone()[0]
+    c2.execute("SELECT COALESCE(SUM(debit)-SUM(credit),0) FROM journal_lines WHERE account_name LIKE '5%'")
+    expenses = c2.fetchone()[0]
     net_income = revenue - expenses
 
     conn.close()
