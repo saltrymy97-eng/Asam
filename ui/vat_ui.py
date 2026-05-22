@@ -1,4 +1,4 @@
-# ui/vat_ui.py – واجهة إدارة ضريبة القيمة المضافة (تصميم زجاجي فخم)
+# ui/vat_ui.py – واجهة إدارة ضريبة القيمة المضافة (تصميم زجاجي فخم + الضريبة العكسية والإقرار)
 import streamlit as st
 from datetime import date
 import pandas as pd
@@ -7,7 +7,9 @@ from services.vat_service import (
     get_vat_rate,
     update_vat_rate,
     calculate_vat,
+    calculate_reverse_vat,
     get_vat_report,
+    get_tax_return_report,
     get_vat_history
 )
 
@@ -44,7 +46,7 @@ def show():
     create_vat_table()
     h1("🧾 ضريبة القيمة المضافة (VAT)")
 
-    tab1, tab2, tab3 = st.tabs(["⚙️ الإعدادات", "🧮 حاسبة الضريبة", "📊 التقارير"])
+    tab1, tab2, tab3, tab4 = st.tabs(["⚙️ الإعدادات", "🧮 حاسبة الضريبة", "🔄 الضريبة العكسية", "📊 التقارير"])
 
     # ---------- تبويب الإعدادات ----------
     with tab1:
@@ -88,28 +90,72 @@ def show():
             with col3:
                 st.markdown(kpi_card("💎", "الإجمالي", f"{total:,.2f}", GR), unsafe_allow_html=True)
 
-    # ---------- تبويب التقارير ----------
+    # ---------- تبويب الضريبة العكسية ----------
     with tab3:
-        h3("تقرير الضريبة", PR)
+        h3("الضريبة العكسية (استخراج المبلغ قبل الضريبة)", CY)
+        total_amount = st.number_input("المبلغ الإجمالي (شامل الضريبة)", min_value=0.0, step=100.0)
+        if st.button("🔍 احسب الضريبة العكسية"):
+            before_tax, vat_amt = calculate_reverse_vat(total_amount)
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown(kpi_card("💎", "الإجمالي (شامل الضريبة)", f"{total_amount:,.2f}", BL), unsafe_allow_html=True)
+            with col2:
+                st.markdown(kpi_card("📋", "المبلغ قبل الضريبة", f"{before_tax:,.2f}", GR), unsafe_allow_html=True)
+            with col3:
+                st.markdown(kpi_card("🧾", "قيمة الضريبة", f"{vat_amt:,.2f}", OR), unsafe_allow_html=True)
+
+    # ---------- تبويب التقارير ----------
+    with tab4:
+        h3("تقارير الضريبة", PR)
         col1, col2 = st.columns(2)
         with col1:
             start_date = st.date_input("من تاريخ", value=date.today().replace(day=1))
         with col2:
             end_date = st.date_input("إلى تاريخ", value=date.today())
 
-        if st.button("📊 عرض التقرير"):
-            report = get_vat_report(
-                start_date.strftime("%Y-%m-%d") if start_date else None,
-                end_date.strftime("%Y-%m-%d") if end_date else None
-            )
-            glass(f'نسبة الضريبة المعتمدة: <span style="color:{GR};font-weight:800;">{report["rate"] * 100:.0f}%</span>')
-            
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.markdown(kpi_card("🛒", "إجمالي المبيعات", f"{report['total_sales']:,.2f}", BL), unsafe_allow_html=True)
-            with col2:
-                st.markdown(kpi_card("📤", "ضريبة المخرجات", f"{report['output_vat']:,.2f}", RD), unsafe_allow_html=True)
-            with col3:
-                st.markdown(kpi_card("📥", "ضريبة المدخلات", f"{report['input_vat']:,.2f}", OR), unsafe_allow_html=True)
-            with col4:
-                st.markdown(kpi_card("💎", "صافي الضريبة", f"{report['net_vat']:,.2f}", GR), unsafe_allow_html=True)
+        colA, colB = st.columns(2)
+        with colA:
+            if st.button("📊 عرض تقرير الملخص"):
+                report = get_vat_report(
+                    start_date.strftime("%Y-%m-%d") if start_date else None,
+                    end_date.strftime("%Y-%m-%d") if end_date else None
+                )
+                glass(f'نسبة الضريبة المعتمدة: <span style="color:{GR};font-weight:800;">{report["rate"] * 100:.0f}%</span>')
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.markdown(kpi_card("🛒", "إجمالي المبيعات", f"{report['total_sales']:,.2f}", BL), unsafe_allow_html=True)
+                with col2:
+                    st.markdown(kpi_card("📤", "ضريبة المخرجات", f"{report['output_vat']:,.2f}", RD), unsafe_allow_html=True)
+                with col3:
+                    st.markdown(kpi_card("📥", "ضريبة المدخلات", f"{report['input_vat']:,.2f}", OR), unsafe_allow_html=True)
+                with col4:
+                    st.markdown(kpi_card("💎", "صافي الضريبة", f"{report['net_vat']:,.2f}", GR), unsafe_allow_html=True)
+
+        with colB:
+            if st.button("📋 عرض تقرير الإقرار الضريبي"):
+                tax_return = get_tax_return_report(
+                    start_date.strftime("%Y-%m-%d") if start_date else None,
+                    end_date.strftime("%Y-%m-%d") if end_date else None
+                )
+                glass(f'نسبة الضريبة المعتمدة: <span style="color:{GR};font-weight:800;">{tax_return["rate"] * 100:.0f}%</span>')
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.markdown(kpi_card("📤", "إجمالي ضريبة المخرجات", f"{tax_return['total_output_vat']:,.2f}", RD), unsafe_allow_html=True)
+                with col2:
+                    st.markdown(kpi_card("📥", "إجمالي ضريبة المدخلات", f"{tax_return['total_input_vat']:,.2f}", OR), unsafe_allow_html=True)
+                with col3:
+                    st.markdown(kpi_card("💎", "صافي الضريبة المستحقة", f"{tax_return['net_vat']:,.2f}", GR), unsafe_allow_html=True)
+                
+                if tax_return["invoices"]:
+                    st.markdown("---")
+                    st.markdown("**📋 تفاصيل الفواتير**")
+                    df_inv = pd.DataFrame(tax_return["invoices"])
+                    df_inv = df_inv.rename(columns={
+                        "id": "رقم الفاتورة", "type": "النوع", "invoice_date": "التاريخ",
+                        "total": "الإجمالي", "vat_amount": "الضريبة", "vat_rate": "النسبة"
+                    })
+                    df_inv["النوع"] = df_inv["النوع"].apply(lambda x: "بيع" if x == "sale" else "شراء")
+                    df_inv["النسبة"] = df_inv["النسبة"].apply(lambda x: f"{x*100:.0f}%")
+                    st.dataframe(df_inv[["رقم الفاتورة", "النوع", "التاريخ", "الإجمالي", "الضريبة", "النسبة"]], use_container_width=True, hide_index=True)
+                else:
+                    st.info("لا توجد فواتير في الفترة المحددة.")
