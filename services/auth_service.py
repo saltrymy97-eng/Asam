@@ -1,6 +1,6 @@
-# services/auth_service.py - منطق المصادقة وتغيير كلمة المرور (PostgreSQL)
+# services/auth_service.py - منطق المصادقة وتغيير كلمة المرور (SQLite)
+import sqlite3
 import bcrypt
-import psycopg2.extras
 from database import get_connection
 
 def create_admin_if_needed():
@@ -11,7 +11,7 @@ def create_admin_if_needed():
     if c.fetchone()[0] == 0:
         hashed = bcrypt.hashpw("admin5000".encode(), bcrypt.gensalt())
         c.execute(
-            "INSERT INTO users (username, password, full_name, role) VALUES (%s, %s, %s, %s)",
+            "INSERT INTO users (username, password, full_name, role) VALUES (?, ?, ?, ?)",
             ("admin", hashed.decode(), "مدير النظام", "admin")
         )
         conn.commit()
@@ -20,8 +20,9 @@ def create_admin_if_needed():
 def verify_user(username, password):
     """التحقق من صحة بيانات المستخدم"""
     conn = get_connection()
-    c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    c.execute("SELECT password, full_name, role FROM users WHERE username=%s", (username,))
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT password, full_name, role FROM users WHERE username=?", (username,))
     row = c.fetchone()
     conn.close()
     if row:
@@ -35,8 +36,9 @@ def verify_user(username, password):
 def change_password(username, old_password, new_password):
     """تغيير كلمة مرور المستخدم"""
     conn = get_connection()
-    c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-    c.execute("SELECT password FROM users WHERE username=%s", (username,))
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT password FROM users WHERE username=?", (username,))
     row = c.fetchone()
     if not row:
         conn.close()
@@ -51,7 +53,7 @@ def change_password(username, old_password, new_password):
         return False, "كلمة المرور الحالية غير صحيحة"
 
     hashed = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt())
-    c.execute("UPDATE users SET password=%s WHERE username=%s", (hashed.decode(), username))
+    c.execute("UPDATE users SET password=? WHERE username=?", (hashed.decode(), username))
     conn.commit()
     conn.close()
     return True, "تم تغيير كلمة المرور بنجاح"
