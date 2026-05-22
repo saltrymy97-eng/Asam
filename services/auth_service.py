@@ -1,5 +1,6 @@
-# services/auth_service.py - منطق المصادقة وتغيير كلمة المرور
+# services/auth_service.py - منطق المصادقة وتغيير كلمة المرور (PostgreSQL)
 import bcrypt
+import psycopg2.extras
 from database import get_connection
 
 def create_admin_if_needed():
@@ -9,46 +10,48 @@ def create_admin_if_needed():
     c.execute("SELECT COUNT(*) FROM users")
     if c.fetchone()[0] == 0:
         hashed = bcrypt.hashpw("admin5000".encode(), bcrypt.gensalt())
-        c.execute("INSERT INTO users (username, password, full_name, role) VALUES (?, ?, ?, ?)",
-                  ("admin", hashed.decode(), "مدير النظام", "admin"))
+        c.execute(
+            "INSERT INTO users (username, password, full_name, role) VALUES (%s, %s, %s, %s)",
+            ("admin", hashed.decode(), "مدير النظام", "admin")
+        )
         conn.commit()
     conn.close()
 
 def verify_user(username, password):
     """التحقق من صحة بيانات المستخدم"""
     conn = get_connection()
-    c = conn.cursor()
-    c.execute("SELECT password, full_name, role FROM users WHERE username=?", (username,))
+    c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    c.execute("SELECT password, full_name, role FROM users WHERE username=%s", (username,))
     row = c.fetchone()
     conn.close()
     if row:
-        stored_password = row[0]
+        stored_password = row["password"]
         if isinstance(stored_password, str):
             stored_password = stored_password.encode()
         if bcrypt.checkpw(password.encode(), stored_password):
-            return {"username": username, "full_name": row[1], "role": row[2]}
+            return {"username": username, "full_name": row["full_name"], "role": row["role"]}
     return None
 
 def change_password(username, old_password, new_password):
     """تغيير كلمة مرور المستخدم"""
     conn = get_connection()
-    c = conn.cursor()
-    c.execute("SELECT password FROM users WHERE username=?", (username,))
+    c = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    c.execute("SELECT password FROM users WHERE username=%s", (username,))
     row = c.fetchone()
     if not row:
         conn.close()
         return False, "المستخدم غير موجود"
-    
-    stored_password = row[0]
+
+    stored_password = row["password"]
     if isinstance(stored_password, str):
         stored_password = stored_password.encode()
-    
+
     if not bcrypt.checkpw(old_password.encode(), stored_password):
         conn.close()
         return False, "كلمة المرور الحالية غير صحيحة"
-    
+
     hashed = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt())
-    c.execute("UPDATE users SET password=? WHERE username=?", (hashed.decode(), username))
+    c.execute("UPDATE users SET password=%s WHERE username=%s", (hashed.decode(), username))
     conn.commit()
     conn.close()
     return True, "تم تغيير كلمة المرور بنجاح"
