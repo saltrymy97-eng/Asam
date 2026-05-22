@@ -1,8 +1,9 @@
-# services/sales_service.py – منطق أعمال المبيعات (SQLite)
+# services/sales_service.py – منطق أعمال المبيعات (SQLite + VAT)
 import sqlite3
 from datetime import date
 from database import get_connection
 from services.audit_service import log_action
+from services.vat_service import get_vat_rate  # 🆕 استيراد نسبة الضريبة
 
 def get_customers():
     """جلب العملاء"""
@@ -21,19 +22,24 @@ def get_products_for_sale():
     return [dict(p) for p in products]
 
 def create_sale_invoice(customer_id, items, username="admin"):
-    """إنشاء فاتورة مبيعات محمية"""
-    total = sum(item["quantity"] * item["unit_price"] for item in items)
+    """إنشاء فاتورة مبيعات محمية مع حساب الضريبة تلقائياً"""
+    subtotal = sum(item["quantity"] * item["unit_price"] for item in items)
+    vat_rate = get_vat_rate()  # 🆕 جلب نسبة الضريبة الحالية
+    vat_amount = round(subtotal * vat_rate, 2)  # 🆕 حساب قيمة الضريبة
+    total = round(subtotal + vat_amount, 2)  # 🆕 الإجمالي النهائي
+
     conn = get_connection()
-    
+
     try:
         conn.execute("BEGIN")
-        
+
+        # 🆕 إدراج الفاتورة مع أعمدة الضريبة
         cur = conn.execute(
-            "INSERT INTO invoices (type, party_id, invoice_date, total, status) VALUES ('sale', ?, date('now'), ?, 'completed')",
-            (customer_id, total)
+            "INSERT INTO invoices (type, party_id, invoice_date, total, status, vat_rate, vat_amount) VALUES ('sale', ?, date('now'), ?, 'completed', ?, ?)",
+            (customer_id, total, vat_rate, vat_amount)
         )
         invoice_id = cur.lastrowid
-        
+
         for item in items:
             conn.execute(
                 "INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?)",
@@ -47,9 +53,9 @@ def create_sale_invoice(customer_id, items, username="admin"):
                 "UPDATE products SET quantity = quantity - ? WHERE id = ?",
                 (item["quantity"], item["product_id"])
             )
-        
+
         conn.commit()
-        
+
         # جلب اسم العميل
         customer_name = "غير معروف"
         try:
@@ -59,17 +65,17 @@ def create_sale_invoice(customer_id, items, username="admin"):
                 customer_name = row["name"]
         except:
             pass
-        
+
         log_action(
             username=username,
             action="فاتورة مبيعات",
             table_name="invoices",
             record_id=invoice_id,
-            new_value=f"العميل: {customer_name}, الإجمالي: {total:,.2f}"
+            new_value=f"العميل: {customer_name}, الإجمالي: {total:,.2f}, الضريبة: {vat_amount:,.2f}"
         )
-        
+
         return invoice_id, total, None
-        
+
     except Exception as e:
         conn.rollback()
         return None, 0, str(e)
@@ -81,7 +87,7 @@ def get_sale_invoices():
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     invoices = conn.execute("""
-        SELECT i.id, c.name as customer, i.invoice_date, i.total, i.status
+        SELECT i.id, c.name as customer, i.invoice_date, i.total, i.status, i.vat_rate, i.vat_amount
         FROM invoices i
         LEFT JOIN customers c ON i.party_id = c.id
         WHERE i.type = 'sale'
@@ -112,7 +118,7 @@ def add_customer(name, phone, address, username="admin"):
     )
     conn.commit()
     conn.close()
-    
+
     log_action(
         username=username,
         action="إضافة عميل",
