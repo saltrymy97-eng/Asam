@@ -28,7 +28,8 @@ from ui.pdf_reports import show as pdf_show  # تقارير HTML
 from ui.accounting_ui import show as accounting_show  # الحسابات (منفصلة)
 from ui.sales_ui import show as sales_show  # المبيعات (منفصلة)
 from ui.purchases_ui import show as purchases_show  # المشتريات (منفصلة)
-from ui.ai_ui import show as ai_show  # 🆕 المساعد الذكي (منفصل ومطور)
+from ui.ai_ui import show as ai_show  # المساعد الذكي (منفصل ومطور)
+from ui.vat_ui import show as vat_show  # 🆕 ضريبة القيمة المضافة (VAT)
 
 st.set_page_config(page_title="XD ERP", layout="wide")
 
@@ -65,10 +66,11 @@ else:
                 "إغلاق الحسابات",
                 "FIFO المخزون",
                 "كشف الرواتب",
+                "الضريبة",                # 🆕 ضريبة القيمة المضافة
                 "المساعد الذكي",
                 "سجل التدقيق",
                 "نسخ احتياطي",
-                "تقارير HTML",           # 🆕 تم تغيير الاسم
+                "تقارير HTML",
                 "تسجيل الخروج"
             ],
             icons=[
@@ -86,10 +88,11 @@ else:
                 "journal-x",
                 "boxes",
                 "cash-coin",
+                "receipt-cutoff",         # 🆕 أيقونة الضريبة
                 "robot",
                 "shield-check",
                 "cloud-upload",
-                "file-earmark-code",     # 🆕 تم تغيير الأيقونة
+                "file-earmark-code",
                 "box-arrow-right"
             ],
             menu_icon="cast",
@@ -124,13 +127,15 @@ else:
         fifo_show()
     elif selected == "كشف الرواتب":
         payroll_show()
+    elif selected == "الضريبة":           # 🆕
+        vat_show()
     elif selected == "المساعد الذكي":
         ai_show()
     elif selected == "سجل التدقيق":
         audit_show()
     elif selected == "نسخ احتياطي":
         backup_show()
-    elif selected == "تقارير HTML":       # 🆕 تم تغيير الاسم
+    elif selected == "تقارير HTML":
         pdf_show()
     elif selected == "تسجيل الخروج":
         logout_session()
