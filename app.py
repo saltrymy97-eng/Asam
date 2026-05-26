@@ -30,7 +30,8 @@ from ui.sales_ui import show as sales_show  # المبيعات (منفصلة)
 from ui.purchases_ui import show as purchases_show  # المشتريات (منفصلة)
 from ui.ai_ui import show as ai_show  # المساعد الذكي (منفصل ومطور)
 from ui.vat_ui import show as vat_show  # ضريبة القيمة المضافة (VAT)
-from ui.crm_ui import show as crm_show  # 🆕 إدارة علاقات العملاء (CRM)
+from ui.crm_ui import show as crm_show  # إدارة علاقات العملاء (CRM)
+from ui.assets_ui import show as assets_show  # 🆕 الأصول الثابتة والإهلاكات
 
 st.set_page_config(page_title="XD ERP", layout="wide")
 
@@ -60,7 +61,8 @@ else:
                 "مرتجعات البضاعة",
                 "الحسابات",
                 "الموارد البشرية",
-                "إدارة العملاء",          # 🆕 CRM
+                "إدارة العملاء",          # CRM
+                "الأصول الثابتة",         # 🆕 الأصول الثابتة
                 "شجرة الحسابات",
                 "القوائم المالية",
                 "الصلاحيات",
@@ -83,7 +85,8 @@ else:
                 "arrow-repeat",
                 "calculator",
                 "people",
-                "people-fill",            # 🆕 أيقونة CRM
+                "people-fill",            # أيقونة CRM
+                "building",               # 🆕 أيقونة الأصول الثابتة
                 "diagram-3",
                 "file-earmark-bar-graph",
                 "shield-lock",
@@ -116,8 +119,10 @@ else:
         accounting_show()
     elif selected == "الموارد البشرية":
         hr_show()
-    elif selected == "إدارة العملاء":     # 🆕 CRM
+    elif selected == "إدارة العملاء":     # CRM
         crm_show()
+    elif selected == "الأصول الثابتة":    # 🆕 الأصول الثابتة
+        assets_show()
     elif selected == "شجرة الحسابات":
         chart_show()
     elif selected == "القوائم المالية":
