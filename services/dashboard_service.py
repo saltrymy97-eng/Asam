@@ -1,6 +1,7 @@
-# services/dashboard_service.py – منطق لوحة المعلومات والمؤشرات (SQLite)
+# services/dashboard_service.py – منطق لوحة المعلومات والمؤشرات (مُحدث مع الإشعارات الفورية)
 import sqlite3
 from database import get_connection
+from datetime import date, timedelta
 
 def get_kpi_cards():
     """جلب بيانات البطاقات الإحصائية"""
@@ -19,6 +20,28 @@ def get_kpi_cards():
     expenses = conn.execute("SELECT COALESCE(SUM(debit)-SUM(credit),0) FROM journal_lines WHERE account_name LIKE '5%'").fetchone()[0]
     net_income = revenue - expenses
 
+    # 🆕 إحصائيات اليوم
+    today = date.today().strftime("%Y-%m-%d")
+    today_sales = conn.execute("SELECT COALESCE(SUM(total),0) FROM invoices WHERE type='sale' AND invoice_date=?", (today,)).fetchone()[0]
+    today_purchases = conn.execute("SELECT COALESCE(SUM(total),0) FROM invoices WHERE type='purchase' AND invoice_date=?", (today,)).fetchone()[0]
+    today_invoices = conn.execute("SELECT COUNT(*) FROM invoices WHERE invoice_date=?", (today,)).fetchone()[0]
+
+    # 🆕 نمو الإيرادات (مقارنة بالشهر السابق)
+    this_month = date.today().strftime("%Y-%m")
+    last_month = (date.today().replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+    
+    this_month_sales = conn.execute("""
+        SELECT COALESCE(SUM(total),0) FROM invoices 
+        WHERE type='sale' AND status='completed' AND strftime('%Y-%m', invoice_date)=?
+    """, (this_month,)).fetchone()[0]
+    
+    last_month_sales = conn.execute("""
+        SELECT COALESCE(SUM(total),0) FROM invoices 
+        WHERE type='sale' AND status='completed' AND strftime('%Y-%m', invoice_date)=?
+    """, (last_month,)).fetchone()[0]
+    
+    growth = ((this_month_sales - last_month_sales) / last_month_sales * 100) if last_month_sales > 0 else 0
+
     conn.close()
 
     return {
@@ -31,7 +54,117 @@ def get_kpi_cards():
         "employees_count": employees_count,
         "revenue": revenue,
         "expenses": expenses,
-        "net_income": net_income
+        "net_income": net_income,
+        "today_sales": today_sales,
+        "today_purchases": today_purchases,
+        "today_invoices": today_invoices,
+        "growth": growth
+    }
+
+def get_alerts():
+    """🆕 جلب التنبيهات والإشعارات الفورية"""
+    alerts = []
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    today = date.today().strftime("%Y-%m-%d")
+
+    # 1. منتجات منخفضة المخزون (أقل من حد إعادة الطلب)
+    low_stock = conn.execute(
+        "SELECT COUNT(*) as cnt FROM products WHERE quantity < reorder_level"
+    ).fetchone()["cnt"]
+    if low_stock > 0:
+        alerts.append({
+            "type": "warning",
+            "icon": "📦",
+            "title": "منتجات منخفضة المخزون",
+            "message": f"يوجد {low_stock} منتجات تحت الحد الأدنى",
+            "time": "الآن"
+        })
+
+    # 2. فواتير اليوم
+    today_invoices = conn.execute(
+        "SELECT COUNT(*) as cnt FROM invoices WHERE invoice_date=?", (today,)
+    ).fetchone()["cnt"]
+    if today_invoices > 0:
+        today_sales = conn.execute(
+            "SELECT COALESCE(SUM(total),0) FROM invoices WHERE type='sale' AND invoice_date=?", (today,)
+        ).fetchone()[0]
+        alerts.append({
+            "type": "info",
+            "icon": "🧾",
+            "title": "فواتير اليوم",
+            "message": f"{today_invoices} فاتورة بقيمة {today_sales:,.0f}",
+            "time": "اليوم"
+        })
+
+    # 3. موظفين بدون راتب هذا الشهر
+    current_month = date.today().strftime("%Y-%m")
+    unpaid = conn.execute("""
+        SELECT COUNT(*) as cnt FROM employees e 
+        WHERE e.id NOT IN (
+            SELECT employee_id FROM payroll_runs WHERE month=?
+        )
+    """, (current_month,)).fetchone()["cnt"]
+    if unpaid > 0:
+        alerts.append({
+            "type": "danger",
+            "icon": "⚠️",
+            "title": "رواتب متأخرة",
+            "message": f"{unpaid} موظفين لم يستلموا رواتبهم هذا الشهر",
+            "time": "الشهر الحالي"
+        })
+
+    # 4. عملاء محتملين جدد (CRM)
+    try:
+        new_leads = conn.execute(
+            "SELECT COUNT(*) as cnt FROM crm_leads WHERE status='جديد'"
+        ).fetchone()["cnt"]
+        if new_leads > 0:
+            alerts.append({
+                "type": "success",
+                "icon": "🤝",
+                "title": "عملاء محتملين جدد",
+                "message": f"{new_leads} عملاء جدد ينتظرون المتابعة",
+                "time": "الآن"
+            })
+    except:
+        pass
+
+    # 5. فترات مالية تحتاج إغلاق
+    last_month_str = (date.today().replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+    is_closed = conn.execute(
+        "SELECT COUNT(*) FROM closed_periods WHERE period_type='month' AND period_value=?",
+        (last_month_str,)
+    ).fetchone()[0]
+    if not is_closed:
+        alerts.append({
+            "type": "warning",
+            "icon": "📅",
+            "title": "فترة غير مغلقة",
+            "message": f"الشهر الماضي {last_month_str} لم يُغلق بعد",
+            "time": "الشهر الماضي"
+        })
+
+    conn.close()
+    return alerts
+
+def get_quick_stats():
+    """🆕 إحصائيات سريعة للعرض في أعلى لوحة المعلومات"""
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    today = date.today().strftime("%Y-%m-%d")
+    
+    today_sales = conn.execute("SELECT COALESCE(SUM(total),0) FROM invoices WHERE type='sale' AND invoice_date=?", (today,)).fetchone()[0]
+    today_purchases = conn.execute("SELECT COALESCE(SUM(total),0) FROM invoices WHERE type='purchase' AND invoice_date=?", (today,)).fetchone()[0]
+    low_stock = conn.execute("SELECT COUNT(*) FROM products WHERE quantity < reorder_level").fetchone()[0]
+    total_customers = conn.execute("SELECT COUNT(*) FROM customers").fetchone()[0]
+    
+    conn.close()
+    return {
+        "today_sales": today_sales,
+        "today_purchases": today_purchases,
+        "low_stock": low_stock,
+        "total_customers": total_customers
     }
 
 def get_inventory_by_category():
