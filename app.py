@@ -29,7 +29,8 @@ from ui.accounting_ui import show as accounting_show  # الحسابات (منف
 from ui.sales_ui import show as sales_show  # المبيعات (منفصلة)
 from ui.purchases_ui import show as purchases_show  # المشتريات (منفصلة)
 from ui.ai_ui import show as ai_show  # المساعد الذكي (منفصل ومطور)
-from ui.vat_ui import show as vat_show  # 🆕 ضريبة القيمة المضافة (VAT)
+from ui.vat_ui import show as vat_show  # ضريبة القيمة المضافة (VAT)
+from ui.crm_ui import show as crm_show  # 🆕 إدارة علاقات العملاء (CRM)
 
 st.set_page_config(page_title="XD ERP", layout="wide")
 
@@ -59,6 +60,7 @@ else:
                 "مرتجعات البضاعة",
                 "الحسابات",
                 "الموارد البشرية",
+                "إدارة العملاء",          # 🆕 CRM
                 "شجرة الحسابات",
                 "القوائم المالية",
                 "الصلاحيات",
@@ -66,7 +68,7 @@ else:
                 "إغلاق الحسابات",
                 "FIFO المخزون",
                 "كشف الرواتب",
-                "الضريبة",                # 🆕 ضريبة القيمة المضافة
+                "الضريبة",
                 "المساعد الذكي",
                 "سجل التدقيق",
                 "نسخ احتياطي",
@@ -81,6 +83,7 @@ else:
                 "arrow-repeat",
                 "calculator",
                 "people",
+                "people-fill",            # 🆕 أيقونة CRM
                 "diagram-3",
                 "file-earmark-bar-graph",
                 "shield-lock",
@@ -88,7 +91,7 @@ else:
                 "journal-x",
                 "boxes",
                 "cash-coin",
-                "receipt-cutoff",         # 🆕 أيقونة الضريبة
+                "receipt-cutoff",
                 "robot",
                 "shield-check",
                 "cloud-upload",
@@ -113,6 +116,8 @@ else:
         accounting_show()
     elif selected == "الموارد البشرية":
         hr_show()
+    elif selected == "إدارة العملاء":     # 🆕 CRM
+        crm_show()
     elif selected == "شجرة الحسابات":
         chart_show()
     elif selected == "القوائم المالية":
@@ -127,7 +132,7 @@ else:
         fifo_show()
     elif selected == "كشف الرواتب":
         payroll_show()
-    elif selected == "الضريبة":           # 🆕
+    elif selected == "الضريبة":
         vat_show()
     elif selected == "المساعد الذكي":
         ai_show()
