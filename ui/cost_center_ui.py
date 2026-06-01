@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from services import cost_center_service as ccs
+from services import closing_service  # 🆕 لإقفال المراكز
 
 # ================== CSS زجاجي ==================
 def glass_style():
@@ -77,11 +78,12 @@ def show():
     """, unsafe_allow_html=True)
     
     # ================ التبويبات ================
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📋 إدارة المراكز",
         "📊 توزيع المعاملات",
         "📈 تحليل وتقارير",
-        "💰 الموازنات التقديرية"
+        "💰 الموازنات التقديرية",
+        "🔒 إقفال المراكز"
     ])
     
     # ------------------------ تبويب 1: إدارة المراكز ------------------------
@@ -288,19 +290,27 @@ def show():
         centers = ccs.get_all_cost_centers(active_only=True)
         if centers:
             center_id = st.selectbox("المركز", options=[c['id'] for c in centers],
-                                     format_func=lambda x: next(c['name'] for c in centers if c['id']==x))
-            fiscal_year = st.number_input("السنة المالية", min_value=2020, max_value=2030, value=2025)
+                                     format_func=lambda x: next(c['name'] for c in centers if c['id']==x),
+                                     key="budget_center")
+            fiscal_year = st.number_input("السنة المالية", min_value=2020, max_value=2030, value=2025, key="budget_year")
             if st.button("🔍 عرض الموازنة والانحرافات", use_container_width=True):
                 data = ccs.get_budget_variance(center_id, fiscal_year)
-                if data:
-                    df = pd.DataFrame(data)
-                    df.columns = ['الحساب', 'الموازنة', 'الفعلي']
-                    df['الانحراف'] = df['الفعلي'] - df['الموازنة']
-                    st.dataframe(df.style.applymap(lambda x: 'color: red' if x < 0 else 'color: green', subset=['الانحراف']), use_container_width=True)
+                if data and data.get('details'):
+                    df = pd.DataFrame(data['details'])
+                    # تنسيق الأعمدة
+                    df_display = df[['account_name', 'budget', 'actual', 'variance', 'variance_pct']]
+                    df_display.columns = ['الحساب', 'الموازنة', 'الفعلي', 'الانحراف', 'نسبة الانحراف %']
+                    st.dataframe(df_display.style.format({
+                        'الموازنة': '{:,.2f}',
+                        'الفعلي': '{:,.2f}',
+                        'الانحراف': '{:,.2f}',
+                        'نسبة الانحراف %': '{:.1f}%'
+                    }), use_container_width=True)
                     
                     # رسم بياني
-                    fig = px.bar(df, x='الحساب', y=['الموازنة', 'الفعلي'], barmode='group',
-                                 color_discrete_map={'الموازنة': '#a78bfa', 'الفعلي': '#60a5fa'})
+                    fig = px.bar(df, x='account_name', y=['budget', 'actual'], barmode='group',
+                                 color_discrete_map={'budget': '#a78bfa', 'actual': '#60a5fa'},
+                                 labels={'value': 'المبلغ', 'variable': 'النوع'})
                     fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='white')
                     st.plotly_chart(fig, use_container_width=True)
                 else:
@@ -314,14 +324,77 @@ def show():
                 accounts = conn.execute("SELECT id, name FROM accounts ORDER BY name").fetchall()
                 conn.close()
                 account_id = st.selectbox("الحساب", options=[a['id'] for a in accounts],
-                                          format_func=lambda x: next(a['name'] for a in accounts if a['id']==x))
-                amount = st.number_input("المبلغ المخطط", min_value=0.0, step=100.0)
+                                          format_func=lambda x: next(a['name'] for a in accounts if a['id']==x),
+                                          key="budget_account")
+                amount = st.number_input("المبلغ المخطط", min_value=0.0, step=100.0, key="budget_amount")
                 if st.form_submit_button("💾 حفظ الموازنة"):
                     ccs.set_budget(center_id, account_id, fiscal_year, amount)
                     st.success("تم حفظ الموازنة")
                     st.rerun()
         else:
             st.info("لا توجد مراكز")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # ------------------------ تبويب 5: إقفال المراكز ------------------------
+    with tab5:
+        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+        st.subheader("🔒 إقفال مركز تكلفة لسنة مالية")
+        st.markdown("""
+        هذه العملية تنشئ قيد إغلاق لمركز التكلفة المحدد، 
+        حيث يتم تصفير أرصدة الإيرادات والمصروفات المرتبطة به 
+        وتوجيه صافي الدخل إلى حساب الأرباح المحتجزة.
+        """)
+        
+        centers = ccs.get_all_cost_centers(active_only=True)
+        if not centers:
+            st.info("لا توجد مراكز تكلفة نشطة")
+        else:
+            # اختيار المركز
+            center_options = {c['id']: f"{c['code']} - {c['name']}" for c in centers}
+            closing_center_id = st.selectbox(
+                "اختر المركز لإقفاله",
+                options=list(center_options.keys()),
+                format_func=lambda x: center_options[x],
+                key="closing_center"
+            )
+            
+            # السنة المالية
+            closing_year = st.number_input(
+                "السنة المالية للإقفال",
+                min_value=2020,
+                max_value=2030,
+                value=2025,
+                key="closing_year"
+            )
+            
+            # كود حساب الأرباح المحتجزة
+            retained_earnings = st.text_input(
+                "كود حساب الأرباح المحتجزة",
+                value="310000",
+                help="الكود الافتراضي للأرباح المحتجزة هو 310000"
+            )
+            
+            # زر التنفيذ مع تأكيد
+            if st.button("🔒 تنفيذ إقفال المركز", type="primary", use_container_width=True):
+                with st.spinner("جارٍ إنشاء قيد الإقفال..."):
+                    success, net_income, error = closing_service.create_cost_center_closing_entry(
+                        year=closing_year,
+                        cost_center_id=closing_center_id,
+                        retained_earnings_code=retained_earnings
+                    )
+                    
+                if success:
+                    st.success(f"""
+                    ✅ تم إقفال المركز بنجاح!
+                    
+                    **صافي الدخل:** {net_income:,.2f}
+                    **السنة المالية:** {closing_year}
+                    
+                    تم إنشاء قيد إغلاق خاص بالمركز وتم توزيع جميع أسطره على المركز المحدد.
+                    """)
+                    st.balloons()
+                else:
+                    st.error(f"❌ فشل الإقفال: {error}")
         st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
