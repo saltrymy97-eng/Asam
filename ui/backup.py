@@ -1,4 +1,4 @@
-# ui/backup.py - النسخ الاحتياطي (واجهة زجاجية فخمة)
+# ui/backup.py - النسخ الاحتياطي (واجهة زجاجية فخمة + تحميل النسخ)
 import streamlit as st
 import pandas as pd
 import os
@@ -86,15 +86,35 @@ def show():
         })
         st.dataframe(df[["رقم", "اسم الملف", "الحجم (KB)", "تاريخ الإنشاء", "النوع"]], use_container_width=True, hide_index=True)
 
+        # ---------- تحميل نسخة على الجهاز ----------
+        st.markdown("---")
+        st.markdown(f"<h3 style='color:{TEXT_PRIMARY};'>📥 تحميل نسخة على الجهاز</h3>", unsafe_allow_html=True)
+        
+        backup_files = [b['filename'] for b in backups]
+        selected_download = st.selectbox("اختر نسخة للتحميل", backup_files, key="download_select")
+        
+        filepath = os.path.join(BACKUP_DIR, selected_download)
+        if os.path.exists(filepath):
+            with open(filepath, "rb") as f:
+                st.download_button(
+                    label=f"📥 تحميل {selected_download}",
+                    data=f,
+                    file_name=selected_download,
+                    mime="application/octet-stream",
+                    key="download_btn"
+                )
+        else:
+            st.error("الملف غير موجود على القرص. ربما تم حذفه.")
+
+        # ---------- استعادة نسخة احتياطية ----------
         st.markdown("---")
         st.markdown(f"<h3 style='color:{TEXT_PRIMARY};'>🔄 استعادة نسخة احتياطية</h3>", unsafe_allow_html=True)
         
-        backup_files = [b['filename'] for b in backups]
-        selected_backup = st.selectbox("اختر نسخة للاستعادة", backup_files)
+        selected_backup = st.selectbox("اختر نسخة للاستعادة", backup_files, key="restore_select")
         
         if st.button("⚠️ استعادة هذه النسخة", type="secondary"):
-            if st.warning("هل أنت متأكد؟ سيتم استبدال قاعدة البيانات الحالية بالنسخة المحددة."):
-                pass
+            # إجراء الاستعادة يتطلب تأكيداً
+            st.warning("سيتم استبدال قاعدة البيانات الحالية. هل أنت متأكد؟")
             if st.button("نعم، استعد النسخة", key="confirm_restore"):
                 success = restore_backup(selected_backup)
                 if success:
