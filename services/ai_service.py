@@ -1,12 +1,30 @@
-# services/ai_service.py – منطق المساعد الذكي المطور (فهم عميق للأعمال + تحليل مراكز التكلفة)
+# services/ai_service.py – المساعد الذكي (AI Data Layer + Cache + Memory + Validation)
 import sqlite3
-from datetime import datetime
+import json
+from datetime import datetime, timedelta
 from groq import Groq
 import streamlit as st
-import json
 
 DB_PATH = "erp.db"
 
+# ========== طبقة تخزين مؤقت بسيطة (Cache Layer) ==========
+_cache = {}          # { key: (data, timestamp) }
+CACHE_TTL_SECONDS = 300  # 5 دقائق
+
+def _cache_get(key):
+    entry = _cache.get(key)
+    if entry:
+        data, ts = entry
+        if (datetime.now() - ts).total_seconds() < CACHE_TTL_SECONDS:
+            return data
+        else:
+            del _cache[key]
+    return None
+
+def _cache_set(key, data):
+    _cache[key] = (data, datetime.now())
+
+# ========== اتصال قاعدة البيانات ==========
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -79,72 +97,196 @@ def get_chat_sessions():
     conn.close()
     return [dict(s) for s in sessions]
 
-def get_comprehensive_data():
-    """جمع بيانات شاملة وعميقة عن النظام"""
+# ===================== ذاكرة المحادثة (Memory Compression) =====================
+def compress_chat_memory(session_id, model="llama-3.3-70b-versatile"):
+    """تلخيص آخر محادثة إلى جملة سياقية واحدة لتوفير الذاكرة"""
+    history = get_chat_history(session_id, limit=10)
+    if not history:
+        return ""
+    # ترتيب تصاعدي حسب الزمن لتكوين حوار مفهوم
+    history_sorted = sorted(history, key=lambda x: x['timestamp'])
+    dialogue = "\n".join([f"{h['role']}: {h['content']}" for h in history_sorted])
+    prompt = f"""لخص الحوار التالي في جملة واحدة بالعربية تصف الموضوع الرئيسي والنتيجة:
+{dialogue}
+الملخص:"""
+    try:
+        return query_groq("أنت مساعد تلخيص محترف.", prompt, model=model, max_tokens=150)
+    except Exception:
+        return "ملخص غير متاح"
+
+# ===================== التحقق من صحة البيانات (Validation) =====================
+def validate_financial_snapshot(snap):
+    """التحقق من القيم المالية وإرجاع رسائل تحذير إن وجدت"""
+    warnings = []
+    if snap['revenue'] < 0:
+        warnings.append("الإيرادات سالبة – تحقق من ترحيل حسابات الإيرادات.")
+    if snap['assets'] <= 0:
+        warnings.append("الأصول صفر أو سالبة – قد تكون القيود غير مكتملة.")
+    if snap['profit_margin'] > 80:
+        warnings.append("هامش ربح مرتفع جداً (>80%) – تأكد من دقة بيانات المصروفات.")
+    return warnings
+
+# ===================== AI Data Layer (Snapshots) =====================
+def get_financial_snapshot():
+    cache_key = "financial_snapshot"
+    cached = _cache_get(cache_key)
+    if cached:
+        return cached
     conn = get_conn()
-    
-    # المؤشرات المالية الأساسية
     revenue = conn.execute("SELECT COALESCE(SUM(credit)-SUM(debit),0) FROM journal_lines WHERE account_name LIKE '4%'").fetchone()[0]
     expenses = conn.execute("SELECT COALESCE(SUM(debit)-SUM(credit),0) FROM journal_lines WHERE account_name LIKE '5%'").fetchone()[0]
     assets = conn.execute("SELECT COALESCE(SUM(debit)-SUM(credit),0) FROM journal_lines WHERE account_name LIKE '1%'").fetchone()[0]
     liabilities = conn.execute("SELECT COALESCE(SUM(credit)-SUM(debit),0) FROM journal_lines WHERE account_name LIKE '2%'").fetchone()[0]
     equity = conn.execute("SELECT COALESCE(SUM(credit)-SUM(debit),0) FROM journal_lines WHERE account_name LIKE '3%'").fetchone()[0]
-    
-    # المخزون والمنتجات
-    products = [dict(p) for p in conn.execute("SELECT name, quantity, reorder_level, selling_price, purchase_price FROM products").fetchall()]
-    low_stock = [dict(p) for p in conn.execute("SELECT name, quantity FROM products WHERE quantity < reorder_level").fetchall()]
-    
-    # العملاء والموردين
-    customers = [dict(c) for c in conn.execute("SELECT name, phone FROM customers").fetchall()]
-    suppliers = [dict(s) for s in conn.execute("SELECT name, phone FROM suppliers").fetchall()]
-    
-    # الموظفين والرواتب
-    employees = [dict(e) for e in conn.execute("""
-        SELECT e.name, e.position, COALESCE(es.basic_salary,0) as basic_salary,
-               COALESCE(es.housing_allowance,0) as housing, COALESCE(es.transport_allowance,0) as transport
-        FROM employees e LEFT JOIN employee_salaries es ON e.id = es.employee_id
-    """).fetchall()]
-    
-    # أحدث الفواتير
-    recent_invoices = [dict(inv) for inv in conn.execute("""
-        SELECT i.type, i.total, i.invoice_date, 
-               CASE WHEN i.type='sale' THEN c.name ELSE s.name END as party
-        FROM invoices i
-        LEFT JOIN customers c ON i.party_id = c.id AND i.type='sale'
-        LEFT JOIN suppliers s ON i.party_id = s.id AND i.type='purchase'
-        ORDER BY i.id DESC LIMIT 10
-    """).fetchall()]
-    
-    # المبيعات الشهرية
-    monthly_sales = [dict(m) for m in conn.execute("""
-        SELECT strftime('%Y-%m', invoice_date) as month, SUM(total) as total
-        FROM invoices WHERE type='sale' AND status='completed'
-        GROUP BY month ORDER BY month DESC LIMIT 12
-    """).fetchall()]
-    
-    # النسب المالية
-    profit_margin = (revenue - expenses) / revenue * 100 if revenue > 0 else 0
-    debt_ratio = liabilities / assets * 100 if assets > 0 else 0
-    roa = (revenue - expenses) / assets * 100 if assets > 0 else 0
-    
     conn.close()
-    
-    return {
-        "revenue": revenue, "expenses": expenses, "net_income": revenue - expenses,
-        "assets": assets, "liabilities": liabilities, "equity": equity,
-        "products": products, "low_stock": low_stock,
-        "customers": customers, "suppliers": suppliers,
-        "employees": employees, "recent_invoices": recent_invoices,
-        "monthly_sales": monthly_sales,
-        "profit_margin": profit_margin, "debt_ratio": debt_ratio, "roa": roa
+    net_income = revenue - expenses
+    profit_margin = (net_income / revenue * 100) if revenue > 0 else 0
+    debt_ratio = (liabilities / assets * 100) if assets > 0 else 0
+    roa = (net_income / assets * 100) if assets > 0 else 0
+    snap = {
+        "revenue": round(revenue, 2),
+        "expenses": round(expenses, 2),
+        "net_income": round(net_income, 2),
+        "assets": round(assets, 2),
+        "liabilities": round(liabilities, 2),
+        "equity": round(equity, 2),
+        "profit_margin": round(profit_margin, 1),
+        "debt_ratio": round(debt_ratio, 1),
+        "roa": round(roa, 1),
+        "warnings": validate_financial_snapshot({
+            "revenue": revenue, "expenses": expenses, "net_income": net_income,
+            "assets": assets, "liabilities": liabilities, "equity": equity,
+            "profit_margin": profit_margin, "debt_ratio": debt_ratio, "roa": roa
+        })
     }
+    _cache_set(cache_key, snap)
+    return snap
+
+def get_inventory_snapshot():
+    cache_key = "inventory_snapshot"
+    cached = _cache_get(cache_key)
+    if cached:
+        return cached
+    conn = get_conn()
+    total_products = conn.execute("SELECT COUNT(*) FROM products").fetchone()[0]
+    low_stock = [dict(r) for r in conn.execute(
+        "SELECT name, quantity, reorder_level FROM products WHERE quantity < reorder_level LIMIT 5"
+    ).fetchall()]
+    top_products = [dict(r) for r in conn.execute(
+        "SELECT name, quantity, selling_price FROM products ORDER BY quantity DESC LIMIT 5"
+    ).fetchall()]
+    conn.close()
+    snap = {
+        "total_products": total_products,
+        "low_stock_count": len(low_stock),
+        "low_stock_items": low_stock,
+        "top_products": top_products
+    }
+    _cache_set(cache_key, snap)
+    return snap
+
+def get_business_snapshot():
+    cache_key = "business_snapshot"
+    cached = _cache_get(cache_key)
+    if cached:
+        return cached
+    conn = get_conn()
+    top_customers = [dict(r) for r in conn.execute("""
+        SELECT c.name, COUNT(i.id) as invoice_count, SUM(i.total) as total
+        FROM invoices i JOIN customers c ON i.party_id = c.id
+        WHERE i.type='sale' AND i.status='completed'
+        GROUP BY c.id ORDER BY total DESC LIMIT 5
+    """).fetchall()]
+    top_suppliers = [dict(r) for r in conn.execute("""
+        SELECT s.name, COUNT(i.id) as invoice_count, SUM(i.total) as total
+        FROM invoices i JOIN suppliers s ON i.party_id = s.id
+        WHERE i.type='purchase' AND i.status='completed'
+        GROUP BY s.id ORDER BY total DESC LIMIT 5
+    """).fetchall()]
+    total_customers = conn.execute("SELECT COUNT(*) FROM customers").fetchone()[0]
+    total_suppliers = conn.execute("SELECT COUNT(*) FROM suppliers").fetchone()[0]
+    conn.close()
+    snap = {
+        "total_customers": total_customers,
+        "total_suppliers": total_suppliers,
+        "top_customers": top_customers,
+        "top_suppliers": top_suppliers
+    }
+    _cache_set(cache_key, snap)
+    return snap
+
+def get_hr_snapshot():
+    cache_key = "hr_snapshot"
+    cached = _cache_get(cache_key)
+    if cached:
+        return cached
+    conn = get_conn()
+    total_employees = conn.execute("SELECT COUNT(*) FROM employees").fetchone()[0]
+    total_salary = conn.execute("SELECT COALESCE(SUM(basic_salary),0) FROM employee_salaries").fetchone()[0]
+    conn.close()
+    snap = {
+        "total_employees": total_employees,
+        "total_monthly_salary": round(total_salary, 2)
+    }
+    _cache_set(cache_key, snap)
+    return snap
+
+def get_trend_snapshot():
+    cache_key = "trend_snapshot"
+    cached = _cache_get(cache_key)
+    if cached:
+        return cached
+    conn = get_conn()
+    trends = conn.execute("""
+        SELECT strftime('%Y-%m', invoice_date) as month,
+               SUM(CASE WHEN type='sale' THEN total ELSE 0 END) as sales,
+               SUM(CASE WHEN type='purchase' THEN total ELSE 0 END) as purchases
+        FROM invoices WHERE status='completed'
+        GROUP BY month ORDER BY month DESC LIMIT 6
+    """).fetchall()
+    conn.close()
+    snap = [dict(t) for t in trends]
+    _cache_set(cache_key, snap)
+    return snap
+
+def get_cost_center_snapshot():
+    cache_key = "cost_center_snapshot"
+    cached = _cache_get(cache_key)
+    if cached:
+        return cached
+    from services import cost_center_service as ccs
+    centers = ccs.get_all_cost_centers(active_only=True)
+    summary = []
+    for c in centers:
+        balance = ccs.get_cost_center_balance(c['id'])
+        summary.append({
+            "code": c['code'],
+            "name": c['name'],
+            "net_balance": balance['net']
+        })
+    _cache_set(cache_key, summary)
+    return summary
+
+def build_ai_context(include_cost_centers=True):
+    """تجميع جميع الملخصات في كائن واحد (مع تحديث اختياري لذاكرة المحادثة)"""
+    ctx = {
+        "financial": get_financial_snapshot(),
+        "inventory": get_inventory_snapshot(),
+        "business": get_business_snapshot(),
+        "hr": get_hr_snapshot(),
+        "trends": get_trend_snapshot()
+    }
+    if include_cost_centers:
+        ctx["cost_centers"] = get_cost_center_snapshot()
+    return ctx
+
+# ===================== دوال عامة (متوافقة مع ui/ai_ui.py) =====================
+def get_comprehensive_data():
+    return build_ai_context()
 
 def get_inventory_data():
-    conn = get_conn()
-    low = [dict(r) for r in conn.execute("SELECT name, quantity, reorder_level FROM products WHERE quantity < reorder_level").fetchall()]
-    allp = [dict(r) for r in conn.execute("SELECT name, quantity, reorder_level, selling_price FROM products").fetchall()]
-    conn.close()
-    return low, allp
+    snapshot = get_inventory_snapshot()
+    return snapshot['low_stock_items'], snapshot['top_products']
 
 def get_employee_info(name):
     conn = get_conn()
@@ -169,25 +311,16 @@ def get_all_accounts():
     return accounts
 
 def get_financial_ratios():
-    data = get_comprehensive_data()
+    fin = get_financial_snapshot()
     return {
-        "هامش الربح": f"{data['profit_margin']:.1f}%",
-        "نسبة المديونية": f"{data['debt_ratio']:.1f}%",
-        "العائد على الأصول": f"{data['roa']:.1f}%",
-        "صافي الدخل": f"{data['net_income']:,.2f}"
+        "هامش الربح": f"{fin['profit_margin']:.1f}%",
+        "نسبة المديونية": f"{fin['debt_ratio']:.1f}%",
+        "العائد على الأصول": f"{fin['roa']:.1f}%",
+        "صافي الدخل": f"{fin['net_income']:,.2f}"
     }
 
 def get_trend_analysis():
-    conn = get_conn()
-    trends = conn.execute("""
-        SELECT strftime('%Y-%m', invoice_date) as month,
-               SUM(CASE WHEN type='sale' THEN total ELSE 0 END) as sales,
-               SUM(CASE WHEN type='purchase' THEN total ELSE 0 END) as purchases
-        FROM invoices WHERE status='completed'
-        GROUP BY month ORDER BY month DESC LIMIT 6
-    """).fetchall()
-    conn.close()
-    return [dict(t) for t in trends]
+    return get_trend_snapshot()
 
 def get_top_customers(limit=5):
     conn = get_conn()
@@ -211,68 +344,32 @@ def get_top_suppliers(limit=5):
     conn.close()
     return [dict(s) for s in suppliers]
 
-# ===================== 🆕 دوال تحليل مراكز التكلفة =====================
-
+# ===================== دوال مراكز التكلفة =====================
 def get_cost_centers_summary_for_ai():
-    """
-    جمع ملخص لجميع مراكز التكلفة مع بياناتها المالية للذكاء الاصطناعي
-    """
-    from services import cost_center_service as ccs
-    
-    centers = ccs.get_all_cost_centers(active_only=True)
-    if not centers:
-        return None
-    
-    summary = []
-    for center in centers:
-        center_id = center['id']
-        balance = ccs.get_cost_center_balance(center_id)
-        # نجلب أيضاً قائمة الدخل لآخر سنة تقريباً
-        income_stmt = ccs.get_cost_center_income_statement(center_id, '2020-01-01', datetime.now().strftime('%Y-%m-%d'))
-        summary.append({
-            'code': center['code'],
-            'name': center['name'],
-            'net_balance': balance['net'],
-            'income': income_stmt['income'],
-            'expenses': income_stmt['expenses'],
-            'net_profit': income_stmt['net_profit']
-        })
-    return summary
+    return get_cost_center_snapshot()
 
 def analyze_cost_center_performance(center_id):
-    """
-    تحليل أداء مركز تكلفة محدد باستخدام الذكاء الاصطناعي
-    """
     from services import cost_center_service as ccs
-    
     center = ccs.get_cost_center_by_id(center_id)
     if not center:
         return "مركز التكلفة غير موجود"
-    
-    # جمع البيانات
     balance = ccs.get_cost_center_balance(center_id)
     income_stmt = ccs.get_cost_center_income_statement(center_id, '2020-01-01', datetime.now().strftime('%Y-%m-%d'))
     transactions = ccs.get_center_transactions(center_id, limit=20)
-    
-    # تجهيز النص للذكاء الاصطناعي
     data_text = f"""
     مركز التكلفة: {center['code']} - {center['name']}
     الحالة: {'نشط' if center['is_active'] else 'غير نشط'}
-    
     الملخص المالي:
     - إجمالي المدين: {balance['total_debit']:,.2f}
     - إجمالي الدائن: {balance['total_credit']:,.2f}
     - صافي التدفق: {balance['net']:,.2f}
-    
     قائمة الدخل (منذ 2020):
     - الإيرادات: {income_stmt['income']:,.2f}
     - المصروفات: {income_stmt['expenses']:,.2f}
     - صافي الربح/الخسارة: {income_stmt['net_profit']:,.2f}
-    
     آخر 20 معاملة:
     {json.dumps([dict(t) for t in transactions], ensure_ascii=False, indent=2)}
     """
-    
     system_prompt = """أنت محلل مالي محترف متخصص في تحليل أداء مراكز التكلفة.
 قم بتحليل البيانات المقدمة وقدم:
 1. تقييم عام لأداء المركز
@@ -280,39 +377,26 @@ def analyze_cost_center_performance(center_id):
 3. توصيات محددة لتحسين الأداء
 4. مقارنة ضمنية مع المعايير المثالية
 اجعل الرد باللغة العربية، منظماً وواضحاً، مع أرقام داعمة للتحليل."""
-    
     return query_groq(system_prompt, data_text, max_tokens=1500)
 
 def compare_cost_centers():
-    """
-    مقارنة شاملة بين جميع مراكز التكلفة النشطة
-    """
-    summary = get_cost_centers_summary_for_ai()
+    summary = get_cost_center_snapshot()
     if not summary:
         return "لا توجد مراكز تكلفة نشطة للمقارنة"
-    
     data_text = f"بيانات مراكز التكلفة للمقارنة:\n{json.dumps(summary, ensure_ascii=False, indent=2)}"
-    
     system_prompt = """أنت محلل مالي استراتيجي. قارن بين مراكز التكلفة المقدمة وقدم:
 1. ترتيب المراكز حسب الربحية
 2. تحديد المركز الأفضل والأسوأ أداءً
 3. تحليل توزيع الموارد بين المراكز
 4. توصيات استراتيجية للشركة بناءً على هذه المقارنة
 الرد بالعربية مع جداول مقارنة عند الإمكان."""
-    
     return query_groq(system_prompt, data_text, max_tokens=1500)
 
 def predict_cost_center_expenses(center_id, months=3):
-    """
-    التنبؤ بمصروفات مركز تكلفة للشهور القادمة بناءً على البيانات التاريخية
-    """
     from services import cost_center_service as ccs
-    
     center = ccs.get_cost_center_by_id(center_id)
     if not center:
         return "مركز التكلفة غير موجود"
-    
-    # جلب المعاملات التاريخية وتحليل الاتجاهات الشهرية
     conn = get_conn()
     monthly_expenses = conn.execute("""
         SELECT strftime('%Y-%m', je.date) as month,
@@ -326,19 +410,15 @@ def predict_cost_center_expenses(center_id, months=3):
         LIMIT 12
     """, (center_id,)).fetchall()
     conn.close()
-    
     if not monthly_expenses:
         return "لا توجد بيانات تاريخية كافية للتنبؤ"
-    
     history = [dict(m) for m in monthly_expenses]
     data_text = f"""
     مركز التكلفة: {center['code']} - {center['name']}
     المصروفات الشهرية التاريخية (آخر 12 شهراً):
     {json.dumps(history, ensure_ascii=False, indent=2)}
-    
     المطلوب: التنبؤ بالمصروفات للأشهر {months} القادمة.
     """
-    
     system_prompt = """أنت خبير في التحليل المالي والتنبؤ بالمصروفات.
 حلل الاتجاه التاريخي وقدم:
 1. توقعات المصروفات لكل شهر من الأشهر القادمة
@@ -346,39 +426,28 @@ def predict_cost_center_expenses(center_id, months=3):
 3. العوامل التي قد تؤثر على هذه التوقعات
 4. توصيات للتحكم في المصروفات
 الرد بالعربية مع أرقام واضحة."""
-    
     return query_groq(system_prompt, data_text, max_tokens=1200)
 
 def get_cost_center_budget_analysis(center_id, fiscal_year):
-    """
-    تحليل انحرافات الموازنة لمركز تكلفة باستخدام الذكاء الاصطناعي
-    """
     from services import cost_center_service as ccs
-    
     variance_data = ccs.get_budget_variance(center_id, fiscal_year)
     if not variance_data or not variance_data.get('details'):
         return "لا توجد موازنات مسجلة لهذا المركز في هذه السنة"
-    
     center = ccs.get_cost_center_by_id(center_id)
-    
     data_text = f"""
     مركز التكلفة: {center['code']} - {center['name']}
     السنة المالية: {fiscal_year}
-    
     ملخص الموازنة:
     - إجمالي الموازنة: {variance_data['total_budget']:,.2f}
     - إجمالي الفعلي: {variance_data['total_actual']:,.2f}
     - الانحراف الإجمالي: {variance_data['total_variance']:,.2f} ({variance_data['total_variance_pct']}%)
-    
     التفاصيل حسب الحساب:
     {json.dumps(variance_data['details'], ensure_ascii=False, indent=2)}
     """
-    
     system_prompt = """أنت محلل موازنات محترف. حلل انحرافات الموازنة وقدم:
 1. تحليل أسباب الانحرافات الرئيسية
 2. الحسابات الأكثر انحرافاً عن الموازنة
 3. تقييم عام لكفاءة إعداد الموازنة
 4. توصيات لتحسين دقة الموازنات المستقبلية
 الرد بالعربية مع التركيز على الانحرافات الجوهرية."""
-    
     return query_groq(system_prompt, data_text, max_tokens=1500)
