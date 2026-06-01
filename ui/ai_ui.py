@@ -1,4 +1,4 @@
-# ui/ai_ui.py – واجهة المساعد الذكي المطورة (تحليلات عميقة)
+# ui/ai_ui.py – واجهة المساعد الذكي المطورة (تحليلات عميقة + مراكز التكلفة + تقرير تحليلي شامل)
 import streamlit as st
 import pandas as pd
 import json
@@ -7,8 +7,12 @@ from services.ai_service import (
     create_ai_tables, query_groq, save_chat_history, get_chat_history,
     get_chat_sessions, get_comprehensive_data, get_inventory_data,
     get_employee_info, get_recent_entries, get_all_accounts, get_conn,
-    get_financial_ratios, get_trend_analysis, get_top_customers, get_top_suppliers
+    get_financial_ratios, get_trend_analysis, get_top_customers, get_top_suppliers,
+    analyze_cost_center_performance, compare_cost_centers,
+    predict_cost_center_expenses, get_cost_center_budget_analysis,
+    get_cost_centers_summary_for_ai
 )
+from services import cost_center_service as ccs
 
 # ========== ألوان التصميم ==========
 T = "#F8FAFC"
@@ -28,7 +32,7 @@ AVAILABLE_MODELS = {
 def h1(title, color=PR):
     st.markdown(f"""<div style="text-align:right;margin-bottom:2rem;">
         <h1 style="color:{T};font-size:2.8rem;margin:0;text-shadow:0 0 20px {color};">{title}</h1>
-        <p style="color:{S};font-size:1.2rem;">ثمانية خبراء مع تحليلات عميقة وتوصيات ذكية</p>
+        <p style="color:{S};font-size:1.2rem;">تسعة خبراء مع تحليلات عميقة وتوصيات ذكية</p>
     </div>""", unsafe_allow_html=True)
 
 def h3(title, color=BL):
@@ -53,8 +57,10 @@ def show():
     if "active_session" not in st.session_state:
         st.session_state.active_session = f"s_{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
-    t1, t2, t3, t4, t5, t6, t7, t8 = st.tabs([
-        "🧠 مساعد", "📊 محلل", "📦 مخزون", "💬 موظفين", "📝 قيود", "🔍 احتيال", "🔮 تنبؤات", "📈 تحليل"
+    # 9 تبويبات
+    t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
+        "🧠 مساعد", "📊 محلل", "📦 مخزون", "💬 موظفين", "📝 قيود", "🔍 احتيال", "🔮 تنبؤات", "📈 تحليل",
+        "🎯 مراكز تكلفة"
     ])
 
     # 1. مساعد محاسبي (محادثة عميقة)
@@ -203,34 +209,122 @@ def show():
                 ans = query_groq(prompt, "خطط", model=model, max_tokens=3000)
             glass(ans)
 
-    # 8. تحليل عميق (نسب واتجاهات)
+    # 8. تحليل عميق (تقرير تحليلي شامل بالذكاء الاصطناعي)
     with t8:
-        h3("📈 تحليلات متقدمة", PR)
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("📊 النسب المالية"):
-                for k, v in get_financial_ratios().items():
-                    st.metric(k, v)
-        with c2:
-            if st.button("📈 اتجاهات المبيعات"):
-                tr = get_trend_analysis()
-                if tr:
-                    st.dataframe(pd.DataFrame(tr))
-                else:
-                    st.info("لا بيانات")
-        st.markdown("---")
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("🏆 أفضل العملاء"):
-                tc = get_top_customers()
-                if tc:
-                    st.dataframe(pd.DataFrame(tc))
-                else:
-                    st.info("لا بيانات")
-        with c2:
-            if st.button("🏢 أفضل الموردين"):
-                ts = get_top_suppliers()
-                if ts:
-                    st.dataframe(pd.DataFrame(ts))
-                else:
-                    st.info("لا بيانات")
+        h3("📈 تحليل مالي وتشغيلي متقدم", PR)
+        st.caption("تقرير احترافي يولده الذكاء الاصطناعي بناءً على جميع بيانات النظام")
+        
+        # اختيار جوانب التحليل
+        analysis_scope = st.multiselect(
+            "اختر جوانب التحليل",
+            ["الأداء المالي", "تحليل النسب", "اتجاهات المبيعات", "تحليل العملاء والموردين",
+             "تحليل مراكز التكلفة", "المخزون والمشتريات", "الموارد البشرية"],
+            default=["الأداء المالي", "تحليل النسب", "اتجاهات المبيعات"]
+        )
+        
+        if st.button("🚀 توليد تقرير تحليلي شامل", use_container_width=True):
+            # جمع كل البيانات اللازمة
+            data = get_comprehensive_data()
+            ratios = get_financial_ratios()
+            trends = get_trend_analysis()
+            top_cust = get_top_customers()
+            top_supp = get_top_suppliers()
+            
+            # جمع بيانات مراكز التكلفة
+            cc_data = get_cost_centers_summary_for_ai()
+            
+            # بناء النص التمهيدي حسب الاختيارات
+            data_parts = []
+            if "الأداء المالي" in analysis_scope:
+                data_parts.append(f"""الأداء المالي:
+- الإيرادات: {data.get('revenue',0):,.2f}
+- المصروفات: {data.get('expenses',0):,.2f}
+- صافي الدخل: {data.get('net_income',0):,.2f}
+- الأصول: {data.get('assets',0):,.2f}
+- الخصوم: {data.get('liabilities',0):,.2f}
+- حقوق الملكية: {data.get('equity',0):,.2f}""")
+            
+            if "تحليل النسب" in analysis_scope:
+                data_parts.append(f"النسب المالية: {json.dumps(ratios, ensure_ascii=False)}")
+            
+            if "اتجاهات المبيعات" in analysis_scope:
+                data_parts.append(f"اتجاهات المبيعات الشهرية: {json.dumps(trends, ensure_ascii=False, default=str)}")
+            
+            if "تحليل العملاء والموردين" in analysis_scope:
+                data_parts.append(f"أفضل العملاء: {json.dumps(top_cust, ensure_ascii=False, default=str)}")
+                data_parts.append(f"أفضل الموردين: {json.dumps(top_supp, ensure_ascii=False, default=str)}")
+            
+            if "تحليل مراكز التكلفة" in analysis_scope and cc_data:
+                data_parts.append(f"ملخص مراكز التكلفة: {json.dumps(cc_data, ensure_ascii=False)}")
+            
+            if "المخزون والمشتريات" in analysis_scope:
+                low_stock = data.get('low_stock', [])
+                products = data.get('products', [])
+                data_parts.append(f"المنتجات تحت الحد الأدنى: {json.dumps(low_stock, ensure_ascii=False, default=str)}")
+                data_parts.append(f"كل المنتجات: {json.dumps(products, ensure_ascii=False, default=str)}")
+            
+            if "الموارد البشرية" in analysis_scope:
+                employees = data.get('employees', [])
+                data_parts.append(f"الموظفون: {json.dumps(employees, ensure_ascii=False, default=str)}")
+            
+            full_data = "\n\n".join(data_parts)
+            
+            prompt = f"""أنت محلل أعمال أول ومستشار مالي. بناءً على البيانات التالية، قدم تقريراً تحليلياً احترافياً شاملاً.
+البيانات:
+{full_data}
+
+المطلوب:
+1. تحليل نقاط القوة والضعف الرئيسية
+2. مقارنة الأداء بالمعايير المثالية للصناعة
+3. اكتشاف الأنماط والاتجاهات الخفية
+4. تحديد الفرص والمخاطر
+5. توصيات استراتيجية محددة وقابلة للتنفيذ مع تقدير الأثر المالي لكل توصية
+6. خريطة طريق للتحسين خلال الـ 6 أشهر القادمة
+
+اجعل الرد باللغة العربية، منظماً ومفصلاً."""
+            with st.spinner("🧠 تحليل عميق..."):
+                ans = query_groq(prompt, "قدم تحليلاً شاملاً", model=model, max_tokens=3000)
+            glass(ans)
+
+    # 9. تبويب مراكز التكلفة الجديد
+    with t9:
+        h3("🎯 تحليل مراكز التكلفة بالذكاء الاصطناعي", CY)
+        
+        centers = ccs.get_all_cost_centers(active_only=True)
+        if not centers:
+            st.warning("لا توجد مراكز تكلفة نشطة. أضف مراكز من وحدة مراكز التكلفة أولاً.")
+        else:
+            center_options = {f"{c['code']} - {c['name']}": c['id'] for c in centers}
+            selected_center_label = st.selectbox("اختر مركز التكلفة", list(center_options.keys()))
+            center_id = center_options[selected_center_label]
+            
+            fiscal_year = st.number_input("السنة المالية لتحليل الموازنة", min_value=2020, max_value=2030, value=datetime.now().year)
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("📊 تحليل أداء المركز", use_container_width=True):
+                    with st.spinner("🧠 تحليل أداء المركز..."):
+                        analysis = analyze_cost_center_performance(center_id)
+                    glass(analysis)
+            
+            with col2:
+                if st.button("🔍 مقارنة جميع المراكز", use_container_width=True):
+                    with st.spinner("📈 مقارنة المراكز..."):
+                        comparison = compare_cost_centers()
+                    glass(comparison)
+            
+            col3, col4 = st.columns(2)
+            
+            with col3:
+                months_ahead = st.selectbox("عدد الأشهر للتنبؤ", [1, 3, 6], key="months_cc")
+                if st.button("🔮 توقع المصروفات المستقبلية", use_container_width=True):
+                    with st.spinner("🔮 التنبؤ بالمصروفات..."):
+                        prediction = predict_cost_center_expenses(center_id, months=months_ahead)
+                    glass(prediction)
+            
+            with col4:
+                if st.button("💰 تحليل انحرافات الموازنة", use_container_width=True):
+                    with st.spinner("📉 تحليل الانحرافات..."):
+                        budget_analysis = get_cost_center_budget_analysis(center_id, fiscal_year)
+                    glass(budget_analysis)
