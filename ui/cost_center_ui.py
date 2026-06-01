@@ -3,7 +3,8 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from services import cost_center_service as ccs
-from services import closing_service  # 🆕 لإقفال المراكز
+from services import closing_service
+import database
 
 # ================== CSS زجاجي ==================
 def glass_style():
@@ -97,7 +98,6 @@ def show():
                 with st.form("add_cc_form"):
                     code = st.text_input("رمز المركز", placeholder="مثال: SALES-NORTH")
                     name = st.text_input("اسم المركز", placeholder="مبيعات المنطقة الشمالية")
-                    # اختيار الأب
                     all_centers = ccs.get_all_cost_centers(active_only=True)
                     parent_map = {0: "لا يوجد (مركز رئيسي)"}
                     for c in all_centers:
@@ -166,76 +166,112 @@ def show():
             st.info("لا توجد بيانات")
         st.markdown('</div>', unsafe_allow_html=True)
     
-    # ------------------------ تبويب 2: توزيع المعاملات ------------------------
+    # ------------------------ تبويب 2: توزيع المعاملات (مُصلح) ------------------------
     with tab2:
         st.markdown('<div class="glass-card">', unsafe_allow_html=True)
         st.subheader("📌 توزيع سطر قيد على مراكز التكلفة")
-        st.markdown("هذه الواجهة ستُستخدم داخل وحدة الحسابات عند إنشاء القيد، ولكن يمكنك هنا تجربة التوزيع يدوياً.")
         
-        # جلب قيود حديثة لاختيار سطر
-        import database
+        # جلب القيود
         conn = database.get_connection()
-        journal_entries = conn.execute("""
-            SELECT id, entry_date, description FROM journal_entries ORDER BY id DESC LIMIT 20
-        """).fetchall()
+        entries = conn.execute(
+            "SELECT id, date, description FROM journal_entries ORDER BY id DESC LIMIT 20"
+        ).fetchall()
         conn.close()
         
-        if journal_entries:
-            entry_options = {e['id']: f"{e['id']} - {e['entry_date']} - {e['description']}" for e in journal_entries}
-            selected_entry_id = st.selectbox("اختر القيد", options=list(entry_options.keys()),
-                                             format_func=lambda x: entry_options[x])
-            # جلب سطور القيد
-            conn = database.get_connection()
-            lines = conn.execute("""
-                SELECT jl.id, a.name as account_name, jl.debit, jl.credit, jl.description
-                FROM journal_lines jl JOIN accounts a ON jl.account_id = a.id
-                WHERE jl.journal_entry_id = ?
-            """, (selected_entry_id,)).fetchall()
-            conn.close()
-            
-            if lines:
-                line_options = {l['id']: f"{l['account_name']} (مدين: {l['debit']}, دائن: {l['credit']})" for l in lines}
-                selected_line_id = st.selectbox("اختر السطر", options=list(line_options.keys()),
-                                                format_func=lambda x: line_options[x])
-                line_amount = next(l['debit'] if l['debit'] else l['credit'] for l in lines if l['id']==selected_line_id)
-                st.write(f"المبلغ الإجمالي للسطر: **{line_amount:,.2f}**")
-                
-                # توزيع
-                with st.form("alloc_form"):
-                    st.markdown("#### حدد المراكز والنسب")
-                    centers_list = ccs.get_all_cost_centers(active_only=True)
-                    alloc_data = []
-                    # نسمح حتى 5 مراكز
-                    for i in range(5):
-                        cols = st.columns([3,2,1])
-                        with cols[0]:
-                            center_opt = {c['id']: f"{c['code']} - {c['name']}" for c in centers_list}
-                            center_opt[0] = "-- لا شيء --"
-                            center = st.selectbox(f"المركز {i+1}", options=list(center_opt.keys()),
-                                                  format_func=lambda x: center_opt[x], key=f"cc_{i}")
-                        with cols[1]:
-                            amount = st.number_input(f"المبلغ {i+1}", min_value=0.0, value=0.0, step=100.0, key=f"amt_{i}")
-                        with cols[2]:
-                            perc = st.number_input(f"%{i+1}", min_value=0.0, max_value=100.0, value=0.0, step=1.0, key=f"perc_{i}")
-                        if center != 0 and amount > 0:
-                            alloc_data.append({'cost_center_id': center, 'amount': amount, 'percentage': perc})
-                    
-                    total_alloc = sum(a['amount'] for a in alloc_data)
-                    if total_alloc > 0:
-                        st.write(f"مجموع التوزيعات: {total_alloc:,.2f} (المتبقي: {line_amount - total_alloc:,.2f})")
-                    if st.form_submit_button("💾 حفظ التوزيعات"):
-                        if abs(total_alloc - line_amount) > 0.01:
-                            st.error("مجموع التوزيعات يجب أن يساوي مبلغ السطر!")
-                        else:
-                            try:
-                                ccs.allocate_journal_line(selected_line_id, alloc_data)
-                                st.success("تم توزيع السطر على مراكز التكلفة بنجاح")
-                            except Exception as e:
-                                st.error(str(e))
-            else:
-                st.warning("القيد لا يحتوي على سطور")
-        else:
+        if not entries:
             st.info("لا توجد قيود مسجلة")
+            st.markdown('</div>', unsafe_allow_html=True)
+            st.stop()
+        
+        entry_map = {e['id']: f"{e['id']} - {e['date']} - {e['description']}" for e in entries}
+        selected_entry = st.selectbox("اختر القيد", options=list(entry_map.keys()),
+                                      format_func=lambda x: entry_map[x])
+        
+        # جلب سطور القيد
+        conn = database.get_connection()
+        lines = conn.execute(
+            "SELECT id, account_name, debit, credit FROM journal_lines WHERE entry_id = ?",
+            (selected_entry,)
+        ).fetchall()
+        conn.close()
+        
+        if not lines:
+            st.warning("القيد لا يحتوي على سطور")
+            st.markdown('</div>', unsafe_allow_html=True)
+            st.stop()
+        
+        line_options = {l['id']: f"{l['account_name']} (مدين: {l['debit']:,.2f}, دائن: {l['credit']:,.2f})" for l in lines}
+        selected_line_id = st.selectbox("اختر السطر", options=list(line_options.keys()),
+                                        format_func=lambda x: line_options[x])
+        
+        selected_line = next(l for l in lines if l['id'] == selected_line_id)
+        line_amount = selected_line['debit'] if selected_line['debit'] > 0 else selected_line['credit']
+        st.write(f"المبلغ الإجمالي للسطر: **{line_amount:,.2f}**")
+        
+        # واجهة التوزيع
+        centers_list = ccs.get_all_cost_centers(active_only=True)
+        if not centers_list:
+            st.warning("لا توجد مراكز تكلفة نشطة")
+        else:
+            center_map = {c['id']: f"{c['code']} - {c['name']}" for c in centers_list}
+            alloc_data = []
+            remaining = line_amount
+            
+            st.markdown("**حدد المراكز (حتى 3 مراكز):**")
+            for i in range(3):
+                c1, c2, c3 = st.columns([3, 2, 1])
+                with c1:
+                    center = st.selectbox(
+                        f"المركز {i+1}",
+                        options=["-- لا يوجد --"] + list(center_map.keys()),
+                        format_func=lambda x: center_map.get(x, x) if x != "-- لا يوجد --" else x,
+                        key=f"cc_{i}"
+                    )
+                with c2:
+                    amount = st.number_input(
+                        f"المبلغ {i+1}",
+                        min_value=0.0,
+                        max_value=float(remaining),
+                        step=0.01,
+                        key=f"amt_{i}"
+                    )
+                with c3:
+                    perc = st.number_input(
+                        f"النسبة % {i+1}",
+                        min_value=0.0,
+                        max_value=100.0,
+                        step=1.0,
+                        key=f"perc_{i}"
+                    )
+                
+                if center != "-- لا يوجد --" and amount > 0:
+                    alloc_data.append({
+                        'cost_center_id': center,
+                        'amount': amount,
+                        'percentage': perc
+                    })
+                    remaining -= amount
+            
+            total_alloc = sum(a['amount'] for a in alloc_data)
+            if total_alloc > 0:
+                diff = line_amount - total_alloc
+                if abs(diff) < 0.01:
+                    st.success("المبلغ موزع بالكامل ✅")
+                else:
+                    st.warning(f"المتبقي: {diff:,.2f}")
+            
+            if st.button("💾 حفظ التوزيعات", key="save_dist"):
+                if abs(total_alloc - line_amount) > 0.01:
+                    st.error("يجب أن يساوي مجموع التوزيعات المبلغ الأصلي")
+                elif not alloc_data:
+                    st.error("لم يتم إدخال أي توزيع")
+                else:
+                    try:
+                        ccs.allocate_journal_line(selected_line_id, alloc_data)
+                        st.success("تم حفظ التوزيعات بنجاح")
+                    except Exception as e:
+                        st.error(str(e))
+        
         st.markdown('</div>', unsafe_allow_html=True)
     
     # ------------------------ تبويب 3: تحليل وتقارير ------------------------
@@ -253,7 +289,6 @@ def show():
                 balance = ccs.get_cost_center_balance(center_choice, from_date, to_date)
                 income_stmt = ccs.get_cost_center_income_statement(center_choice, from_date, to_date)
                 
-                # بطاقات KPI
                 kpi1, kpi2, kpi3 = st.columns(3)
                 with kpi1:
                     st.markdown('<div class="glass-card" style="text-align:center;">', unsafe_allow_html=True)
@@ -271,7 +306,6 @@ def show():
                     st.caption("المصروفات")
                     st.markdown('</div>', unsafe_allow_html=True)
                 
-                # رسم بياني
                 fig = go.Figure(data=[
                     go.Bar(name='الإيرادات', x=['الإيرادات'], y=[income_stmt['income']], marker_color='#a78bfa'),
                     go.Bar(name='المصروفات', x=['المصروفات'], y=[income_stmt['expenses']], marker_color='#60a5fa')
@@ -297,7 +331,6 @@ def show():
                 data = ccs.get_budget_variance(center_id, fiscal_year)
                 if data and data.get('details'):
                     df = pd.DataFrame(data['details'])
-                    # تنسيق الأعمدة
                     df_display = df[['account_name', 'budget', 'actual', 'variance', 'variance_pct']]
                     df_display.columns = ['الحساب', 'الموازنة', 'الفعلي', 'الانحراف', 'نسبة الانحراف %']
                     st.dataframe(df_display.style.format({
@@ -307,7 +340,6 @@ def show():
                         'نسبة الانحراف %': '{:.1f}%'
                     }), use_container_width=True)
                     
-                    # رسم بياني
                     fig = px.bar(df, x='account_name', y=['budget', 'actual'], barmode='group',
                                  color_discrete_map={'budget': '#a78bfa', 'actual': '#60a5fa'},
                                  labels={'value': 'المبلغ', 'variable': 'النوع'})
@@ -319,7 +351,6 @@ def show():
             st.markdown("---")
             with st.form("budget_form"):
                 st.subheader("➕ إضافة/تحديث موازنة")
-                # جلب الحسابات
                 conn = database.get_connection()
                 accounts = conn.execute("SELECT id, name FROM accounts ORDER BY name").fetchall()
                 conn.close()
@@ -349,7 +380,6 @@ def show():
         if not centers:
             st.info("لا توجد مراكز تكلفة نشطة")
         else:
-            # اختيار المركز
             center_options = {c['id']: f"{c['code']} - {c['name']}" for c in centers}
             closing_center_id = st.selectbox(
                 "اختر المركز لإقفاله",
@@ -357,8 +387,6 @@ def show():
                 format_func=lambda x: center_options[x],
                 key="closing_center"
             )
-            
-            # السنة المالية
             closing_year = st.number_input(
                 "السنة المالية للإقفال",
                 min_value=2020,
@@ -366,15 +394,12 @@ def show():
                 value=2025,
                 key="closing_year"
             )
-            
-            # كود حساب الأرباح المحتجزة
             retained_earnings = st.text_input(
                 "كود حساب الأرباح المحتجزة",
                 value="310000",
                 help="الكود الافتراضي للأرباح المحتجزة هو 310000"
             )
             
-            # زر التنفيذ مع تأكيد
             if st.button("🔒 تنفيذ إقفال المركز", type="primary", use_container_width=True):
                 with st.spinner("جارٍ إنشاء قيد الإقفال..."):
                     success, net_income, error = closing_service.create_cost_center_closing_entry(
