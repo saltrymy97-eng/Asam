@@ -6,7 +6,7 @@ from services import cost_center_service as ccs
 from services import closing_service
 import database
 
-# ================== CSS زجاجي ==================
+# ================== CSS زجاجي مع إخفاء المستطيلات الفارغة ==================
 def glass_style():
     st.markdown("""
     <style>
@@ -64,6 +64,7 @@ def glass_style():
         border-bottom: 2px solid #a78bfa !important;
         color: white !important;
     }
+
     div[data-baseweb="input"] {
         background: rgba(255, 255, 255, 0.05) !important;
         border: 1px solid rgba(255, 255, 255, 0.2) !important;
@@ -90,6 +91,21 @@ def glass_style():
         background: rgba(139, 92, 246, 0.3) !important;
         border-color: #a78bfa !important;
     }
+
+    /* 🧹 إخفاء أي حاوية فارغة قد تظهر كمستطيل */
+    div[data-testid="stVerticalBlock"] > div:empty,
+    div[data-testid="stHorizontalBlock"] > div:empty {
+        display: none !important;
+    }
+    /* إخفاء خلفية النموذج إذا كانت فارغة */
+    div[data-testid="stForm"] {
+        background: transparent !important;
+        border: none !important;
+    }
+    /* إخفاء المسافات الفارغة داخل التبويبات */
+    .stTabs div[data-testid="stVerticalBlock"] > div:empty {
+        display: none !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -104,11 +120,11 @@ def show():
     """, unsafe_allow_html=True)
     
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📋 إدارة المراكز",
-        "📊 توزيع المعاملات",
-        "📈 تحليل وتقارير",
-        "💰 الموازنات التقديرية",
-        "🔒 إقفال المراكز"
+        ":material/edit_note: إدارة المراكز",
+        ":material/account_tree: توزيع المعاملات",
+        ":material/analytics: تحليل وتقارير",
+        ":material/request_quote: الموازنات",
+        ":material/lock: إقفال المراكز"
     ])
     
     # ------------------------ تبويب 1: إدارة المراكز ------------------------
