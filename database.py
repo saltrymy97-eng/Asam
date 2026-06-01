@@ -1,4 +1,4 @@
-# database.py - قاعدة بيانات نظام ERP كاملة (SQLite) مع أعمدة VAT
+# database.py - قاعدة بيانات نظام ERP كاملة (SQLite) مع أعمدة VAT ومراكز التكلفة
 import sqlite3
 import bcrypt
 
@@ -58,7 +58,6 @@ def init_db():
         address TEXT
     )''')
 
-    # 🆕 جدول الفواتير مع أعمدة الضريبة
     c.execute('''CREATE TABLE IF NOT EXISTS invoices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
@@ -71,7 +70,6 @@ def init_db():
         FOREIGN KEY (party_id) REFERENCES customers(id)
     )''')
 
-    # إضافة الأعمدة الجديدة إذا كان الجدول موجوداً مسبقاً
     try:
         c.execute("ALTER TABLE invoices ADD COLUMN vat_rate REAL DEFAULT 0.15")
     except sqlite3.OperationalError:
@@ -197,6 +195,40 @@ def init_db():
         role_id INTEGER,
         module TEXT NOT NULL,
         FOREIGN KEY (role_id) REFERENCES roles(id)
+    )''')
+
+    # 🆕 جداول مراكز التكلفة
+    c.execute('''CREATE TABLE IF NOT EXISTS cost_centers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        parent_id INTEGER,
+        is_active BOOLEAN DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (parent_id) REFERENCES cost_centers(id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS cost_center_allocations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        journal_line_id INTEGER NOT NULL,
+        cost_center_id INTEGER NOT NULL,
+        amount REAL NOT NULL,
+        percentage REAL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (journal_line_id) REFERENCES journal_lines(id),
+        FOREIGN KEY (cost_center_id) REFERENCES cost_centers(id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS cost_center_budgets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cost_center_id INTEGER NOT NULL,
+        account_id INTEGER NOT NULL,
+        fiscal_year INTEGER NOT NULL,
+        budget_amount REAL NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (cost_center_id) REFERENCES cost_centers(id),
+        FOREIGN KEY (account_id) REFERENCES accounts(id),
+        UNIQUE(cost_center_id, account_id, fiscal_year)
     )''')
 
     conn.commit()
