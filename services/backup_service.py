@@ -1,4 +1,4 @@
-# services/backup_service.py - منطق النسخ الاحتياطي
+# services/backup_service.py - منطق النسخ الاحتياطي (محلي + شبكة)
 import sqlite3
 import shutil
 import os
@@ -6,6 +6,9 @@ from datetime import datetime
 
 DB_PATH = "erp.db"
 BACKUP_DIR = "backups"
+
+# ---------- إعدادات قابلة للتعديل ----------
+NETWORK_BACKUP_PATH = None   # مثال: "\\\\192.168.1.10\\Shared\\Backups" أو "/mnt/backups"
 
 def ensure_backup_dir():
     """إنشاء مجلد النسخ الاحتياطي إذا لم يكن موجوداً"""
@@ -28,7 +31,7 @@ def create_backup_table():
     conn.close()
 
 def create_backup(backup_type="يدوي"):
-    """إنشاء نسخة احتياطية جديدة"""
+    """إنشاء نسخة احتياطية جديدة (محلياً + اختيارياً على مجلد الشبكة)"""
     ensure_backup_dir()
     create_backup_table()
     
@@ -36,13 +39,11 @@ def create_backup(backup_type="يدوي"):
     filename = f"erp_backup_{timestamp}.db"
     filepath = os.path.join(BACKUP_DIR, filename)
     
-    # نسخ قاعدة البيانات
+    # نسخ قاعدة البيانات الأساسية
     shutil.copy2(DB_PATH, filepath)
-    
-    # حجم الملف
     size_kb = os.path.getsize(filepath) / 1024
     
-    # تسجيل في السجل
+    # تسجيل العملية في السجل
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""
         INSERT INTO backup_history (filename, size_kb, created_at, type)
@@ -51,42 +52,73 @@ def create_backup(backup_type="يدوي"):
     conn.commit()
     conn.close()
     
+    # نسخ إضافي إلى مجلد الشبكة إذا تم ضبطه
+    if NETWORK_BACKUP_PATH:
+        try:
+            # تأكد من وجود المجلد الشبكي
+            if not os.path.exists(NETWORK_BACKUP_PATH):
+                os.makedirs(NETWORK_BACKUP_PATH, exist_ok=True)
+            dest = os.path.join(NETWORK_BACKUP_PATH, filename)
+            shutil.copy2(filepath, dest)
+        except Exception as e:
+            # فشل النسخ الشبكي لا يوقف العملية الأساسية
+            print(f"تنبيه: تعذر النسخ إلى مجلد الشبكة - {e}")
+    
     return filename, size_kb
 
 def get_backup_list():
-    """جلب قائمة النسخ الاحتياطية"""
+    """جلب قائمة النسخ الاحتياطية من السجل"""
     create_backup_table()
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    backups = conn.execute("""
-        SELECT * FROM backup_history ORDER BY id DESC LIMIT 50
-    """).fetchall()
+    backups = conn.execute(
+        "SELECT * FROM backup_history ORDER BY id DESC LIMIT 50"
+    ).fetchall()
     conn.close()
     return [dict(b) for b in backups]
 
 def restore_backup(filename):
-    """استعادة نسخة احتياطية"""
+    """استعادة نسخة احتياطية مع أمان إضافي"""
     filepath = os.path.join(BACKUP_DIR, filename)
     if not os.path.exists(filepath):
         return False
     
-    # نسخ احتياطي للقاعدة الحالية قبل الاستعادة
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    safety_backup = os.path.join(BACKUP_DIR, f"before_restore_{timestamp}.db")
-    shutil.copy2(DB_PATH, safety_backup)
+    # التحقق من صلاحية ملف النسخة
+    if not is_valid_backup(filepath):
+        return False
     
-    # استعادة النسخة
+    # نسخة أمان من القاعدة الحالية قبل الاستعادة
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safety_file = os.path.join(BACKUP_DIR, f"pre_restore_{timestamp}.db")
+    try:
+        shutil.copy2(DB_PATH, safety_file)
+    except Exception:
+        return False
+    
+    # استعادة النسخة المحددة
     shutil.copy2(filepath, DB_PATH)
     return True
 
+def is_valid_backup(filepath):
+    """التحقق من أن الملف قاعدة بيانات SQLite صالحة"""
+    try:
+        conn = sqlite3.connect(filepath)
+        conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchone()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
 def get_backup_stats():
-    """إحصائيات النسخ الاحتياطي"""
+    """إحصائيات سريعة عن النسخ الاحتياطية"""
     create_backup_table()
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     
     total = conn.execute("SELECT COUNT(*) as cnt FROM backup_history").fetchone()["cnt"]
-    latest = conn.execute("SELECT created_at, size_kb FROM backup_history ORDER BY id DESC LIMIT 1").fetchone()
+    latest = conn.execute(
+        "SELECT created_at, size_kb FROM backup_history ORDER BY id DESC LIMIT 1"
+    ).fetchone()
     
     conn.close()
     
