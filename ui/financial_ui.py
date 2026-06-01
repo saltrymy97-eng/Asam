@@ -1,7 +1,8 @@
-# ui/financial_ui.py - واجهة القوائم المالية (تصميم زجاجي فخم)
+# ui/financial_ui.py - واجهة القوائم المالية (تصميم زجاجي فخم + فلترة مراكز التكلفة)
 import streamlit as st
 import pandas as pd
 from services.financial_service import get_income_statement, get_balance_sheet
+from services import cost_center_service as ccs
 
 # ========== ألوان التصميم ==========
 GLASS_BG = "rgba(255, 255, 255, 0.12)"
@@ -39,26 +40,35 @@ def show():
     </div>
     """, unsafe_allow_html=True)
 
+    # 🆕 فلتر مراكز التكلفة
+    centers = ccs.get_all_cost_centers(active_only=True)
+    center_options = {0: "كل الشركة (بدون تصفية)"}
+    if centers:
+        for c in centers:
+            center_options[c['id']] = f"{c['code']} - {c['name']}"
+    
+    selected_center = st.selectbox(
+        "🏢 تصفية حسب مركز التكلفة",
+        options=list(center_options.keys()),
+        format_func=lambda x: center_options[x]
+    )
+    cost_center_id = selected_center if selected_center != 0 else None
+
     tab1, tab2 = st.tabs(["📈 قائمة الدخل", "⚖️ الميزانية العمومية"])
 
     # ========== قائمة الدخل ==========
     with tab1:
         st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>قائمة الدخل</h3>", unsafe_allow_html=True)
         
-        income = get_income_statement()
+        income = get_income_statement(cost_center_id)
         
-        # 🆕 فحص سريع: إذا لا توجد بيانات، اشرح السبب
+        # رسالة توضيحية إذا تم التصفية
+        if cost_center_id:
+            center_name = next((f"{c['code']} - {c['name']}" for c in centers if c['id'] == cost_center_id), "")
+            st.info(f"يتم عرض بيانات مركز التكلفة: {center_name}")
+
         if income['total_revenue'] == 0 and income['total_expenses'] == 0:
-            st.warning("""
-            ⚠️ **لا توجد بيانات مالية لعرضها.**
-            
-            الأسباب المحتملة:
-            1. لم تسجل أي قيد محاسبي بعد.
-            2. القيود مسجلة بأسماء حسابات غير معروفة (مثل 'ايرادات' بدلاً من الكود '4').
-            3. القيود لا تستخدم أكواد الحسابات (1,2,3,4,5).
-            
-            ✅ **الحل:** سجل قيداً باستخدام القائمة المنسدلة في وحدة الحسابات.
-            """)
+            st.warning("لا توجد بيانات مالية للفترة/المركز المحدد. سجل قيوداً مع توزيعات مراكز تكلفة.")
             return
         
         col1, col2, col3 = st.columns(3)
@@ -93,19 +103,14 @@ def show():
     with tab2:
         st.markdown(f"<h3 style='color:{ACCENT_CYAN};'>الميزانية العمومية</h3>", unsafe_allow_html=True)
         
-        balance = get_balance_sheet()
+        balance = get_balance_sheet(cost_center_id)
         
-        # 🆕 فحص سريع
-        if balance['total_assets'] == 0 and balance['total_liabilities'] == 0:
-            st.warning("""
-            ⚠️ **لا توجد بيانات للميزانية العمومية.**
-            
-            الأسباب المحتملة:
-            1. لم تسجل أي قيد محاسبي بعد.
-            2. القيود لا تستخدم أكواد الحسابات (1,2,3).
-            
-            ✅ **الحل:** سجل قيداً باستخدام القائمة المنسدلة في وحدة الحسابات.
-            """)
+        if cost_center_id and balance['total_assets'] == 0 and balance['total_liabilities'] == 0:
+            st.warning("لا توجد بيانات ميزانية لهذا المركز. المراكز التكلفة تعرض عادة الإيرادات والمصروفات فقط.")
+            return
+
+        if balance['total_assets'] == 0 and balance['total_liabilities'] == 0 and not cost_center_id:
+            st.warning("لا توجد بيانات للميزانية العمومية. سجل قيوداً على الحسابات (1،2،3).")
             return
         
         col1, col2, col3 = st.columns(3)
