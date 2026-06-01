@@ -20,8 +20,10 @@ def _account_type_from_code(code):
 
 # ===================== إدارة مراكز التكلفة =====================
 def create_cost_center(code, name, parent_id=None):
+    """إضافة مركز تكلفة جديد مع إدارة العمليات"""
     conn = get_connection()
     try:
+        conn.execute("BEGIN")
         cursor = conn.cursor()
         cursor.execute(
             "INSERT INTO cost_centers (code, name, parent_id, is_active) VALUES (?, ?, ?, 1)",
@@ -30,82 +32,124 @@ def create_cost_center(code, name, parent_id=None):
         conn.commit()
         return cursor.lastrowid
     except sqlite3.IntegrityError:
+        conn.rollback()
         raise ValueError(f"الرمز {code} موجود مسبقاً")
+    except Exception as e:
+        conn.rollback()
+        raise e
     finally:
         conn.close()
 
 def update_cost_center(center_id, code=None, name=None, parent_id=None, is_active=None):
+    """تحديث بيانات مركز تكلفة مع إدارة العمليات"""
     conn = get_connection()
     fields = []
     values = []
-    if code: fields.append("code = ?"); values.append(code)
-    if name: fields.append("name = ?"); values.append(name)
-    if parent_id is not None: fields.append("parent_id = ?"); values.append(parent_id)
-    if is_active is not None: fields.append("is_active = ?"); values.append(is_active)
-    if not fields: return
+    if code:
+        fields.append("code = ?"); values.append(code)
+    if name:
+        fields.append("name = ?"); values.append(name)
+    if parent_id is not None:
+        fields.append("parent_id = ?"); values.append(parent_id)
+    if is_active is not None:
+        fields.append("is_active = ?"); values.append(is_active)
+    if not fields:
+        conn.close()
+        return
     values.append(center_id)
-    conn.execute(f"UPDATE cost_centers SET {', '.join(fields)} WHERE id = ?", values)
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("BEGIN")
+        conn.execute(f"UPDATE cost_centers SET {', '.join(fields)} WHERE id = ?", values)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 def delete_cost_center(center_id):
+    """حذف مركز تكلفة مع إدارة العمليات والتحقق من القيود"""
     conn = get_connection()
     try:
+        conn.execute("BEGIN")
         cursor = conn.cursor()
         if cursor.execute("SELECT COUNT(*) as cnt FROM cost_centers WHERE parent_id = ?", (center_id,)).fetchone()['cnt'] > 0:
-            raise ValueError("لا يمكن حذف المركز لأن لديه مراكز فرعية.")
+            raise ValueError("لا يمكن حذف المركز لأن لديه مراكز فرعية. احذفها أولاً.")
         if cursor.execute("SELECT COUNT(*) as cnt FROM cost_center_allocations WHERE cost_center_id = ?", (center_id,)).fetchone()['cnt'] > 0:
-            raise ValueError("لا يمكن حذف المركز لأن لديه توزيعات محاسبية.")
+            raise ValueError("لا يمكن حذف المركز لأن لديه توزيعات محاسبية مرتبطة. قم بإلغاء التوزيعات أولاً.")
         cursor.execute("DELETE FROM cost_centers WHERE id = ?", (center_id,))
         conn.commit()
         return True
-    except ValueError: raise
-    except Exception as e: conn.rollback(); raise e
-    finally: conn.close()
+    except ValueError:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 def get_all_cost_centers(active_only=True):
+    """جلب جميع مراكز التكلفة (قواميس متوافقة مع pandas)"""
     conn = get_connection()
     query = "SELECT id, code, name, parent_id, is_active FROM cost_centers"
-    if active_only: query += " WHERE is_active = 1"
+    if active_only:
+        query += " WHERE is_active = 1"
     query += " ORDER BY code"
     rows = conn.execute(query).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 def get_cost_center_tree():
+    """جلب المراكز كهيكل شجري للعرض"""
     centers = get_all_cost_centers(active_only=False)
-    if not centers: return []
+    if not centers:
+        return []
     tree = {}
-    for c in centers: tree[c['id']] = {**c, 'children': []}
+    for c in centers:
+        tree[c['id']] = {**c, 'children': []}
     roots = []
     for c in centers:
         if c['parent_id'] and c['parent_id'] in tree:
             tree[c['parent_id']]['children'].append(tree[c['id']])
-        else: roots.append(tree[c['id']])
+        else:
+            roots.append(tree[c['id']])
     return roots
 
 def get_cost_center_by_id(center_id):
+    """جلب بيانات مركز واحد"""
     conn = get_connection()
     row = conn.execute("SELECT id, code, name, parent_id, is_active FROM cost_centers WHERE id = ?", (center_id,)).fetchone()
     conn.close()
     return dict(row) if row else None
 
-# ===================== توزيع القيود =====================
+# ===================== توزيع القيود على المراكز =====================
 def allocate_journal_line(journal_line_id, allocations):
+    """توزيع مبلغ سطر قيد على مراكز تكلفة مع إدارة العمليات"""
     conn = get_connection()
     try:
+        conn.execute("BEGIN")
         cursor = conn.cursor()
+        # حذف التوزيعات القديمة لنفس السطر
         cursor.execute("DELETE FROM cost_center_allocations WHERE journal_line_id = ?", (journal_line_id,))
+        
         for alloc in allocations:
             if not cursor.execute("SELECT id FROM cost_centers WHERE id = ? AND is_active = 1", (alloc['cost_center_id'],)).fetchone():
                 raise ValueError(f"مركز التكلفة {alloc['cost_center_id']} غير موجود أو غير نشط")
-            cursor.execute("INSERT INTO cost_center_allocations (journal_line_id, cost_center_id, amount, percentage) VALUES (?, ?, ?, ?)",
-                           (journal_line_id, alloc['cost_center_id'], alloc['amount'], alloc.get('percentage')))
+            cursor.execute(
+                "INSERT INTO cost_center_allocations (journal_line_id, cost_center_id, amount, percentage) VALUES (?, ?, ?, ?)",
+                (journal_line_id, alloc['cost_center_id'], alloc['amount'], alloc.get('percentage'))
+            )
         conn.commit()
         return True
-    except ValueError: conn.rollback(); raise
-    except Exception as e: conn.rollback(); raise e
-    finally: conn.close()
+    except ValueError:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 def get_allocations_for_entry(journal_entry_id):
     conn = get_connection()
@@ -139,15 +183,20 @@ def get_allocations_for_line(journal_line_id):
     return [dict(r) for r in rows]
 
 def delete_allocation(allocation_id):
+    """حذف توزيع واحد مع إدارة العمليات"""
     conn = get_connection()
     try:
+        conn.execute("BEGIN")
         conn.execute("DELETE FROM cost_center_allocations WHERE id = ?", (allocation_id,))
         conn.commit()
         return True
-    except Exception as e: conn.rollback(); raise e
-    finally: conn.close()
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
-# ===================== تقارير =====================
+# ===================== تقارير مراكز التكلفة =====================
 def get_cost_center_balance(center_id, from_date=None, to_date=None):
     conn = get_connection()
     query = """
@@ -259,25 +308,31 @@ def get_all_centers_summary(from_date=None, to_date=None):
     conn.close()
     return [dict(r) for r in rows]
 
-# ===================== موازنات =====================
+# ===================== موازنات المراكز =====================
 def set_budget(cost_center_id, account_id, fiscal_year, amount):
+    """إضافة أو تحديث موازنة مع إدارة العمليات"""
     conn = get_connection()
     try:
-        conn.execute("""INSERT INTO cost_center_budgets (cost_center_id, account_id, fiscal_year, budget_amount) 
-                      VALUES (?,?,?,?) ON CONFLICT(cost_center_id, account_id, fiscal_year) DO UPDATE SET budget_amount = ?""",
-                     (cost_center_id, account_id, fiscal_year, amount, amount))
+        conn.execute("BEGIN")
+        conn.execute(
+            """INSERT INTO cost_center_budgets (cost_center_id, account_id, fiscal_year, budget_amount) 
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(cost_center_id, account_id, fiscal_year) 
+               DO UPDATE SET budget_amount = ?""",
+            (cost_center_id, account_id, fiscal_year, amount, amount)
+        )
         conn.commit()
         return True
-    except Exception as e: conn.rollback(); raise e
-    finally: conn.close()
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 def get_budget_variance(cost_center_id, fiscal_year, as_of_month=None):
-    """
-    مقارنة فعلي مقابل موازنة بطريقة آمنة بدون استخدام account_type.
-    """
+    """مقارنة فعلي مقابل موازنة بطريقة آمنة"""
     conn = get_connection()
     try:
-        # 1. جلب الموازنات
         budget_query = """
             SELECT b.id, b.budget_amount, a.code as account_code, a.name as account_name
             FROM cost_center_budgets b
@@ -285,25 +340,20 @@ def get_budget_variance(cost_center_id, fiscal_year, as_of_month=None):
             WHERE b.cost_center_id = ? AND b.fiscal_year = ?
         """
         budget_rows = conn.execute(budget_query, (cost_center_id, fiscal_year)).fetchall()
-        
         if not budget_rows:
             return {'details': [], 'total_budget': 0, 'total_actual': 0, 
                     'total_variance': 0, 'total_variance_pct': 0}
         
-        # 2. بناء شرط التاريخ
         date_condition = "strftime('%Y', je.date) = CAST(? AS TEXT)"
         date_params = [fiscal_year]
         if as_of_month:
             date_condition += " AND strftime('%m', je.date) <= ?"
             date_params.append(str(as_of_month).zfill(2))
         
-        # 3. لكل موازنة، حساب القيمة الفعلية
         result = []
         total_budget = 0.0
         total_actual = 0.0
-        
         for budget in budget_rows:
-            # الاستعلام عن القيمة الفعلية من توزيعات المركز
             actual_query = f"""
                 SELECT COALESCE(SUM(
                     CASE WHEN SUBSTR(?, 1, 1) IN ('1', '5') 
@@ -324,12 +374,9 @@ def get_budget_variance(cost_center_id, fiscal_year, as_of_month=None):
             
             variance = actual - budget['budget_amount']
             variance_pct = (variance / budget['budget_amount'] * 100) if budget['budget_amount'] != 0 else 0.0
-            
-            # تحديد الحالة (ملائم/غير ملائم)
             ac_type = _account_type_from_code(budget['account_code'] or '')
             favourable = (ac_type in ('revenue', 'income') and variance > 0) or \
                          (ac_type in ('expense', 'cost_of_sales') and variance < 0)
-            
             result.append({
                 'account_code': budget['account_code'],
                 'account_name': budget['account_name'],
@@ -340,10 +387,8 @@ def get_budget_variance(cost_center_id, fiscal_year, as_of_month=None):
                 'variance_pct': round(variance_pct, 2),
                 'status': 'favourable' if favourable else 'unfavourable'
             })
-            
             total_budget += budget['budget_amount']
             total_actual += actual
-        
         return {
             'details': result,
             'total_budget': total_budget,
@@ -374,13 +419,18 @@ def get_budgets_for_center(cost_center_id, fiscal_year=None):
     return [dict(r) for r in rows]
 
 def delete_budget(budget_id):
+    """حذف موازنة مع إدارة العمليات"""
     conn = get_connection()
     try:
+        conn.execute("BEGIN")
         conn.execute("DELETE FROM cost_center_budgets WHERE id = ?", (budget_id,))
         conn.commit()
         return True
-    except Exception as e: conn.rollback(); raise e
-    finally: conn.close()
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 # ===================== دوال مساعدة =====================
 def get_center_transactions(center_id, limit=50):
