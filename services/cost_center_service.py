@@ -96,7 +96,6 @@ def get_cost_center_tree():
     if not centers:
         return []
     
-    # تحويل إلى dict مع children
     tree = {}
     for c in centers:
         tree[c['id']] = {**dict(c), 'children': []}
@@ -130,14 +129,12 @@ def allocate_journal_line(journal_line_id, allocations):
     try:
         cursor = conn.cursor()
         
-        # حذف التوزيعات القديمة لنفس السطر (إن وجدت) لتجنب التكرار
         cursor.execute(
             "DELETE FROM cost_center_allocations WHERE journal_line_id = ?",
             (journal_line_id,)
         )
         
         for alloc in allocations:
-            # التحقق من صحة المركز
             center = cursor.execute(
                 "SELECT id FROM cost_centers WHERE id = ? AND is_active = 1",
                 (alloc['cost_center_id'],)
@@ -161,18 +158,19 @@ def allocate_journal_line(journal_line_id, allocations):
         conn.close()
 
 def get_allocations_for_entry(journal_entry_id):
-    """جلب توزيعات كل سطور قيد معين"""
+    """جلب توزيعات كل سطور قيد معين - متوافق مع account_name"""
     conn = get_connection()
     query = """
-        SELECT jl.id as line_id, jl.account_id, a.name as account_name,
-               a.code as account_code, jl.debit, jl.credit,
+        SELECT jl.id as line_id, jl.account_name, 
+               a.code as account_code, a.name as account_name_display,
+               jl.debit, jl.credit,
                cca.cost_center_id, cc.name as center_name, cc.code as center_code, 
                cca.amount, cca.percentage
         FROM journal_lines jl
         JOIN cost_center_allocations cca ON jl.id = cca.journal_line_id
         JOIN cost_centers cc ON cca.cost_center_id = cc.id
-        JOIN accounts a ON jl.account_id = a.id
-        WHERE jl.journal_entry_id = ?
+        LEFT JOIN accounts a ON a.name = jl.account_name
+        WHERE jl.entry_id = ?
         ORDER BY jl.id, cc.code
     """
     result = conn.execute(query, (journal_entry_id,)).fetchall()
@@ -212,7 +210,6 @@ def delete_allocation(allocation_id):
 def get_cost_center_balance(center_id, from_date=None, to_date=None):
     """
     رصيد مركز تكلفة (مجموع debit - credit) من القيود المرحلة له.
-    يمكن تصفيته بتاريخ.
     """
     conn = get_connection()
     query = """
@@ -221,15 +218,15 @@ def get_cost_center_balance(center_id, from_date=None, to_date=None):
             COALESCE(SUM(CASE WHEN jl.credit > 0 THEN cca.amount ELSE 0 END), 0) as total_credit
         FROM journal_lines jl
         JOIN cost_center_allocations cca ON jl.id = cca.journal_line_id
-        JOIN journal_entries je ON jl.journal_entry_id = je.id
+        JOIN journal_entries je ON jl.entry_id = je.id
         WHERE cca.cost_center_id = ?
     """
     params = [center_id]
     if from_date:
-        query += " AND je.entry_date >= ?"
+        query += " AND je.date >= ?"
         params.append(from_date)
     if to_date:
-        query += " AND je.entry_date <= ?"
+        query += " AND je.date <= ?"
         params.append(to_date)
     
     result = conn.execute(query, params).fetchone()
@@ -247,12 +244,11 @@ def get_cost_center_balance(center_id, from_date=None, to_date=None):
 def get_cost_center_income_statement(center_id, from_date, to_date):
     """
     قائمة دخل محسّنة لمركز تكلفة (إيرادات - مصروفات).
-    تراعي طبيعة الحساب (مدين/دائن) بدقة.
+    تعتمد على وجود عمود account_type في جدول accounts.
     """
     conn = get_connection()
     query = """
         SELECT 
-            a.id as account_id,
             a.code as account_code,
             a.name as account_name,
             a.account_type,
@@ -261,11 +257,11 @@ def get_cost_center_income_statement(center_id, from_date, to_date):
             COALESCE(SUM(cca.amount), 0) as allocated_amount
         FROM journal_lines jl
         JOIN cost_center_allocations cca ON jl.id = cca.journal_line_id
-        JOIN journal_entries je ON jl.journal_entry_id = je.id
-        JOIN accounts a ON jl.account_id = a.id
+        JOIN journal_entries je ON jl.entry_id = je.id
+        LEFT JOIN accounts a ON a.name = jl.account_name
         WHERE cca.cost_center_id = ? 
-          AND je.entry_date BETWEEN ? AND ?
-        GROUP BY a.id, a.code, a.name, a.account_type
+          AND je.date BETWEEN ? AND ?
+        GROUP BY a.code, a.name, a.account_type
         ORDER BY a.code
     """
     rows = conn.execute(query, (center_id, from_date, to_date)).fetchall()
@@ -276,11 +272,12 @@ def get_cost_center_income_statement(center_id, from_date, to_date):
     details = []
     
     for r in rows:
-        if r['account_type'] in ('revenue', 'income'):
-            net = r['total_credit'] - r['total_debit']  # الإيرادات طبيعتها دائنة
+        account_type = r['account_type'] or ''
+        if account_type in ('revenue', 'income'):
+            net = r['total_credit'] - r['total_debit']
             income += net
-        elif r['account_type'] in ('expense', 'cost_of_sales'):
-            net = r['total_debit'] - r['total_credit']  # المصروفات طبيعتها مدينة
+        elif account_type in ('expense', 'cost_of_sales'):
+            net = r['total_debit'] - r['total_credit']
             expenses += net
         else:
             net = r['total_debit'] - r['total_credit']
@@ -288,7 +285,7 @@ def get_cost_center_income_statement(center_id, from_date, to_date):
         details.append({
             'account_code': r['account_code'],
             'account_name': r['account_name'],
-            'account_type': r['account_type'],
+            'account_type': account_type,
             'debit': r['total_debit'],
             'credit': r['total_credit'],
             'net': net,
@@ -304,12 +301,11 @@ def get_cost_center_income_statement(center_id, from_date, to_date):
 
 def get_cost_center_trial_balance(center_id, from_date=None, to_date=None):
     """
-    ميزان مراجعة لمركز تكلفة واحد - أرصدة كل الحسابات المرتبطة بالمركز
+    ميزان مراجعة لمركز تكلفة واحد - يستخدم account_type إن وجد.
     """
     conn = get_connection()
     query = """
         SELECT 
-            a.id as account_id,
             a.code as account_code,
             a.name as account_name,
             a.account_type,
@@ -322,19 +318,19 @@ def get_cost_center_trial_balance(center_id, from_date=None, to_date=None):
             END as balance
         FROM journal_lines jl
         JOIN cost_center_allocations cca ON jl.id = cca.journal_line_id
-        JOIN journal_entries je ON jl.journal_entry_id = je.id
-        JOIN accounts a ON jl.account_id = a.id
+        JOIN journal_entries je ON jl.entry_id = je.id
+        LEFT JOIN accounts a ON a.name = jl.account_name
         WHERE cca.cost_center_id = ?
     """
     params = [center_id]
     if from_date:
-        query += " AND je.entry_date >= ?"
+        query += " AND je.date >= ?"
         params.append(from_date)
     if to_date:
-        query += " AND je.entry_date <= ?"
+        query += " AND je.date <= ?"
         params.append(to_date)
     
-    query += " GROUP BY a.id, a.code, a.name, a.account_type ORDER BY a.code"
+    query += " GROUP BY a.code, a.name, a.account_type ORDER BY a.code"
     rows = conn.execute(query, params).fetchall()
     conn.close()
     return rows
@@ -354,15 +350,15 @@ def get_all_centers_summary(from_date=None, to_date=None):
         FROM cost_centers cc
         LEFT JOIN cost_center_allocations cca ON cc.id = cca.cost_center_id
         LEFT JOIN journal_lines jl ON cca.journal_line_id = jl.id
-        LEFT JOIN journal_entries je ON jl.journal_entry_id = je.id
+        LEFT JOIN journal_entries je ON jl.entry_id = je.id
         WHERE cc.is_active = 1
     """
     params = []
     if from_date:
-        query += " AND (je.entry_date >= ? OR je.entry_date IS NULL)"
+        query += " AND (je.date >= ? OR je.date IS NULL)"
         params.append(from_date)
     if to_date:
-        query += " AND (je.entry_date <= ? OR je.entry_date IS NULL)"
+        query += " AND (je.date <= ? OR je.date IS NULL)"
         params.append(to_date)
     
     query += " GROUP BY cc.id, cc.code, cc.name ORDER BY total_allocated DESC"
@@ -395,24 +391,20 @@ def set_budget(cost_center_id, account_id, fiscal_year, amount):
 
 def get_budget_variance(cost_center_id, fiscal_year, as_of_month=None):
     """
-    مقارنة فعلي مقابل موازنة - نسخة محسّنة تراعي:
-    - طبيعة الحساب (مدين/دائن)
-    - إمكانية التصفية حتى شهر معين
-    - حساب نسبة الانحراف
+    مقارنة فعلي مقابل موازنة - تراعي طبيعة الحساب.
+    تحتاج إلى account_type في جدول accounts.
     """
     conn = get_connection()
     
-    # بناء شرط التاريخ
-    date_condition = "strftime('%Y', je.entry_date) = CAST(? AS TEXT)"
+    date_condition = "strftime('%Y', je.date) = CAST(? AS TEXT)"
     params = [fiscal_year]
     
     if as_of_month:
-        date_condition += " AND strftime('%m', je.entry_date) <= ?"
+        date_condition += " AND strftime('%m', je.date) <= ?"
         params.append(str(as_of_month).zfill(2))
     
     query = f"""
         SELECT 
-            a.id as account_id,
             a.code as account_code,
             a.name as account_name,
             a.account_type,
@@ -434,15 +426,15 @@ def get_budget_variance(cost_center_id, fiscal_year, as_of_month=None):
             ON cca.cost_center_id = b.cost_center_id 
             AND cca.journal_line_id IN (
                 SELECT jl2.id FROM journal_lines jl2
-                JOIN journal_entries je2 ON jl2.journal_entry_id = je2.id
+                JOIN journal_entries je2 ON jl2.entry_id = je2.id
                 WHERE {date_condition}
             )
         LEFT JOIN journal_lines jl ON jl.id = cca.journal_line_id
-        LEFT JOIN journal_entries je ON jl.journal_entry_id = je.id
+        LEFT JOIN journal_entries je ON jl.entry_id = je.id
         WHERE b.cost_center_id = ? 
           AND b.fiscal_year = ?
           AND b.budget_amount != 0
-        GROUP BY a.id, a.code, a.name, a.account_type, b.budget_amount
+        GROUP BY a.code, a.name, a.account_type, b.budget_amount
         ORDER BY a.code
     """
     
@@ -459,7 +451,6 @@ def get_budget_variance(cost_center_id, fiscal_year, as_of_month=None):
         variance_pct = (variance / r['budget_amount'] * 100) if r['budget_amount'] != 0 else 0
         
         result.append({
-            'account_id': r['account_id'],
             'account_code': r['account_code'],
             'account_name': r['account_name'],
             'account_type': r['account_type'],
@@ -484,9 +475,7 @@ def get_budget_variance(cost_center_id, fiscal_year, as_of_month=None):
     }
 
 def get_budgets_for_center(cost_center_id, fiscal_year=None):
-    """
-    جلب الموازنات المسجلة لمركز تكلفة (بدون مقارنة)
-    """
+    """جلب الموازنات المسجلة لمركز تكلفة"""
     conn = get_connection()
     query = """
         SELECT b.id, b.cost_center_id, b.account_id, 
@@ -522,28 +511,26 @@ def delete_budget(budget_id):
 # ===================== دوال مساعدة =====================
 
 def get_center_transactions(center_id, limit=50):
-    """
-    جلب آخر المعاملات المالية على مركز تكلفة
-    """
+    """جلب آخر المعاملات المالية على مركز تكلفة"""
     conn = get_connection()
     query = """
         SELECT 
             je.id as entry_id,
-            je.entry_date,
+            je.date as entry_date,
             je.description as entry_description,
             jl.id as line_id,
             jl.description as line_description,
             a.code as account_code,
-            a.name as account_name,
+            jl.account_name,
             jl.debit,
             jl.credit,
             cca.amount as allocated_amount
         FROM cost_center_allocations cca
         JOIN journal_lines jl ON cca.journal_line_id = jl.id
-        JOIN journal_entries je ON jl.journal_entry_id = je.id
-        JOIN accounts a ON jl.account_id = a.id
+        JOIN journal_entries je ON jl.entry_id = je.id
+        LEFT JOIN accounts a ON a.name = jl.account_name
         WHERE cca.cost_center_id = ?
-        ORDER BY je.entry_date DESC, je.id DESC
+        ORDER BY je.date DESC, je.id DESC
         LIMIT ?
     """
     rows = conn.execute(query, (center_id, limit)).fetchall()
@@ -551,8 +538,6 @@ def get_center_transactions(center_id, limit=50):
     return rows
 
 def validate_allocation_total(line_amount, allocations):
-    """
-    التحقق من أن مجموع التوزيعات يساوي مبلغ السطر
-    """
+    """التحقق من أن مجموع التوزيعات يساوي مبلغ السطر"""
     total = sum(a['amount'] for a in allocations)
     return abs(total - line_amount) < 0.01, total
