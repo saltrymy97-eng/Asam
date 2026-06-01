@@ -11,27 +11,28 @@ from ui.auth_ui import show as auth_show
 from services.auth_service import logout_session
 
 # استيراد الوحدات المفصولة كاملة (Services + UI)
-from ui.dashboard_ui import show as dashboard_show  # لوحة المعلومات (منفصلة)
-from ui.inventory_ui import show as inventory_show  # المخزون (منفصلة)
-from ui.hr_ui import show as hr_show  # الموارد البشرية (منفصلة)
-from ui.chart_ui import show as chart_show  # شجرة الحسابات (منفصلة)
-from ui.financial_ui import show as financial_show  # القوائم المالية (منفصلة)
-from ui.roles_ui import show as roles_show  # الصلاحيات (منفصلة)
-from ui.period_ui import show as period_show  # إغلاق الفترات (منفصلة)
-from ui.fifo_ui import show as fifo_show  # FIFO المخزون (منفصلة)
-from ui.payroll_ui import show as payroll_show  # كشف الرواتب (منفصلة)
-from ui.closing_ui import show as closing_show  # قيد إغلاق الحسابات (منفصلة)
-from ui.returns import show as returns_show  # مرتجعات البضاعة
-from ui.audit_log import show as audit_show  # سجل التدقيق
-from ui.backup import show as backup_show    # النسخ الاحتياطي
-from ui.pdf_reports import show as pdf_show  # تقارير HTML
-from ui.accounting_ui import show as accounting_show  # الحسابات (منفصلة)
-from ui.sales_ui import show as sales_show  # المبيعات (منفصلة)
-from ui.purchases_ui import show as purchases_show  # المشتريات (منفصلة)
-from ui.ai_ui import show as ai_show  # المساعد الذكي (منفصل ومطور)
-from ui.vat_ui import show as vat_show  # ضريبة القيمة المضافة (VAT)
-from ui.crm_ui import show as crm_show  # إدارة علاقات العملاء (CRM)
-from ui.assets_ui import show as assets_show  # 🆕 الأصول الثابتة والإهلاكات
+from ui.dashboard_ui import show as dashboard_show
+from ui.inventory_ui import show as inventory_show
+from ui.hr_ui import show as hr_show
+from ui.chart_ui import show as chart_show
+from ui.financial_ui import show as financial_show
+from ui.roles_ui import show as roles_show
+from ui.period_ui import show as period_show
+from ui.fifo_ui import show as fifo_show
+from ui.payroll_ui import show as payroll_show
+from ui.closing_ui import show as closing_show
+from ui.returns import show as returns_show
+from ui.audit_log import show as audit_show
+from ui.backup import show as backup_show
+from ui.pdf_reports import show as pdf_show
+from ui.accounting_ui import show as accounting_show
+from ui.sales_ui import show as sales_show
+from ui.purchases_ui import show as purchases_show
+from ui.ai_ui import show as ai_show
+from ui.vat_ui import show as vat_show
+from ui.crm_ui import show as crm_show
+from ui.assets_ui import show as assets_show
+from ui.cost_center_ui import show as cost_center_show  # 🆕 مراكز التكلفة
 
 st.set_page_config(page_title="XD ERP", layout="wide")
 
@@ -62,9 +63,10 @@ else:
                 "الحسابات",
                 "الموارد البشرية",
                 "إدارة العملاء",          # CRM
-                "الأصول الثابتة",         # 🆕 الأصول الثابتة
+                "الأصول الثابتة",         # الأصول الثابتة
                 "شجرة الحسابات",
                 "القوائم المالية",
+                "مراكز التكلفة",          # 🆕 مراكز التكلفة
                 "الصلاحيات",
                 "إغلاق الفترات",
                 "إغلاق الحسابات",
@@ -85,11 +87,12 @@ else:
                 "arrow-repeat",
                 "calculator",
                 "people",
-                "people-fill",            # أيقونة CRM
-                "building",               # 🆕 أيقونة الأصول الثابتة
-                "diagram-3",
-                "file-earmark-bar-graph",
-                "shield-lock",
+                "people-fill",            # CRM
+                "building",               # الأصول الثابتة
+                "diagram-3",              # شجرة الحسابات
+                "file-earmark-bar-graph", # القوائم المالية
+                "pie-chart",              # 🆕 أيقونة مراكز التكلفة
+                "shield-lock",            # الصلاحيات
                 "calendar-check",
                 "journal-x",
                 "boxes",
@@ -119,14 +122,16 @@ else:
         accounting_show()
     elif selected == "الموارد البشرية":
         hr_show()
-    elif selected == "إدارة العملاء":     # CRM
+    elif selected == "إدارة العملاء":
         crm_show()
-    elif selected == "الأصول الثابتة":    # 🆕 الأصول الثابتة
+    elif selected == "الأصول الثابتة":
         assets_show()
     elif selected == "شجرة الحسابات":
         chart_show()
     elif selected == "القوائم المالية":
         financial_show()
+    elif selected == "مراكز التكلفة":      # 🆕
+        cost_center_show()
     elif selected == "الصلاحيات":
         roles_show()
     elif selected == "إغلاق الفترات":
