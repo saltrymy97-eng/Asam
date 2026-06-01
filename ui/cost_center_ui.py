@@ -166,7 +166,7 @@ def show():
             st.info("لا توجد بيانات")
         st.markdown('</div>', unsafe_allow_html=True)
     
-    # ------------------------ تبويب 2: توزيع المعاملات (مُصلح) ------------------------
+    # ------------------------ تبويب 2: توزيع المعاملات (نظيف وديناميكي) ------------------------
     with tab2:
         st.markdown('<div class="glass-card">', unsafe_allow_html=True)
         st.subheader("📌 توزيع سطر قيد على مراكز التكلفة")
@@ -183,9 +183,10 @@ def show():
             st.markdown('</div>', unsafe_allow_html=True)
             st.stop()
         
+        # اختيار قيد
         entry_map = {e['id']: f"{e['id']} - {e['date']} - {e['description']}" for e in entries}
         selected_entry = st.selectbox("اختر القيد", options=list(entry_map.keys()),
-                                      format_func=lambda x: entry_map[x])
+                                      format_func=lambda x: entry_map[x], key="dist_entry")
         
         # جلب سطور القيد
         conn = database.get_connection()
@@ -200,67 +201,89 @@ def show():
             st.markdown('</div>', unsafe_allow_html=True)
             st.stop()
         
+        # اختيار سطر
         line_options = {l['id']: f"{l['account_name']} (مدين: {l['debit']:,.2f}, دائن: {l['credit']:,.2f})" for l in lines}
         selected_line_id = st.selectbox("اختر السطر", options=list(line_options.keys()),
-                                        format_func=lambda x: line_options[x])
+                                        format_func=lambda x: line_options[x], key="dist_line")
         
         selected_line = next(l for l in lines if l['id'] == selected_line_id)
         line_amount = selected_line['debit'] if selected_line['debit'] > 0 else selected_line['credit']
         st.write(f"المبلغ الإجمالي للسطر: **{line_amount:,.2f}**")
         
-        # واجهة التوزيع
         centers_list = ccs.get_all_cost_centers(active_only=True)
         if not centers_list:
             st.warning("لا توجد مراكز تكلفة نشطة")
-        else:
-            center_map = {c['id']: f"{c['code']} - {c['name']}" for c in centers_list}
-            alloc_data = []
-            remaining = line_amount
+            st.markdown('</div>', unsafe_allow_html=True)
+            st.stop()
+        
+        # عدد صفوف التوزيع (يبدأ بواحد)
+        if 'alloc_rows' not in st.session_state:
+            st.session_state.alloc_rows = 1
+        
+        center_map = {c['id']: f"{c['code']} - {c['name']}" for c in centers_list}
+        alloc_data = []
+        remaining = line_amount
+        
+        st.markdown("**حدد المراكز والنسب:**")
+        rows_to_remove = []
+        
+        for i in range(st.session_state.alloc_rows):
+            cols = st.columns([3, 2, 1, 1])
+            with cols[0]:
+                center = st.selectbox(
+                    f"المركز {i+1}",
+                    options=["-- اختر مركز --"] + list(center_map.keys()),
+                    format_func=lambda x: center_map.get(x, x) if x != "-- اختر مركز --" else x,
+                    key=f"cc_{i}"
+                )
+            with cols[1]:
+                amount = st.number_input(
+                    f"المبلغ {i+1}",
+                    min_value=0.0,
+                    max_value=float(remaining),
+                    step=0.01,
+                    key=f"amt_{i}"
+                )
+            with cols[2]:
+                perc = st.number_input(
+                    f"النسبة % {i+1}",
+                    min_value=0.0,
+                    max_value=100.0,
+                    step=1.0,
+                    key=f"perc_{i}"
+                )
+            with cols[3]:
+                if i > 0 and st.button("🗑️", key=f"del_{i}"):
+                    rows_to_remove.append(i)
             
-            st.markdown("**حدد المراكز (حتى 3 مراكز):**")
-            for i in range(3):
-                c1, c2, c3 = st.columns([3, 2, 1])
-                with c1:
-                    center = st.selectbox(
-                        f"المركز {i+1}",
-                        options=["-- لا يوجد --"] + list(center_map.keys()),
-                        format_func=lambda x: center_map.get(x, x) if x != "-- لا يوجد --" else x,
-                        key=f"cc_{i}"
-                    )
-                with c2:
-                    amount = st.number_input(
-                        f"المبلغ {i+1}",
-                        min_value=0.0,
-                        max_value=float(remaining),
-                        step=0.01,
-                        key=f"amt_{i}"
-                    )
-                with c3:
-                    perc = st.number_input(
-                        f"النسبة % {i+1}",
-                        min_value=0.0,
-                        max_value=100.0,
-                        step=1.0,
-                        key=f"perc_{i}"
-                    )
-                
-                if center != "-- لا يوجد --" and amount > 0:
-                    alloc_data.append({
-                        'cost_center_id': center,
-                        'amount': amount,
-                        'percentage': perc
-                    })
-                    remaining -= amount
-            
-            total_alloc = sum(a['amount'] for a in alloc_data)
-            if total_alloc > 0:
-                diff = line_amount - total_alloc
-                if abs(diff) < 0.01:
-                    st.success("المبلغ موزع بالكامل ✅")
-                else:
-                    st.warning(f"المتبقي: {diff:,.2f}")
-            
-            if st.button("💾 حفظ التوزيعات", key="save_dist"):
+            if center != "-- اختر مركز --" and amount > 0:
+                alloc_data.append({
+                    'cost_center_id': center,
+                    'amount': amount,
+                    'percentage': perc
+                })
+                remaining -= amount
+        
+        # تطبيق حذف الصفوف
+        for row_index in sorted(rows_to_remove, reverse=True):
+            st.session_state.alloc_rows = max(1, st.session_state.alloc_rows - 1)
+            st.rerun()
+        
+        total_alloc = sum(a['amount'] for a in alloc_data)
+        if total_alloc > 0:
+            diff = line_amount - total_alloc
+            if abs(diff) < 0.01:
+                st.success("المبلغ موزع بالكامل ✅")
+            else:
+                st.warning(f"المتبقي: {diff:,.2f}")
+        
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            if st.button("➕ إضافة مركز توزيع آخر", use_container_width=True):
+                st.session_state.alloc_rows += 1
+                st.rerun()
+        with col_btn2:
+            if st.button("💾 حفظ التوزيعات", type="primary", use_container_width=True):
                 if abs(total_alloc - line_amount) > 0.01:
                     st.error("يجب أن يساوي مجموع التوزيعات المبلغ الأصلي")
                 elif not alloc_data:
