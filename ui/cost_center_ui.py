@@ -6,44 +6,33 @@ from services import cost_center_service as ccs
 from services import closing_service as closing_service
 import database
 
-# ================== CSS زجاجي مع إخفاء المستطيلات الفارغة ==================
+# ================== CSS زجاجي نقي ومعدل بالكامل ==================
 def glass_style():
     st.markdown("""
     <style>
-    .glass-container {
-        background: rgba(255, 255, 255, 0.05);
-        backdrop-filter: blur(18px);
-        -webkit-backdrop-filter: blur(18px);
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        border-radius: 25px;
-        padding: 30px;
-        margin-bottom: 25px;
-        box-shadow: 0 20px 40px rgba(0,0,0,0.3);
-    }
+    /* تنسيق الحاوية الرئيسية للهيدر */
     .glass-header {
-        background: linear-gradient(135deg, rgba(139, 92, 246, 0.3), rgba(59, 130, 246, 0.3));
+        background: linear-gradient(135deg, rgba(139, 92, 246, 0.25), rgba(59, 130, 246, 0.25));
         backdrop-filter: blur(15px);
         -webkit-backdrop-filter: blur(15px);
         border-radius: 20px;
-        padding: 20px;
+        padding: 25px;
         text-align: center;
         margin-bottom: 30px;
-        border: 1px solid rgba(255,255,255,0.2);
+        border: 1px solid rgba(255,255,255,0.15);
     }
-    .glass-card {
-        background: rgba(255, 255, 255, 0.08);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-        border-radius: 18px;
-        padding: 20px;
-        margin-bottom: 20px;
-        border: 1px solid rgba(255,255,255,0.12);
-        transition: all 0.3s ease;
+    
+    /* جعل كروت وبلوكات Streamlit الافتراضية تأخذ المظهر الزجاجي تلقائياً دون الحاجة لكتابة HTML */
+    div[data-testid="stForm"], div[data-testid="stExpander"], .stAlert {
+        background: rgba(255, 255, 255, 0.05) !important;
+        backdrop-filter: blur(12px) !important;
+        -webkit-backdrop-filter: blur(12px) !important;
+        border-radius: 18px !important;
+        border: 1px solid rgba(255,255,255,0.12) !important;
+        padding: 20px !important;
+        margin-bottom: 20px !important;
     }
-    .glass-card:hover {
-        background: rgba(255, 255, 255, 0.12);
-        transform: translateY(-3px);
-    }
+    
     .kpi-number {
         font-size: 2.5rem;
         font-weight: 700;
@@ -52,7 +41,7 @@ def glass_style():
         -webkit-text-fill-color: transparent;
     }
     
-    /* تعديل التبويبات وإزالة الخلفيات السميكة والمستطيلات المحيطة بها */
+    /* تنسيق التبويبات العلويّة بنقاء عالي للتخلص من الحدود والمستطيلات المحيطة */
     div[data-testid="stTabs"] button {
         background: transparent !important;
         backdrop-filter: none !important;
@@ -67,67 +56,49 @@ def glass_style():
         border-bottom: 3px solid #a78bfa !important;
         color: white !important;
     }
-    div[data-testid="stTabs"] [data-fieldname="stTabBlock"] {
-        background: transparent !important;
-        border: none !important;
-    }
 
     /* تحسين حقول الإدخال ومنع اقتصاص النص من الأسفل */
     div[data-baseweb="input"] {
         background: rgba(255, 255, 255, 0.05) !important;
-        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
         border-radius: 10px !important;
         color: white !important;
-        height: 48px !important;  /* زيادة الارتفاع لمنع قطع الحروف */
-        padding: 4px 8px !important;
+        min-height: 45px !important; 
     }
     div[data-baseweb="input"] input {
         background: transparent !important;
         color: white !important;
-        line-height: 1.6 !important;
+        padding: 8px 12px !important;
     }
     div[data-baseweb="select"] {
         background: rgba(255, 255, 255, 0.05) !important;
-        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
         border-radius: 10px !important;
     }
+    
+    /* تنسيق الأزرار */
     button {
-        background: rgba(255, 255, 255, 0.1) !important;
+        background: rgba(255, 255, 255, 0.08) !important;
         backdrop-filter: blur(5px);
-        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
         color: white !important;
+        border-radius: 10px !important;
         transition: all 0.3s ease;
     }
     button:hover {
-        background: rgba(139, 92, 246, 0.3) !important;
+        background: rgba(139, 92, 246, 0.25) !important;
         border-color: #a78bfa !important;
     }
 
-    /* 🧹 إخفاء أي مستطيلات فارغة تماماً أو عناصر دائرية غامضة */
+    /* 🧹 تنظيف وإخفاء تام للمستطيلات والبلوكات الفارغة الناتجة عن الـ DOM */
     div[data-testid="stVerticalBlock"] > div:empty,
     div[data-testid="stHorizontalBlock"] > div:empty,
-    div[data-testid="element-container"]:empty {
+    div[data-testid="element-container"]:empty,
+    div[data-testid="stMarkdownContainer"]:empty {
         display: none !important;
         height: 0px !important;
         margin: 0px !important;
         padding: 0px !important;
-    }
-    
-    /* إلغاء مستطيلات الحدود الناتجة عن بلوكات المأخذ الافتراضي لـ Streamlit */
-    div[style*="background-color"][style*="border"] {
-        background-color: transparent !important;
-        border: none !important;
-    }
-    
-    /* إخفاء خلفية النموذج إذا كانت فارغة */
-    div[data-testid="stForm"] {
-        background: transparent !important;
-        border: none !important;
-        padding: 0px !important;
-    }
-    /* إخفاء المسافات الفارغة داخل التبويبات */
-    .stTabs div[data-testid="stVerticalBlock"] > div:empty {
-        display: none !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -137,8 +108,8 @@ def show():
     
     st.markdown("""
     <div class="glass-header">
-        <h1 style="color: white; font-size: 2.8rem; margin: 0;">🏢 مراكز التكلفة</h1>
-        <p style="color: #ccc; font-size: 1.1rem; margin-top: 5px;">إدارة متطورة لتحليل الأداء المالي حسب القطاعات</p>
+        <h1 style="color: white; font-size: 2.5rem; margin: 0; font-family: sans-serif;">🏢 مراكز التكلفة</h1>
+        <p style="color: #ccc; font-size: 1rem; margin-top: 8px;">إدارة متطورة لتحليل الأداء المالي حسب القطاعات</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -155,8 +126,7 @@ def show():
         col_left, col_right = st.columns([1, 1])
         
         with col_left:
-            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-            st.subheader("➕ إضافة micro جديد")
+            st.subheader("➕ إضافة مركز جديد")
             with st.form("add_cc_form"):
                 code = st.text_input("رمز المركز", placeholder="مثال: SALES-NORTH")
                 name = st.text_input("اسم المركز", placeholder="مبيعات المنطقة الشمالية")
@@ -179,27 +149,25 @@ def show():
                             st.rerun()
                         except ValueError as e:
                             st.error(str(e))
-            st.markdown('</div>', unsafe_allow_html=True)
         
         with col_right:
-            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
             st.subheader("📌 الشجرة التنظيمية")
-            tree = ccs.get_cost_center_tree()
-            def render_tree(nodes, indent=0):
-                for node in nodes:
-                    icon = "📁" if node['children'] else "📄"
-                    active_badge = "🟢" if node['is_active'] else "🔴"
-                    line = "&nbsp;&nbsp;&nbsp;&nbsp;" * indent + f"{icon} {active_badge} {node['code']} - {node['name']}"
-                    st.markdown(f"<div style='padding:4px 0; color:#eee;'>{line}</div>", unsafe_allow_html=True)
-                    if node['children']:
-                        render_tree(node['children'], indent+1)
-            if not tree:
-                st.info("لا توجد مراكز تكلفة حتى الآن")
-            else:
-                render_tree(tree)
-            st.markdown('</div>', unsafe_allow_html=True)
+            # وضع الشجرة داخل حاوية مخصصة لمنع التشتت
+            with st.container(border=True):
+                tree = ccs.get_cost_center_tree()
+                def render_tree(nodes, indent=0):
+                    for node in nodes:
+                        icon = "📁" if node['children'] else "📄"
+                        active_badge = "🟢" if node['is_active'] else "🔴"
+                        line = "&nbsp;&nbsp;&nbsp;&nbsp;" * indent + f"{icon} {active_badge} {node['code']} - {node['name']}"
+                        st.markdown(f"<div style='padding:4px 0; color:#eee;'>{line}</div>", unsafe_allow_html=True)
+                        if node['children']:
+                            render_tree(node['children'], indent+1)
+                if not tree:
+                    st.info("لا توجد مراكز تكلفة حتى الآن")
+                else:
+                    render_tree(tree)
         
-        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
         st.subheader("📋 جميع المراكز")
         centers = ccs.get_all_cost_centers(active_only=False)
         if centers:
@@ -221,11 +189,9 @@ def show():
                     st.rerun()
         else:
             st.info("لا توجد بيانات")
-        st.markdown('</div>', unsafe_allow_html=True)
     
     # ------------------------ تبويب 2: توزيع المعاملات ------------------------
     with tab2:
-        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
         st.subheader("📌 توزيع سطر قيد على مراكز التكلفة")
         
         conn = database.get_connection()
@@ -236,7 +202,6 @@ def show():
         
         if not entries:
             st.info("لا توجد قيود مسجلة")
-            st.markdown('</div>', unsafe_allow_html=True)
             st.stop()
         
         entry_map = {e['id']: f"{e['id']} - {e['date']} - {e['description']}" for e in entries}
@@ -252,7 +217,6 @@ def show():
         
         if not lines:
             st.warning("القيد لا يحتوي على سطور")
-            st.markdown('</div>', unsafe_allow_html=True)
             st.stop()
         
         line_options = {l['id']: f"{l['account_name']} (مدين: {l['debit']:,.2f}, دائن: {l['credit']:,.2f})" for l in lines}
@@ -266,7 +230,6 @@ def show():
         centers_list = ccs.get_all_cost_centers(active_only=True)
         if not centers_list:
             st.warning("لا توجد مراكز تكلفة نشطة")
-            st.markdown('</div>', unsafe_allow_html=True)
             st.stop()
         
         if 'alloc_rows' not in st.session_state:
@@ -339,12 +302,9 @@ def show():
                         st.success("تم حفظ التوزيعات بنجاح")
                     except Exception as e:
                         st.error(str(e))
-        
-        st.markdown('</div>', unsafe_allow_html=True)
     
     # ------------------------ تبويب 3: تحليل وتقارير ------------------------
     with tab3:
-        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
         st.subheader("📊 تحليل الأداء حسب المركز")
         centers = ccs.get_all_cost_centers(active_only=True)
         if centers:
@@ -359,20 +319,17 @@ def show():
                 
                 kpi1, kpi2, kpi3 = st.columns(3)
                 with kpi1:
-                    st.markdown('<div class="glass-card" style="text-align:center;">', unsafe_allow_html=True)
-                    st.markdown(f"<span class='kpi-number'>{balance['net']:,.2f}</span>", unsafe_allow_html=True)
-                    st.caption("صافي التدفق")
-                    st.markdown('</div>', unsafe_allow_html=True)
+                    with st.container(border=True):
+                        st.markdown(f"<div style='text-align:center;'><span class='kpi-number'>{balance['net']:,.2f}</span></div>", unsafe_allow_html=True)
+                        st.caption("صافي التدفق")
                 with kpi2:
-                    st.markdown('<div class="glass-card" style="text-align:center;">', unsafe_allow_html=True)
-                    st.markdown(f"<span class='kpi-number'>{income_stmt['income']:,.2f}</span>", unsafe_allow_html=True)
-                    st.caption("الإيرادات")
-                    st.markdown('</div>', unsafe_allow_html=True)
+                    with st.container(border=True):
+                        st.markdown(f"<div style='text-align:center;'><span class='kpi-number'>{income_stmt['income']:,.2f}</span></div>", unsafe_allow_html=True)
+                        st.caption("الإيرادات")
                 with kpi3:
-                    st.markdown('<div class="glass-card" style="text-align:center;">', unsafe_allow_html=True)
-                    st.markdown(f"<span class='kpi-number'>{income_stmt['expenses']:,.2f}</span>", unsafe_allow_html=True)
-                    st.caption("المصروفات")
-                    st.markdown('</div>', unsafe_allow_html=True)
+                    with st.container(border=True):
+                        st.markdown(f"<div style='text-align:center;'><span class='kpi-number'>{income_stmt['expenses']:,.2f}</span></div>", unsafe_allow_html=True)
+                        st.caption("المصروفات")
                 
                 fig = go.Figure(data=[
                     go.Bar(name='الإيرادات', x=['الإيرادات'], y=[income_stmt['income']], marker_color='#a78bfa'),
@@ -383,11 +340,9 @@ def show():
                 st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("لا توجد مراكز")
-        st.markdown('</div>', unsafe_allow_html=True)
     
     # ------------------------ تبويب 4: الموازنات التقديرية ------------------------
     with tab4:
-        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
         st.subheader("💰 الموازنة التقديرية للمراكز")
         centers = ccs.get_all_cost_centers(active_only=True)
         if centers:
@@ -432,11 +387,9 @@ def show():
                     st.rerun()
         else:
             st.info("لا توجد مراكز")
-        st.markdown('</div>', unsafe_allow_html=True)
 
     # ------------------------ تبويب 5: إقفال المراكز ------------------------
     with tab5:
-        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
         st.subheader("🔒 إقفال مركز تكلفة لسنة مالية")
         st.markdown("""
         هذه العملية تنشئ قيد إغلاق لمركز التكلفة المحدد، 
@@ -478,7 +431,6 @@ def show():
                     st.balloons()
                 else:
                     st.error(f"❌ فشل الإقفال: {error}")
-        st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     show()
