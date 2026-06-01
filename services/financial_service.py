@@ -1,4 +1,4 @@
-# services/financial_service.py - منطق القوائم المالية
+# services/financial_service.py - منطق القوائم المالية (مع دعم مراكز التكلفة)
 import sqlite3
 
 DB_PATH = "erp.db"
@@ -8,52 +8,87 @@ def get_conn():
     conn.row_factory = sqlite3.Row
     return conn
 
-def get_account_balance(account_code):
-    """جلب رصيد حساب محدد"""
+def get_account_balance(account_code, cost_center_id=None):
+    """
+    جلب رصيد حساب محدد (إجمالي مدين ودائن)
+    إذا تم تحديد cost_center_id، يتم حساب الرصيد من خلال توزيعات مراكز التكلفة فقط.
+    """
     conn = get_conn()
-    debit = conn.execute("SELECT COALESCE(SUM(debit),0) FROM journal_lines WHERE account_name=?", (account_code,)).fetchone()[0]
-    credit = conn.execute("SELECT COALESCE(SUM(credit),0) FROM journal_lines WHERE account_name=?", (account_code,)).fetchone()[0]
+    if cost_center_id:
+        # استخدام توزيعات مراكز التكلفة
+        debit = conn.execute("""
+            SELECT COALESCE(SUM(cca.amount), 0)
+            FROM cost_center_allocations cca
+            JOIN journal_lines jl ON cca.journal_line_id = jl.id
+            WHERE jl.account_name = ? AND cca.cost_center_id = ? AND jl.debit > 0
+        """, (account_code, cost_center_id)).fetchone()[0]
+        credit = conn.execute("""
+            SELECT COALESCE(SUM(cca.amount), 0)
+            FROM cost_center_allocations cca
+            JOIN journal_lines jl ON cca.journal_line_id = jl.id
+            WHERE jl.account_name = ? AND cca.cost_center_id = ? AND jl.credit > 0
+        """, (account_code, cost_center_id)).fetchone()[0]
+    else:
+        debit = conn.execute(
+            "SELECT COALESCE(SUM(debit),0) FROM journal_lines WHERE account_name=?",
+            (account_code,)
+        ).fetchone()[0]
+        credit = conn.execute(
+            "SELECT COALESCE(SUM(credit),0) FROM journal_lines WHERE account_name=?",
+            (account_code,)
+        ).fetchone()[0]
     conn.close()
     return debit, credit
 
-def get_accounts_by_prefix(prefix):
-    """جلب الحسابات المستخدمة في القيود"""
+def get_accounts_by_prefix(prefix, cost_center_id=None):
+    """
+    جلب الحسابات المستخدمة في القيود (أو في توزيعات مركز تكلفة معين)
+    """
     conn = get_conn()
-    accounts = conn.execute("""
-        SELECT DISTINCT jl.account_name as code
-        FROM journal_lines jl
-        WHERE jl.account_name LIKE ?
-        ORDER BY jl.account_name
-    """, (prefix + "%",)).fetchall()
-    
+    if cost_center_id:
+        accounts = conn.execute("""
+            SELECT DISTINCT jl.account_name as code
+            FROM journal_lines jl
+            JOIN cost_center_allocations cca ON jl.id = cca.journal_line_id
+            WHERE jl.account_name LIKE ? AND cca.cost_center_id = ?
+            ORDER BY jl.account_name
+        """, (prefix + "%", cost_center_id)).fetchall()
+    else:
+        accounts = conn.execute("""
+            SELECT DISTINCT jl.account_name as code
+            FROM journal_lines jl
+            WHERE jl.account_name LIKE ?
+            ORDER BY jl.account_name
+        """, (prefix + "%",)).fetchall()
+
     result = []
     for acc in accounts:
         code = acc["code"]
         name_row = conn.execute("SELECT name FROM accounts WHERE code=?", (code,)).fetchone()
         name = name_row["name"] if name_row else code
         result.append({"code": code, "name": name})
-    
+
     conn.close()
     return result
 
-def get_income_statement():
-    """قائمة الدخل"""
-    rev_accounts = get_accounts_by_prefix("4")
+def get_income_statement(cost_center_id=None):
+    """قائمة الدخل (يمكن فلترتها حسب مركز التكلفة)"""
+    rev_accounts = get_accounts_by_prefix("4", cost_center_id)
     revenue_list = []
     total_revenue = 0
     for acc in rev_accounts:
-        debit, credit = get_account_balance(acc["code"])
-        amount = credit - debit
+        debit, credit = get_account_balance(acc["code"], cost_center_id)
+        amount = credit - debit  # الإيرادات طبيعتها دائنة
         if amount != 0:
             total_revenue += amount
             revenue_list.append({"code": acc["code"], "name": acc["name"], "amount": amount})
 
-    exp_accounts = get_accounts_by_prefix("5")
+    exp_accounts = get_accounts_by_prefix("5", cost_center_id)
     expense_list = []
     total_expenses = 0
     for acc in exp_accounts:
-        debit, credit = get_account_balance(acc["code"])
-        amount = debit - credit
+        debit, credit = get_account_balance(acc["code"], cost_center_id)
+        amount = debit - credit  # المصروفات طبيعتها مدينة
         if amount != 0:
             total_expenses += amount
             expense_list.append({"code": acc["code"], "name": acc["name"], "amount": amount})
@@ -66,45 +101,60 @@ def get_income_statement():
         "net_income": total_revenue - total_expenses
     }
 
-def get_balance_sheet():
-    """الميزانية العمومية"""
-    asset_accounts = get_accounts_by_prefix("1")
+def get_balance_sheet(cost_center_id=None):
+    """الميزانية العمومية (يمكن فلترتها حسب مركز التكلفة)"""
+    # الأصول (1)
+    asset_accounts = get_accounts_by_prefix("1", cost_center_id)
     asset_list = []
     total_assets = 0
     for acc in asset_accounts:
-        debit, credit = get_account_balance(acc["code"])
+        debit, credit = get_account_balance(acc["code"], cost_center_id)
         amount = debit - credit
         if amount != 0:
             total_assets += amount
             asset_list.append({"code": acc["code"], "name": acc["name"], "amount": amount})
 
-    liab_accounts = get_accounts_by_prefix("2")
+    # الخصوم (2)
+    liab_accounts = get_accounts_by_prefix("2", cost_center_id)
     liability_list = []
     total_liabilities = 0
     for acc in liab_accounts:
-        debit, credit = get_account_balance(acc["code"])
-        amount = credit - debit
+        debit, credit = get_account_balance(acc["code"], cost_center_id)
+        amount = credit - debit  # الخصوم دائنة
         if amount != 0:
             total_liabilities += amount
             liability_list.append({"code": acc["code"], "name": acc["name"], "amount": amount})
 
-    eq_accounts = get_accounts_by_prefix("3")
+    # حقوق الملكية (3)
+    eq_accounts = get_accounts_by_prefix("3", cost_center_id)
     equity_list = []
     total_equity = 0
     for acc in eq_accounts:
-        debit, credit = get_account_balance(acc["code"])
+        debit, credit = get_account_balance(acc["code"], cost_center_id)
         amount = credit - debit
         if amount != 0:
             total_equity += amount
             equity_list.append({"code": acc["code"], "name": acc["name"], "amount": amount})
 
-    rev_debit = sum(get_account_balance(acc["code"])[0] for acc in get_accounts_by_prefix("4"))
-    rev_credit = sum(get_account_balance(acc["code"])[1] for acc in get_accounts_by_prefix("4"))
-    exp_debit = sum(get_account_balance(acc["code"])[0] for acc in get_accounts_by_prefix("5"))
-    exp_credit = sum(get_account_balance(acc["code"])[1] for acc in get_accounts_by_prefix("5"))
-    net = (rev_credit - rev_debit) - (exp_debit - exp_credit)
-    total_equity += net
-    equity_list.append({"code": "", "name": "صافي الدخل (أرباح محتجزة)", "amount": net})
+    # إضافة صافي الدخل إلى حقوق الملكية (إذا لم يتم التصفية حسب مركز، نضيف صافي الدخل من قائمة الدخل العامة)
+    if cost_center_id is None:
+        # صافي الدخل من الإيرادات (4) والمصروفات (5)
+        rev_accounts = get_accounts_by_prefix("4")
+        exp_accounts = get_accounts_by_prefix("5")
+        rev_debit = sum(get_account_balance(acc["code"])[0] for acc in rev_accounts)
+        rev_credit = sum(get_account_balance(acc["code"])[1] for acc in rev_accounts)
+        exp_debit = sum(get_account_balance(acc["code"])[0] for acc in exp_accounts)
+        exp_credit = sum(get_account_balance(acc["code"])[1] for acc in exp_accounts)
+        net_income = (rev_credit - rev_debit) - (exp_debit - exp_credit)
+        total_equity += net_income
+        equity_list.append({"code": "", "name": "صافي الدخل (أرباح محتجزة)", "amount": net_income})
+    else:
+        # بالنسبة لمركز تكلفة، قد لا يكون هناك حقوق ملكية بالمعنى التقليدي،
+        # ولكن يمكن إضافة صافي الدخل الخاص بالمركز
+        inc = get_income_statement(cost_center_id)
+        net_income_center = inc['net_income']
+        total_equity += net_income_center
+        equity_list.append({"code": "", "name": "صافي الدخل للمركز", "amount": net_income_center})
 
     return {
         "assets": asset_list,
