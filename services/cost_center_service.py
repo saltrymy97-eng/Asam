@@ -3,9 +3,8 @@ from datetime import datetime
 import database
 
 def get_connection():
-    """إنشاء اتصال مع دعم أسماء الأعمدة"""
     conn = database.get_connection()
-    conn.row_factory = sqlite3.Row   # هذا السطر يحل الخطأ
+    conn.row_factory = sqlite3.Row
     return conn
 
 # ===================== إدارة مراكز التكلفة =====================
@@ -51,20 +50,16 @@ def update_cost_center(center_id, code=None, name=None, parent_id=None, is_activ
     conn.close()
 
 def delete_cost_center(center_id):
-    """
-    حذف مركز تكلفة (فقط إذا لم يكن لديه أبناء أو توزيعات مرتبطة)
-    """
+    """حذف مركز تكلفة (فقط إذا لم يكن لديه أبناء أو توزيعات مرتبطة)"""
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        # التحقق من عدم وجود أبناء
         children = cursor.execute(
             "SELECT COUNT(*) as cnt FROM cost_centers WHERE parent_id = ?", (center_id,)
         ).fetchone()
         if children['cnt'] > 0:
             raise ValueError("لا يمكن حذف المركز لأن لديه مراكز فرعية. احذفها أولاً.")
         
-        # التحقق من عدم وجود توزيعات مرتبطة
         allocations = cursor.execute(
             "SELECT COUNT(*) as cnt FROM cost_center_allocations WHERE cost_center_id = ?", (center_id,)
         ).fetchone()
@@ -83,15 +78,16 @@ def delete_cost_center(center_id):
         conn.close()
 
 def get_all_cost_centers(active_only=True):
-    """جلب جميع مراكز التكلفة (مفيدة للـ dropdown)"""
+    """جلب جميع مراكز التكلفة (قواميس متوافقة مع pandas)"""
     conn = get_connection()
     query = "SELECT id, code, name, parent_id, is_active FROM cost_centers"
     if active_only:
         query += " WHERE is_active = 1"
     query += " ORDER BY code"
-    centers = conn.execute(query).fetchall()
+    rows = conn.execute(query).fetchall()
     conn.close()
-    return centers
+    # تحويل Row objects إلى قواميس عادية ليعمل pandas
+    return [dict(r) for r in rows]
 
 def get_cost_center_tree():
     """جلب المراكز كهيكل شجري للعرض"""
@@ -101,7 +97,7 @@ def get_cost_center_tree():
     
     tree = {}
     for c in centers:
-        tree[c['id']] = {**dict(c), 'children': []}
+        tree[c['id']] = {**c, 'children': []}
     
     roots = []
     for c in centers:
@@ -119,24 +115,19 @@ def get_cost_center_by_id(center_id):
         (center_id,)
     ).fetchone()
     conn.close()
-    return center
+    return dict(center) if center else None
 
 # ===================== توزيع القيود على المراكز =====================
 
 def allocate_journal_line(journal_line_id, allocations):
-    """
-    توزيع مبلغ سطر قيد على مراكز تكلفة.
-    allocations: قائمة من dict {cost_center_id, amount, percentage?}
-    """
+    """توزيع مبلغ سطر قيد على مراكز تكلفة."""
     conn = get_connection()
     try:
         cursor = conn.cursor()
-        
         cursor.execute(
             "DELETE FROM cost_center_allocations WHERE journal_line_id = ?",
             (journal_line_id,)
         )
-        
         for alloc in allocations:
             center = cursor.execute(
                 "SELECT id FROM cost_centers WHERE id = ? AND is_active = 1",
@@ -144,7 +135,6 @@ def allocate_journal_line(journal_line_id, allocations):
             ).fetchone()
             if not center:
                 raise ValueError(f"مركز التكلفة {alloc['cost_center_id']} غير موجود أو غير نشط")
-            
             cursor.execute(
                 "INSERT INTO cost_center_allocations (journal_line_id, cost_center_id, amount, percentage) VALUES (?, ?, ?, ?)",
                 (journal_line_id, alloc['cost_center_id'], alloc['amount'], alloc.get('percentage'))
@@ -161,7 +151,6 @@ def allocate_journal_line(journal_line_id, allocations):
         conn.close()
 
 def get_allocations_for_entry(journal_entry_id):
-    """جلب توزيعات كل سطور قيد معين - متوافق مع account_name"""
     conn = get_connection()
     query = """
         SELECT jl.id as line_id, jl.account_name, 
@@ -176,12 +165,11 @@ def get_allocations_for_entry(journal_entry_id):
         WHERE jl.entry_id = ?
         ORDER BY jl.id, cc.code
     """
-    result = conn.execute(query, (journal_entry_id,)).fetchall()
+    rows = conn.execute(query, (journal_entry_id,)).fetchall()
     conn.close()
-    return result
+    return [dict(r) for r in rows]
 
 def get_allocations_for_line(journal_line_id):
-    """جلب توزيعات سطر قيد واحد"""
     conn = get_connection()
     query = """
         SELECT cca.id, cca.cost_center_id, cc.name as center_name, cc.code as center_code,
@@ -191,12 +179,11 @@ def get_allocations_for_line(journal_line_id):
         WHERE cca.journal_line_id = ?
         ORDER BY cc.code
     """
-    result = conn.execute(query, (journal_line_id,)).fetchall()
+    rows = conn.execute(query, (journal_line_id,)).fetchall()
     conn.close()
-    return result
+    return [dict(r) for r in rows]
 
 def delete_allocation(allocation_id):
-    """حذف توزيع واحد"""
     conn = get_connection()
     try:
         conn.execute("DELETE FROM cost_center_allocations WHERE id = ?", (allocation_id,))
@@ -211,9 +198,6 @@ def delete_allocation(allocation_id):
 # ===================== تقارير مراكز التكلفة =====================
 
 def get_cost_center_balance(center_id, from_date=None, to_date=None):
-    """
-    رصيد مركز تكلفة (مجموع debit - credit) من القيود المرحلة له.
-    """
     conn = get_connection()
     query = """
         SELECT 
@@ -231,24 +215,17 @@ def get_cost_center_balance(center_id, from_date=None, to_date=None):
     if to_date:
         query += " AND je.date <= ?"
         params.append(to_date)
-    
     result = conn.execute(query, params).fetchone()
     conn.close()
-    
-    total_debit = result['total_debit'] or 0
-    total_credit = result['total_credit'] or 0
-    
-    return {
-        'total_debit': total_debit,
-        'total_credit': total_credit,
-        'net': total_debit - total_credit
-    }
+    if result:
+        return {
+            'total_debit': result['total_debit'] or 0,
+            'total_credit': result['total_credit'] or 0,
+            'net': (result['total_debit'] or 0) - (result['total_credit'] or 0)
+        }
+    return {'total_debit': 0, 'total_credit': 0, 'net': 0}
 
 def get_cost_center_income_statement(center_id, from_date, to_date):
-    """
-    قائمة دخل محسّنة لمركز تكلفة (إيرادات - مصروفات).
-    تعتمد على وجود عمود account_type في جدول accounts.
-    """
     conn = get_connection()
     query = """
         SELECT 
@@ -262,18 +239,15 @@ def get_cost_center_income_statement(center_id, from_date, to_date):
         JOIN cost_center_allocations cca ON jl.id = cca.journal_line_id
         JOIN journal_entries je ON jl.entry_id = je.id
         LEFT JOIN accounts a ON a.name = jl.account_name
-        WHERE cca.cost_center_id = ? 
-          AND je.date BETWEEN ? AND ?
+        WHERE cca.cost_center_id = ? AND je.date BETWEEN ? AND ?
         GROUP BY a.code, a.name, a.account_type
         ORDER BY a.code
     """
     rows = conn.execute(query, (center_id, from_date, to_date)).fetchall()
     conn.close()
-    
     income = 0
     expenses = 0
     details = []
-    
     for r in rows:
         account_type = r['account_type'] or ''
         if account_type in ('revenue', 'income'):
@@ -284,7 +258,6 @@ def get_cost_center_income_statement(center_id, from_date, to_date):
             expenses += net
         else:
             net = r['total_debit'] - r['total_credit']
-        
         details.append({
             'account_code': r['account_code'],
             'account_name': r['account_name'],
@@ -294,7 +267,6 @@ def get_cost_center_income_statement(center_id, from_date, to_date):
             'net': net,
             'allocated': r['allocated_amount']
         })
-    
     return {
         'income': income,
         'expenses': expenses,
@@ -303,9 +275,6 @@ def get_cost_center_income_statement(center_id, from_date, to_date):
     }
 
 def get_cost_center_trial_balance(center_id, from_date=None, to_date=None):
-    """
-    ميزان مراجعة لمركز تكلفة واحد - يستخدم account_type إن وجد.
-    """
     conn = get_connection()
     query = """
         SELECT 
@@ -332,16 +301,12 @@ def get_cost_center_trial_balance(center_id, from_date=None, to_date=None):
     if to_date:
         query += " AND je.date <= ?"
         params.append(to_date)
-    
     query += " GROUP BY a.code, a.name, a.account_type ORDER BY a.code"
     rows = conn.execute(query, params).fetchall()
     conn.close()
-    return rows
+    return [dict(r) for r in rows]
 
 def get_all_centers_summary(from_date=None, to_date=None):
-    """
-    ملخص جميع مراكز التكلفة - للمقارنة بين المراكز
-    """
     conn = get_connection()
     query = """
         SELECT 
@@ -363,18 +328,14 @@ def get_all_centers_summary(from_date=None, to_date=None):
     if to_date:
         query += " AND (je.date <= ? OR je.date IS NULL)"
         params.append(to_date)
-    
     query += " GROUP BY cc.id, cc.code, cc.name ORDER BY total_allocated DESC"
     rows = conn.execute(query, params).fetchall()
     conn.close()
-    return rows
+    return [dict(r) for r in rows]
 
 # ===================== موازنات المراكز =====================
 
 def set_budget(cost_center_id, account_id, fiscal_year, amount):
-    """
-    إضافة أو تحديث موازنة لحساب معين داخل مركز تكلفة لسنة مالية
-    """
     conn = get_connection()
     try:
         conn.execute(
@@ -393,19 +354,12 @@ def set_budget(cost_center_id, account_id, fiscal_year, amount):
         conn.close()
 
 def get_budget_variance(cost_center_id, fiscal_year, as_of_month=None):
-    """
-    مقارنة فعلي مقابل موازنة - تراعي طبيعة الحساب.
-    تحتاج إلى account_type في جدول accounts.
-    """
     conn = get_connection()
-    
     date_condition = "strftime('%Y', je.date) = CAST(? AS TEXT)"
     params = [fiscal_year]
-    
     if as_of_month:
         date_condition += " AND strftime('%m', je.date) <= ?"
         params.append(str(as_of_month).zfill(2))
-    
     query = f"""
         SELECT 
             a.code as account_code,
@@ -434,25 +388,19 @@ def get_budget_variance(cost_center_id, fiscal_year, as_of_month=None):
             )
         LEFT JOIN journal_lines jl ON jl.id = cca.journal_line_id
         LEFT JOIN journal_entries je ON jl.entry_id = je.id
-        WHERE b.cost_center_id = ? 
-          AND b.fiscal_year = ?
-          AND b.budget_amount != 0
+        WHERE b.cost_center_id = ? AND b.fiscal_year = ? AND b.budget_amount != 0
         GROUP BY a.code, a.name, a.account_type, b.budget_amount
         ORDER BY a.code
     """
-    
     params.extend([cost_center_id, fiscal_year])
     rows = conn.execute(query, params).fetchall()
     conn.close()
-    
     result = []
     total_budget = 0
     total_actual = 0
-    
     for r in rows:
         variance = r['actual'] - r['budget_amount']
         variance_pct = (variance / r['budget_amount'] * 100) if r['budget_amount'] != 0 else 0
-        
         result.append({
             'account_code': r['account_code'],
             'account_name': r['account_name'],
@@ -465,10 +413,8 @@ def get_budget_variance(cost_center_id, fiscal_year, as_of_month=None):
                                        (r['account_type'] in ('expense', 'cost_of_sales') and variance < 0))
                       else 'unfavourable'
         })
-        
         total_budget += r['budget_amount']
         total_actual += r['actual']
-    
     return {
         'details': result,
         'total_budget': total_budget,
@@ -478,7 +424,6 @@ def get_budget_variance(cost_center_id, fiscal_year, as_of_month=None):
     }
 
 def get_budgets_for_center(cost_center_id, fiscal_year=None):
-    """جلب الموازنات المسجلة لمركز تكلفة"""
     conn = get_connection()
     query = """
         SELECT b.id, b.cost_center_id, b.account_id, 
@@ -492,14 +437,12 @@ def get_budgets_for_center(cost_center_id, fiscal_year=None):
     if fiscal_year:
         query += " AND b.fiscal_year = ?"
         params.append(fiscal_year)
-    
     query += " ORDER BY a.code"
     rows = conn.execute(query, params).fetchall()
     conn.close()
-    return rows
+    return [dict(r) for r in rows]
 
 def delete_budget(budget_id):
-    """حذف موازنة"""
     conn = get_connection()
     try:
         conn.execute("DELETE FROM cost_center_budgets WHERE id = ?", (budget_id,))
@@ -511,10 +454,7 @@ def delete_budget(budget_id):
     finally:
         conn.close()
 
-# ===================== دوال مساعدة =====================
-
 def get_center_transactions(center_id, limit=50):
-    """جلب آخر المعاملات المالية على مركز تكلفة"""
     conn = get_connection()
     query = """
         SELECT 
@@ -538,9 +478,8 @@ def get_center_transactions(center_id, limit=50):
     """
     rows = conn.execute(query, (center_id, limit)).fetchall()
     conn.close()
-    return rows
+    return [dict(r) for r in rows]
 
 def validate_allocation_total(line_amount, allocations):
-    """التحقق من أن مجموع التوزيعات يساوي مبلغ السطر"""
     total = sum(a['amount'] for a in allocations)
     return abs(total - line_amount) < 0.01, total
