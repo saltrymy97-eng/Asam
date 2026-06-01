@@ -1,4 +1,4 @@
-# ui/accounting_ui.py - واجهة الحسابات (تصميم زجاجي فخم + قوائم منسدلة)
+# ui/accounting_ui.py - واجهة الحسابات (تصميم زجاجي فخم + قوائم منسدلة + مراكز التكلفة)
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -13,6 +13,7 @@ from services.accounting_service import (
     get_distinct_accounts
 )
 from services.audit_service import log_action
+from services import cost_center_service  # 🆕 مراكز التكلفة
 
 DB_PATH = "erp.db"
 
@@ -36,6 +37,15 @@ def get_accounts_list():
     conn.close()
     return [f"{a['code']} - {a['name']}" for a in accounts]
 
+def get_cost_centers_list():
+    """جلب قائمة مراكز التكلفة النشطة للاختيار"""
+    centers = cost_center_service.get_all_cost_centers(active_only=True)
+    if not centers:
+        return [], {}
+    options = [f"{c['code']} - {c['name']}" for c in centers]
+    mapping = {f"{c['code']} - {c['name']}": c['id'] for c in centers}
+    return options, mapping
+
 def show():
     st.markdown(f"""
     <div style="margin-bottom:2rem; text-align:right;">
@@ -51,6 +61,7 @@ def show():
         st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>تسجيل قيد يومية</h3>", unsafe_allow_html=True)
         
         accounts_list = get_accounts_list()
+        cc_options, cc_mapping = get_cost_centers_list()  # 🆕 مراكز التكلفة
         
         if not accounts_list:
             st.warning("لا توجد حسابات. أضف حسابات من شجرة الحسابات أولاً.")
@@ -62,7 +73,10 @@ def show():
                 st.markdown(f"<p style='color:{TEXT_SECONDARY}; margin-top:1rem;'>الأسطر المحاسبية (حتى 4 أسطر)</p>", unsafe_allow_html=True)
                 
                 lines = []
+                cost_center_allocations = []  # لتجميع توزيعات مراكز التكلفة
+                
                 for i in range(4):
+                    # سطر الحساب الأساسي
                     cols = st.columns([3, 2, 2])
                     account = cols[0].selectbox(
                         f"الحساب {i+1}",
@@ -71,10 +85,56 @@ def show():
                     )
                     debit = cols[1].number_input(f"مدين {i+1}", min_value=0.0, step=0.01, key=f"deb_{i}")
                     credit = cols[2].number_input(f"دائن {i+1}", min_value=0.0, step=0.01, key=f"cred_{i}")
+                    
                     if account:
-                        # 🆕 استخراج الجزء الأخير بعد آخر شرطة (الكود)
                         code = account.split(" - ")[-1]
                         lines.append({"account": code, "debit": debit, "credit": credit})
+                        
+                        # 🆕 توزيع مراكز التكلفة لهذا السطر
+                        if cc_options:
+                            with st.expander(f"🎯 توزيع مراكز التكلفة للسطر {i+1}", expanded=False):
+                                st.caption("يمكنك توزيع مبلغ السطر على حتى 3 مراكز تكلفة")
+                                allocs_for_line = []
+                                remaining_amount = debit if debit > 0 else credit  # المبلغ الأصلي
+                                
+                                for j in range(3):
+                                    c_cols = st.columns([3, 2, 2])
+                                    center_choice = c_cols[0].selectbox(
+                                        f"مركز التكلفة {j+1}",
+                                        ["-- لا يوجد --"] + cc_options,
+                                        key=f"cc_{i}_{j}"
+                                    )
+                                    if center_choice != "-- لا يوجد --":
+                                        center_id = cc_mapping[center_choice]
+                                        alloc_amount = c_cols[1].number_input(
+                                            f"المبلغ {j+1}",
+                                            min_value=0.0,
+                                            max_value=float(remaining_amount),
+                                            step=0.01,
+                                            key=f"cc_amt_{i}_{j}"
+                                        )
+                                        alloc_pct = c_cols[2].number_input(
+                                            f"% {j+1}",
+                                            min_value=0.0,
+                                            max_value=100.0,
+                                            step=1.0,
+                                            key=f"cc_pct_{i}_{j}"
+                                        )
+                                        if alloc_amount > 0:
+                                            allocs_for_line.append({
+                                                'cost_center_id': center_id,
+                                                'amount': alloc_amount,
+                                                'percentage': alloc_pct if alloc_pct > 0 else (alloc_amount / remaining_amount * 100 if remaining_amount > 0 else 0)
+                                            })
+                                
+                                if allocs_for_line:
+                                    total_alloc = sum(a['amount'] for a in allocs_for_line)
+                                    if abs(total_alloc - remaining_amount) > 0.01:
+                                        st.warning(f"مجموع التوزيعات ({total_alloc:,.2f}) لا يساوي مبلغ السطر ({remaining_amount:,.2f})")
+                                    cost_center_allocations.append({
+                                        'line_index': i,
+                                        'allocations': allocs_for_line
+                                    })
 
                 submitted = st.form_submit_button("💾 حفظ القيد", type="primary")
                 
@@ -89,7 +149,11 @@ def show():
                         if abs(total_debit - total_credit) > 0.001:
                             st.error(f"القيد غير متوازن! المدين: {total_debit:,.2f} ، الدائن: {total_credit:,.2f}")
                         else:
-                            entry_id, error = save_journal_entry(description, lines, entry_date.strftime("%Y-%m-%d"))
+                            # 🆕 تمرير توزيعات مراكز التكلفة إلى دالة الحفظ
+                            entry_id, error = save_journal_entry(
+                                description, lines, entry_date.strftime("%Y-%m-%d"),
+                                cost_center_allocations=cost_center_allocations if cost_center_allocations else None
+                            )
                             if error:
                                 st.error(f"فشل في حفظ القيد: {error}")
                             else:
@@ -100,7 +164,7 @@ def show():
                                     record_id=entry_id,
                                     new_value=f"البيان: {description}"
                                 )
-                                st.success("تم تسجيل القيد بنجاح")
+                                st.success("تم تسجيل القيد بنجاح مع توزيعات مراكز التكلفة")
                                 st.rerun()
 
         # عرض آخر القيود
@@ -114,10 +178,25 @@ def show():
             entry_ids = [e['id'] for e in entries]
             selected_entry = st.selectbox("اختر قيداً لعرض تفاصيله", entry_ids)
             if selected_entry:
-                details = get_entry_details(selected_entry)
+                details = get_entry_details(selected_entry)  # الآن تحتوي على cost_center_allocations
                 if details:
-                    df_details = pd.DataFrame(details)
-                    st.dataframe(df_details, use_container_width=True, hide_index=True)
+                    # عرض جدول الأسطر الرئيسي مع التوزيعات
+                    for idx, line in enumerate(details):
+                        with st.container():
+                            st.markdown(f"""
+                            <div style="background:{GLASS_BG}; border:1px solid {GLASS_BORDER}; 
+                                        border-radius:10px; padding:10px; margin-bottom:10px;">
+                                <strong>الحساب:</strong> {line['account_name']} &nbsp;&nbsp;
+                                <strong>مدين:</strong> {line['debit']:,.2f} &nbsp;&nbsp;
+                                <strong>دائن:</strong> {line['credit']:,.2f}
+                            </div>
+                            """, unsafe_allow_html=True)
+                            if line.get('cost_center_allocations'):
+                                st.caption("توزيع مراكز التكلفة:")
+                                alloc_df = pd.DataFrame(line['cost_center_allocations'])
+                                st.dataframe(alloc_df, use_container_width=True, hide_index=True)
+                            else:
+                                st.caption("لا يوجد توزيع لمراكز تكلفة")
                     total_d = sum(d['debit'] for d in details)
                     total_c = sum(d['credit'] for d in details)
                     st.markdown(f"**المجموع: مدين {total_d:,.2f} | دائن {total_c:,.2f}**")
