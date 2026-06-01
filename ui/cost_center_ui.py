@@ -6,21 +6,20 @@ from services import cost_center_service as ccs
 from services import closing_service
 import database
 
-# ================== CSS زجاجي (تم تعزيزه لإخفاء حدود الحقول) ==================
+# ================== CSS زجاجي مطور (يعالج جميع الملاحظات) ==================
 def glass_style():
     st.markdown("""
     <style>
-    /* البطاقات الزجاجية */
-    .glass-container {
-        background: rgba(255, 255, 255, 0.05);
-        backdrop-filter: blur(18px);
-        -webkit-backdrop-filter: blur(18px);
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        border-radius: 25px;
-        padding: 30px;
-        margin-bottom: 25px;
-        box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+    /* توجيه الصفحة لليمين */
+    .stApp {
+        direction: rtl;
     }
+    /* استثناء الحقول التي نكتب فيها إنجليزي مثل الكود */
+    input[type="text"], input[type="number"] {
+        text-align: right;
+    }
+
+    /* البطاقات الزجاجية */
     .glass-header {
         background: linear-gradient(135deg, rgba(139, 92, 246, 0.3), rgba(59, 130, 246, 0.3));
         backdrop-filter: blur(15px);
@@ -52,6 +51,7 @@ def glass_style():
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
     }
+    /* تبويبات محسنة بمساحة أفقية */
     div[data-testid="stTabs"] button {
         background: rgba(255,255,255,0.05) !important;
         backdrop-filter: blur(10px);
@@ -59,6 +59,8 @@ def glass_style():
         border: 1px solid rgba(255,255,255,0.1) !important;
         color: #ddd !important;
         font-weight: 500;
+        padding: 8px 20px !important;  /* زيادة padding الأفقي */
+        margin: 0 4px !important;      /* تباعد بسيط بين التبويبات */
     }
     div[data-testid="stTabs"] button[aria-selected="true"] {
         background: linear-gradient(135deg, rgba(139,92,246,0.3), rgba(59,130,246,0.3)) !important;
@@ -66,7 +68,7 @@ def glass_style():
         color: white !important;
     }
 
-    /* 🆕 جعل حقول الإدخال زجاجية وبدون مستطيلات بيضاء */
+    /* جعل حقول الإدخال زجاجية مع إصلاح النص المقطوع */
     div[data-baseweb="input"] {
         background: rgba(255, 255, 255, 0.05) !important;
         border: 1px solid rgba(255, 255, 255, 0.2) !important;
@@ -76,12 +78,16 @@ def glass_style():
     div[data-baseweb="input"] input {
         background: transparent !important;
         color: white !important;
+        padding: 12px 12px !important;  /* padding رأسي كافٍ */
+        line-height: 1.6 !important;    /* يمنح الحروف مساحة للتنفس */
     }
+    /* تحسين شكل selectbox */
     div[data-baseweb="select"] {
         background: rgba(255, 255, 255, 0.05) !important;
         border: 1px solid rgba(255, 255, 255, 0.2) !important;
         border-radius: 10px !important;
     }
+    /* تنسيق الأزرار */
     button {
         background: rgba(255, 255, 255, 0.1) !important;
         backdrop-filter: blur(5px);
@@ -102,18 +108,18 @@ def show():
     # ================ الرأس ================
     st.markdown("""
     <div class="glass-header">
-        <h1 style="color: white; font-size: 2.8rem; margin: 0;">🏢 مراكز التكلفة</h1>
+        <h1 style="color: white; font-size: 2.8rem; margin: 0;">:material/account_tree: مراكز التكلفة</h1>
         <p style="color: #ccc; font-size: 1.1rem; margin-top: 5px;">إدارة متطورة لتحليل الأداء المالي حسب القطاعات</p>
     </div>
     """, unsafe_allow_html=True)
     
-    # ================ التبويبات ================
+    # ================ التبويبات (مع أيقونات مادية) ================
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📋 إدارة المراكز",
-        "📊 توزيع المعاملات",
-        "📈 تحليل وتقارير",
-        "💰 الموازنات التقديرية",
-        "🔒 إقفال المراكز"
+        ":material/edit_note: إدارة المراكز",
+        ":material/account_tree: توزيع المعاملات",
+        ":material/analytics: تحليل وتقارير",
+        ":material/request_quote: الموازنات",
+        ":material/lock: إقفال المراكز"
     ])
     
     # ------------------------ تبويب 1: إدارة المراكز ------------------------
@@ -121,51 +127,49 @@ def show():
         col_left, col_right = st.columns([1, 1])
         
         with col_left:
-            with st.container():
-                st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-                st.subheader("➕ إضافة مركز جديد")
-                with st.form("add_cc_form"):
-                    code = st.text_input("رمز المركز", placeholder="مثال: SALES-NORTH")
-                    name = st.text_input("اسم المركز", placeholder="مبيعات المنطقة الشمالية")
-                    all_centers = ccs.get_all_cost_centers(active_only=True)
-                    parent_map = {0: "لا يوجد (مركز رئيسي)"}
-                    for c in all_centers:
-                        parent_map[c['id']] = f"{c['code']} - {c['name']}"
-                    parent_id = st.selectbox("المركز الأب", options=list(parent_map.keys()),
-                                             format_func=lambda x: parent_map[x])
-                    parent_id = None if parent_id == 0 else parent_id
-                    
-                    submitted = st.form_submit_button("✅ إضافة")
-                    if submitted:
-                        if not code or not name:
-                            st.error("الرجاء إدخال الرمز والاسم")
-                        else:
-                            try:
-                                ccs.create_cost_center(code, name, parent_id)
-                                st.success("تمت الإضافة بنجاح")
-                                st.rerun()
-                            except ValueError as e:
-                                st.error(str(e))
-                st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+            st.subheader("➕ إضافة مركز جديد")
+            with st.form("add_cc_form"):
+                code = st.text_input("رمز المركز", placeholder="مثال: SALES-NORTH")
+                name = st.text_input("اسم المركز", placeholder="مبيعات المنطقة الشمالية")
+                all_centers = ccs.get_all_cost_centers(active_only=True)
+                parent_map = {0: "لا يوجد (مركز رئيسي)"}
+                for c in all_centers:
+                    parent_map[c['id']] = f"{c['code']} - {c['name']}"
+                parent_id = st.selectbox("المركز الأب", options=list(parent_map.keys()),
+                                         format_func=lambda x: parent_map[x])
+                parent_id = None if parent_id == 0 else parent_id
+                
+                submitted = st.form_submit_button("✅ إضافة")
+                if submitted:
+                    if not code or not name:
+                        st.error("الرجاء إدخال الرمز والاسم")
+                    else:
+                        try:
+                            ccs.create_cost_center(code, name, parent_id)
+                            st.success("تمت الإضافة بنجاح")
+                            st.rerun()
+                        except ValueError as e:
+                            st.error(str(e))
+            st.markdown('</div>', unsafe_allow_html=True)
         
         with col_right:
-            with st.container():
-                st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-                st.subheader("📌 الشجرة التنظيمية")
-                tree = ccs.get_cost_center_tree()
-                def render_tree(nodes, indent=0):
-                    for node in nodes:
-                        icon = "📁" if node['children'] else "📄"
-                        active_badge = "🟢" if node['is_active'] else "🔴"
-                        line = "&nbsp;&nbsp;&nbsp;&nbsp;" * indent + f"{icon} {active_badge} {node['code']} - {node['name']}"
-                        st.markdown(f"<div style='padding:4px 0; color:#eee;'>{line}</div>", unsafe_allow_html=True)
-                        if node['children']:
-                            render_tree(node['children'], indent+1)
-                if not tree:
-                    st.info("لا توجد مراكز تكلفة حتى الآن")
-                else:
-                    render_tree(tree)
-                st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+            st.subheader("📌 الشجرة التنظيمية")
+            tree = ccs.get_cost_center_tree()
+            def render_tree(nodes, indent=0):
+                for node in nodes:
+                    icon = "📁" if node['children'] else "📄"
+                    active_badge = "🟢" if node['is_active'] else "🔴"
+                    line = "&nbsp;&nbsp;&nbsp;&nbsp;" * indent + f"{icon} {active_badge} {node['code']} - {node['name']}"
+                    st.markdown(f"<div style='padding:4px 0; color:#eee;'>{line}</div>", unsafe_allow_html=True)
+                    if node['children']:
+                        render_tree(node['children'], indent+1)
+            if not tree:
+                st.info("لا توجد مراكز تكلفة حتى الآن")
+            else:
+                render_tree(tree)
+            st.markdown('</div>', unsafe_allow_html=True)
         
         # قائمة المراكز
         st.markdown('<div class="glass-card">', unsafe_allow_html=True)
