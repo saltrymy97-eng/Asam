@@ -3,7 +3,10 @@ from datetime import datetime
 import database
 
 def get_connection():
-    return database.get_connection()
+    """إنشاء اتصال مع دعم أسماء الأعمدة"""
+    conn = database.get_connection()
+    conn.row_factory = sqlite3.Row   # هذا السطر يحل الخطأ
+    return conn
 
 # ===================== إدارة مراكز التكلفة =====================
 
