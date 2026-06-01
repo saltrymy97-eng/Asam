@@ -6,20 +6,20 @@ from services import cost_center_service as ccs
 from services import closing_service
 import database
 
-# ================== CSS زجاجي مطور (يعالج جميع الملاحظات) ==================
+# ================== CSS زجاجي ==================
 def glass_style():
     st.markdown("""
     <style>
-    /* توجيه الصفحة لليمين */
-    .stApp {
-        direction: rtl;
+    .glass-container {
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 25px;
+        padding: 30px;
+        margin-bottom: 25px;
+        box-shadow: 0 20px 40px rgba(0,0,0,0.3);
     }
-    /* استثناء الحقول التي نكتب فيها إنجليزي مثل الكود */
-    input[type="text"], input[type="number"] {
-        text-align: right;
-    }
-
-    /* البطاقات الزجاجية */
     .glass-header {
         background: linear-gradient(135deg, rgba(139, 92, 246, 0.3), rgba(59, 130, 246, 0.3));
         backdrop-filter: blur(15px);
@@ -51,7 +51,6 @@ def glass_style():
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
     }
-    /* تبويبات محسنة بمساحة أفقية */
     div[data-testid="stTabs"] button {
         background: rgba(255,255,255,0.05) !important;
         backdrop-filter: blur(10px);
@@ -59,16 +58,12 @@ def glass_style():
         border: 1px solid rgba(255,255,255,0.1) !important;
         color: #ddd !important;
         font-weight: 500;
-        padding: 8px 20px !important;  /* زيادة padding الأفقي */
-        margin: 0 4px !important;      /* تباعد بسيط بين التبويبات */
     }
     div[data-testid="stTabs"] button[aria-selected="true"] {
         background: linear-gradient(135deg, rgba(139,92,246,0.3), rgba(59,130,246,0.3)) !important;
         border-bottom: 2px solid #a78bfa !important;
         color: white !important;
     }
-
-    /* جعل حقول الإدخال زجاجية مع إصلاح النص المقطوع */
     div[data-baseweb="input"] {
         background: rgba(255, 255, 255, 0.05) !important;
         border: 1px solid rgba(255, 255, 255, 0.2) !important;
@@ -78,16 +73,12 @@ def glass_style():
     div[data-baseweb="input"] input {
         background: transparent !important;
         color: white !important;
-        padding: 12px 12px !important;  /* padding رأسي كافٍ */
-        line-height: 1.6 !important;    /* يمنح الحروف مساحة للتنفس */
     }
-    /* تحسين شكل selectbox */
     div[data-baseweb="select"] {
         background: rgba(255, 255, 255, 0.05) !important;
         border: 1px solid rgba(255, 255, 255, 0.2) !important;
         border-radius: 10px !important;
     }
-    /* تنسيق الأزرار */
     button {
         background: rgba(255, 255, 255, 0.1) !important;
         backdrop-filter: blur(5px);
@@ -105,21 +96,19 @@ def glass_style():
 def show():
     glass_style()
     
-    # ================ الرأس ================
     st.markdown("""
     <div class="glass-header">
-        <h1 style="color: white; font-size: 2.8rem; margin: 0;">:material/account_tree: مراكز التكلفة</h1>
+        <h1 style="color: white; font-size: 2.8rem; margin: 0;">🏢 مراكز التكلفة</h1>
         <p style="color: #ccc; font-size: 1.1rem; margin-top: 5px;">إدارة متطورة لتحليل الأداء المالي حسب القطاعات</p>
     </div>
     """, unsafe_allow_html=True)
     
-    # ================ التبويبات (مع أيقونات مادية) ================
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        ":material/edit_note: إدارة المراكز",
-        ":material/account_tree: توزيع المعاملات",
-        ":material/analytics: تحليل وتقارير",
-        ":material/request_quote: الموازنات",
-        ":material/lock: إقفال المراكز"
+        "📋 إدارة المراكز",
+        "📊 توزيع المعاملات",
+        "📈 تحليل وتقارير",
+        "💰 الموازنات التقديرية",
+        "🔒 إقفال المراكز"
     ])
     
     # ------------------------ تبويب 1: إدارة المراكز ------------------------
@@ -171,7 +160,6 @@ def show():
                 render_tree(tree)
             st.markdown('</div>', unsafe_allow_html=True)
         
-        # قائمة المراكز
         st.markdown('<div class="glass-card">', unsafe_allow_html=True)
         st.subheader("📋 جميع المراكز")
         centers = ccs.get_all_cost_centers(active_only=False)
@@ -196,7 +184,7 @@ def show():
             st.info("لا توجد بيانات")
         st.markdown('</div>', unsafe_allow_html=True)
     
-    # ------------------------ تبويب 2: توزيع المعاملات (ديناميكي ونظيف) ------------------------
+    # ------------------------ تبويب 2: توزيع المعاملات ------------------------
     with tab2:
         st.markdown('<div class="glass-card">', unsafe_allow_html=True)
         st.subheader("📌 توزيع سطر قيد على مراكز التكلفة")
