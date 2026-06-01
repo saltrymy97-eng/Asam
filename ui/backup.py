@@ -1,7 +1,9 @@
-# ui/backup.py - النسخ الاحتياطي (واجهة زجاجية فخمة + تحميل ورفع)
+# ui/backup.py - النسخ الاحتياطي (واجهة زجاجية + تحميل ZIP ورفع)
 import streamlit as st
 import pandas as pd
 import os
+import zipfile
+import io
 from services.backup_service import (
     create_backup,
     get_backup_list,
@@ -86,52 +88,82 @@ def show():
         })
         st.dataframe(df[["رقم", "اسم الملف", "الحجم (KB)", "تاريخ الإنشاء", "النوع"]], use_container_width=True, hide_index=True)
 
-        # ---------- تحميل نسخة على الجهاز (مع إصلاح الجوال) ----------
+        # ---------- تحميل نسخة كـ ZIP (يعمل على جميع الأجهزة) ----------
         st.markdown("---")
         st.markdown(f"<h3 style='color:{TEXT_PRIMARY};'>📥 تحميل نسخة على الجهاز</h3>", unsafe_allow_html=True)
+        st.caption("يتم تحميل النسخة بصيغة ZIP لتجنب مشاكل التوافق مع الجوال.")
         
         backup_files = [b['filename'] for b in backups]
         selected_download = st.selectbox("اختر نسخة للتحميل", backup_files, key="download_select")
         
         filepath = os.path.join(BACKUP_DIR, selected_download)
         if os.path.exists(filepath):
-            with open(filepath, "rb") as f:
-                st.download_button(
-                    label=f"📥 تحميل {selected_download}",
-                    data=f,
-                    file_name=selected_download,
-                    mime="application/x-sqlite3",  # 🆕 إصلاح مشكلة الجوال
-                    key="download_btn"
-                )
+            # ضغط الملف إلى ZIP
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.write(filepath, selected_download)
+            
+            st.download_button(
+                label=f"📥 تحميل {selected_download}",
+                data=zip_buffer.getvalue(),
+                file_name=selected_download.replace(".db", ".zip"),
+                mime="application/zip",
+                key="download_btn"
+            )
         else:
             st.error("الملف غير موجود على القرص. ربما تم حذفه.")
 
-        # ---------- رفع نسخة من الجهاز ----------
+        # ---------- رفع نسخة من الجهاز (يدعم .db و .zip) ----------
         st.markdown("---")
         st.markdown(f"<h3 style='color:{TEXT_PRIMARY};'>📤 رفع نسخة من الجهاز</h3>", unsafe_allow_html=True)
-        uploaded_file = st.file_uploader("اختر ملف النسخة الاحتياطية (.db)", type="db")
+        st.caption("ارفع ملف قاعدة البيانات (.db) أو ملف ZIP مضغوط يحتوي على .db.")
+        
+        uploaded_file = st.file_uploader("اختر الملف", type=["db", "zip"], key="upload_backup")
         if uploaded_file is not None:
-            # حفظ الملف المرفوع في مجلد backups
-            save_path = os.path.join(BACKUP_DIR, uploaded_file.name)
-            with open(save_path, "wb") as f:
-                f.write(uploaded_file.getvalue())
-            st.success(f"✅ تم رفع النسخة: {uploaded_file.name}")
-            if st.button("🔄 استعادة هذه النسخة الآن", type="primary"):
-                success = restore_backup(uploaded_file.name)
-                if success:
-                    st.success("✅ تمت الاستعادة بنجاح! سيتم إعادة تحميل النظام...")
-                    st.rerun()
-                else:
-                    st.error("❌ فشلت الاستعادة. تأكد من صلاحية الملف.")
+            # إذا كان الملف ZIP، نستخرج ملف .db منه
+            if uploaded_file.name.endswith(".zip"):
+                with zipfile.ZipFile(uploaded_file) as zf:
+                    # نبحث عن أول ملف .db داخل الأرشيف
+                    db_files = [f for f in zf.namelist() if f.endswith(".db")]
+                    if not db_files:
+                        st.error("لم يتم العثور على ملف قاعدة بيانات (.db) داخل الأرشيف.")
+                    else:
+                        # استخراج أول ملف .db
+                        extracted_name = db_files[0]
+                        zf.extract(extracted_name, BACKUP_DIR)
+                        saved_path = os.path.join(BACKUP_DIR, extracted_name)
+                        st.success(f"✅ تم استخراج واستيراد: {extracted_name}")
+                        
+                        if st.button("🔄 استعادة النسخة المستوردة", key="restore_uploaded_zip"):
+                            success = restore_backup(extracted_name)
+                            if success:
+                                st.success("✅ تمت الاستعادة بنجاح!")
+                                st.rerun()
+                            else:
+                                st.error("❌ فشلت الاستعادة.")
+            else:
+                # ملف .db مباشر
+                save_path = os.path.join(BACKUP_DIR, uploaded_file.name)
+                with open(save_path, "wb") as f:
+                    f.write(uploaded_file.getvalue())
+                st.success(f"✅ تم رفع النسخة: {uploaded_file.name}")
+                
+                if st.button("🔄 استعادة هذه النسخة الآن", key="restore_uploaded_db"):
+                    success = restore_backup(uploaded_file.name)
+                    if success:
+                        st.success("✅ تمت الاستعادة بنجاح!")
+                        st.rerun()
+                    else:
+                        st.error("❌ فشلت الاستعادة.")
 
-        # ---------- استعادة نسخة احتياطية من القائمة ----------
+        # ---------- استعادة نسخة من القائمة ----------
         st.markdown("---")
         st.markdown(f"<h3 style='color:{TEXT_PRIMARY};'>🔄 استعادة نسخة احتياطية</h3>", unsafe_allow_html=True)
         
         selected_backup = st.selectbox("اختر نسخة للاستعادة", backup_files, key="restore_select")
         
         if st.button("⚠️ استعادة هذه النسخة", type="secondary"):
-            st.warning("هل أنت متأكد؟ سيتم استبدال قاعدة البيانات الحالية بالنسخة المحددة.")
+            st.warning("سيتم استبدال قاعدة البيانات الحالية. هل أنت متأكد؟")
             if st.button("نعم، استعد النسخة", key="confirm_restore"):
                 success = restore_backup(selected_backup)
                 if success:
