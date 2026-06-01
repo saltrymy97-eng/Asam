@@ -1,4 +1,4 @@
-# services/ai_service.py – منطق المساعد الذكي المطور (فهم عميق للأعمال)
+# services/ai_service.py – منطق المساعد الذكي المطور (فهم عميق للأعمال + تحليل مراكز التكلفة)
 import sqlite3
 from datetime import datetime
 from groq import Groq
@@ -210,3 +210,175 @@ def get_top_suppliers(limit=5):
     """, (limit,)).fetchall()
     conn.close()
     return [dict(s) for s in suppliers]
+
+# ===================== 🆕 دوال تحليل مراكز التكلفة =====================
+
+def get_cost_centers_summary_for_ai():
+    """
+    جمع ملخص لجميع مراكز التكلفة مع بياناتها المالية للذكاء الاصطناعي
+    """
+    from services import cost_center_service as ccs
+    
+    centers = ccs.get_all_cost_centers(active_only=True)
+    if not centers:
+        return None
+    
+    summary = []
+    for center in centers:
+        center_id = center['id']
+        balance = ccs.get_cost_center_balance(center_id)
+        # نجلب أيضاً قائمة الدخل لآخر سنة تقريباً
+        income_stmt = ccs.get_cost_center_income_statement(center_id, '2020-01-01', datetime.now().strftime('%Y-%m-%d'))
+        summary.append({
+            'code': center['code'],
+            'name': center['name'],
+            'net_balance': balance['net'],
+            'income': income_stmt['income'],
+            'expenses': income_stmt['expenses'],
+            'net_profit': income_stmt['net_profit']
+        })
+    return summary
+
+def analyze_cost_center_performance(center_id):
+    """
+    تحليل أداء مركز تكلفة محدد باستخدام الذكاء الاصطناعي
+    """
+    from services import cost_center_service as ccs
+    
+    center = ccs.get_cost_center_by_id(center_id)
+    if not center:
+        return "مركز التكلفة غير موجود"
+    
+    # جمع البيانات
+    balance = ccs.get_cost_center_balance(center_id)
+    income_stmt = ccs.get_cost_center_income_statement(center_id, '2020-01-01', datetime.now().strftime('%Y-%m-%d'))
+    transactions = ccs.get_center_transactions(center_id, limit=20)
+    
+    # تجهيز النص للذكاء الاصطناعي
+    data_text = f"""
+    مركز التكلفة: {center['code']} - {center['name']}
+    الحالة: {'نشط' if center['is_active'] else 'غير نشط'}
+    
+    الملخص المالي:
+    - إجمالي المدين: {balance['total_debit']:,.2f}
+    - إجمالي الدائن: {balance['total_credit']:,.2f}
+    - صافي التدفق: {balance['net']:,.2f}
+    
+    قائمة الدخل (منذ 2020):
+    - الإيرادات: {income_stmt['income']:,.2f}
+    - المصروفات: {income_stmt['expenses']:,.2f}
+    - صافي الربح/الخسارة: {income_stmt['net_profit']:,.2f}
+    
+    آخر 20 معاملة:
+    {json.dumps([dict(t) for t in transactions], ensure_ascii=False, indent=2)}
+    """
+    
+    system_prompt = """أنت محلل مالي محترف متخصص في تحليل أداء مراكز التكلفة.
+قم بتحليل البيانات المقدمة وقدم:
+1. تقييم عام لأداء المركز
+2. نقاط القوة والضعف
+3. توصيات محددة لتحسين الأداء
+4. مقارنة ضمنية مع المعايير المثالية
+اجعل الرد باللغة العربية، منظماً وواضحاً، مع أرقام داعمة للتحليل."""
+    
+    return query_groq(system_prompt, data_text, max_tokens=1500)
+
+def compare_cost_centers():
+    """
+    مقارنة شاملة بين جميع مراكز التكلفة النشطة
+    """
+    summary = get_cost_centers_summary_for_ai()
+    if not summary:
+        return "لا توجد مراكز تكلفة نشطة للمقارنة"
+    
+    data_text = f"بيانات مراكز التكلفة للمقارنة:\n{json.dumps(summary, ensure_ascii=False, indent=2)}"
+    
+    system_prompt = """أنت محلل مالي استراتيجي. قارن بين مراكز التكلفة المقدمة وقدم:
+1. ترتيب المراكز حسب الربحية
+2. تحديد المركز الأفضل والأسوأ أداءً
+3. تحليل توزيع الموارد بين المراكز
+4. توصيات استراتيجية للشركة بناءً على هذه المقارنة
+الرد بالعربية مع جداول مقارنة عند الإمكان."""
+    
+    return query_groq(system_prompt, data_text, max_tokens=1500)
+
+def predict_cost_center_expenses(center_id, months=3):
+    """
+    التنبؤ بمصروفات مركز تكلفة للشهور القادمة بناءً على البيانات التاريخية
+    """
+    from services import cost_center_service as ccs
+    
+    center = ccs.get_cost_center_by_id(center_id)
+    if not center:
+        return "مركز التكلفة غير موجود"
+    
+    # جلب المعاملات التاريخية وتحليل الاتجاهات الشهرية
+    conn = get_conn()
+    monthly_expenses = conn.execute("""
+        SELECT strftime('%Y-%m', je.date) as month,
+               SUM(cca.amount) as total
+        FROM cost_center_allocations cca
+        JOIN journal_lines jl ON cca.journal_line_id = jl.id
+        JOIN journal_entries je ON jl.entry_id = je.id
+        WHERE cca.cost_center_id = ? AND jl.debit > 0
+        GROUP BY month
+        ORDER BY month DESC
+        LIMIT 12
+    """, (center_id,)).fetchall()
+    conn.close()
+    
+    if not monthly_expenses:
+        return "لا توجد بيانات تاريخية كافية للتنبؤ"
+    
+    history = [dict(m) for m in monthly_expenses]
+    data_text = f"""
+    مركز التكلفة: {center['code']} - {center['name']}
+    المصروفات الشهرية التاريخية (آخر 12 شهراً):
+    {json.dumps(history, ensure_ascii=False, indent=2)}
+    
+    المطلوب: التنبؤ بالمصروفات للأشهر {months} القادمة.
+    """
+    
+    system_prompt = """أنت خبير في التحليل المالي والتنبؤ بالمصروفات.
+حلل الاتجاه التاريخي وقدم:
+1. توقعات المصروفات لكل شهر من الأشهر القادمة
+2. نسبة النمو أو الانخفاض المتوقعة
+3. العوامل التي قد تؤثر على هذه التوقعات
+4. توصيات للتحكم في المصروفات
+الرد بالعربية مع أرقام واضحة."""
+    
+    return query_groq(system_prompt, data_text, max_tokens=1200)
+
+def get_cost_center_budget_analysis(center_id, fiscal_year):
+    """
+    تحليل انحرافات الموازنة لمركز تكلفة باستخدام الذكاء الاصطناعي
+    """
+    from services import cost_center_service as ccs
+    
+    variance_data = ccs.get_budget_variance(center_id, fiscal_year)
+    if not variance_data or not variance_data.get('details'):
+        return "لا توجد موازنات مسجلة لهذا المركز في هذه السنة"
+    
+    center = ccs.get_cost_center_by_id(center_id)
+    
+    data_text = f"""
+    مركز التكلفة: {center['code']} - {center['name']}
+    السنة المالية: {fiscal_year}
+    
+    ملخص الموازنة:
+    - إجمالي الموازنة: {variance_data['total_budget']:,.2f}
+    - إجمالي الفعلي: {variance_data['total_actual']:,.2f}
+    - الانحراف الإجمالي: {variance_data['total_variance']:,.2f} ({variance_data['total_variance_pct']}%)
+    
+    التفاصيل حسب الحساب:
+    {json.dumps(variance_data['details'], ensure_ascii=False, indent=2)}
+    """
+    
+    system_prompt = """أنت محلل موازنات محترف. حلل انحرافات الموازنة وقدم:
+1. تحليل أسباب الانحرافات الرئيسية
+2. الحسابات الأكثر انحرافاً عن الموازنة
+3. تقييم عام لكفاءة إعداد الموازنة
+4. توصيات لتحسين دقة الموازنات المستقبلية
+الرد بالعربية مع التركيز على الانحرافات الجوهرية."""
+    
+    return query_groq(system_prompt, data_text, max_tokens=1500)
