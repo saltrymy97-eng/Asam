@@ -1,4 +1,4 @@
-# ui/backup.py - النسخ الاحتياطي (واجهة زجاجية فخمة + تحميل النسخ)
+# ui/backup.py - النسخ الاحتياطي (واجهة زجاجية فخمة + تحميل ورفع)
 import streamlit as st
 import pandas as pd
 import os
@@ -86,7 +86,7 @@ def show():
         })
         st.dataframe(df[["رقم", "اسم الملف", "الحجم (KB)", "تاريخ الإنشاء", "النوع"]], use_container_width=True, hide_index=True)
 
-        # ---------- تحميل نسخة على الجهاز ----------
+        # ---------- تحميل نسخة على الجهاز (مع إصلاح الجوال) ----------
         st.markdown("---")
         st.markdown(f"<h3 style='color:{TEXT_PRIMARY};'>📥 تحميل نسخة على الجهاز</h3>", unsafe_allow_html=True)
         
@@ -100,21 +100,38 @@ def show():
                     label=f"📥 تحميل {selected_download}",
                     data=f,
                     file_name=selected_download,
-                    mime="application/octet-stream",
+                    mime="application/x-sqlite3",  # 🆕 إصلاح مشكلة الجوال
                     key="download_btn"
                 )
         else:
             st.error("الملف غير موجود على القرص. ربما تم حذفه.")
 
-        # ---------- استعادة نسخة احتياطية ----------
+        # ---------- رفع نسخة من الجهاز ----------
+        st.markdown("---")
+        st.markdown(f"<h3 style='color:{TEXT_PRIMARY};'>📤 رفع نسخة من الجهاز</h3>", unsafe_allow_html=True)
+        uploaded_file = st.file_uploader("اختر ملف النسخة الاحتياطية (.db)", type="db")
+        if uploaded_file is not None:
+            # حفظ الملف المرفوع في مجلد backups
+            save_path = os.path.join(BACKUP_DIR, uploaded_file.name)
+            with open(save_path, "wb") as f:
+                f.write(uploaded_file.getvalue())
+            st.success(f"✅ تم رفع النسخة: {uploaded_file.name}")
+            if st.button("🔄 استعادة هذه النسخة الآن", type="primary"):
+                success = restore_backup(uploaded_file.name)
+                if success:
+                    st.success("✅ تمت الاستعادة بنجاح! سيتم إعادة تحميل النظام...")
+                    st.rerun()
+                else:
+                    st.error("❌ فشلت الاستعادة. تأكد من صلاحية الملف.")
+
+        # ---------- استعادة نسخة احتياطية من القائمة ----------
         st.markdown("---")
         st.markdown(f"<h3 style='color:{TEXT_PRIMARY};'>🔄 استعادة نسخة احتياطية</h3>", unsafe_allow_html=True)
         
         selected_backup = st.selectbox("اختر نسخة للاستعادة", backup_files, key="restore_select")
         
         if st.button("⚠️ استعادة هذه النسخة", type="secondary"):
-            # إجراء الاستعادة يتطلب تأكيداً
-            st.warning("سيتم استبدال قاعدة البيانات الحالية. هل أنت متأكد؟")
+            st.warning("هل أنت متأكد؟ سيتم استبدال قاعدة البيانات الحالية بالنسخة المحددة.")
             if st.button("نعم، استعد النسخة", key="confirm_restore"):
                 success = restore_backup(selected_backup)
                 if success:
