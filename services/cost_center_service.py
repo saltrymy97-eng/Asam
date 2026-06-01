@@ -259,7 +259,7 @@ def get_all_centers_summary(from_date=None, to_date=None):
     conn.close()
     return [dict(r) for r in rows]
 
-# ===================== موازنات (مصححة) =====================
+# ===================== موازنات =====================
 def set_budget(cost_center_id, account_id, fiscal_year, amount):
     conn = get_connection()
     try:
@@ -272,80 +272,89 @@ def set_budget(cost_center_id, account_id, fiscal_year, amount):
     finally: conn.close()
 
 def get_budget_variance(cost_center_id, fiscal_year, as_of_month=None):
+    """
+    مقارنة فعلي مقابل موازنة بطريقة آمنة بدون استخدام account_type.
+    """
     conn = get_connection()
-    date_cond = "strftime('%Y', je.date) = CAST(? AS TEXT)"
-    params = [fiscal_year]
-    if as_of_month:
-        date_cond += " AND strftime('%m', je.date) <= ?"
-        params.append(str(as_of_month).zfill(2))
-    
-    # استعلام بدون استخدام a.account_type
-    query = f"""
-        SELECT 
-            a.code as account_code,
-            a.name as account_name,
-            b.budget_amount,
-            COALESCE(
-                SUM(
-                    CASE 
-                        WHEN SUBSTR(a.code, 1, 1) IN ('1', '5') 
-                            THEN (jl.debit - jl.credit)
+    try:
+        # 1. جلب الموازنات
+        budget_query = """
+            SELECT b.id, b.budget_amount, a.code as account_code, a.name as account_name
+            FROM cost_center_budgets b
+            JOIN accounts a ON b.account_id = a.id
+            WHERE b.cost_center_id = ? AND b.fiscal_year = ?
+        """
+        budget_rows = conn.execute(budget_query, (cost_center_id, fiscal_year)).fetchall()
+        
+        if not budget_rows:
+            return {'details': [], 'total_budget': 0, 'total_actual': 0, 
+                    'total_variance': 0, 'total_variance_pct': 0}
+        
+        # 2. بناء شرط التاريخ
+        date_condition = "strftime('%Y', je.date) = CAST(? AS TEXT)"
+        date_params = [fiscal_year]
+        if as_of_month:
+            date_condition += " AND strftime('%m', je.date) <= ?"
+            date_params.append(str(as_of_month).zfill(2))
+        
+        # 3. لكل موازنة، حساب القيمة الفعلية
+        result = []
+        total_budget = 0.0
+        total_actual = 0.0
+        
+        for budget in budget_rows:
+            # الاستعلام عن القيمة الفعلية من توزيعات المركز
+            actual_query = f"""
+                SELECT COALESCE(SUM(
+                    CASE WHEN SUBSTR(?, 1, 1) IN ('1', '5') 
+                        THEN (jl.debit - jl.credit)
                         ELSE (jl.credit - jl.debit)
                     END
-                ), 0
-            ) as actual
-        FROM cost_center_budgets b
-        JOIN accounts a ON b.account_id = a.id
-        LEFT JOIN cost_center_allocations cca 
-            ON cca.cost_center_id = b.cost_center_id 
-            AND cca.journal_line_id IN (
-                SELECT jl2.id FROM journal_lines jl2
-                JOIN journal_entries je2 ON jl2.entry_id = je2.id
-                WHERE {date_cond}
-            )
-        LEFT JOIN journal_lines jl ON jl.id = cca.journal_line_id
-        LEFT JOIN journal_entries je ON jl.entry_id = je.id
-        WHERE b.cost_center_id = ? 
-          AND b.fiscal_year = ?
-          AND b.budget_amount != 0
-        GROUP BY a.code, a.name, b.budget_amount
-        ORDER BY a.code
-    """
-    params.extend([cost_center_id, fiscal_year])
-    rows = conn.execute(query, params).fetchall()
-    conn.close()
-    
-    result = []
-    total_budget = 0.0
-    total_actual = 0.0
-    
-    for r in rows:
-        variance = r['actual'] - r['budget_amount']
-        variance_pct = (variance / r['budget_amount'] * 100) if r['budget_amount'] != 0 else 0.0
-        code = r['account_code'] or ''
-        ac_type = _account_type_from_code(code)
-        favourable = (ac_type in ('revenue', 'income') and variance > 0) or \
-                     (ac_type in ('expense', 'cost_of_sales') and variance < 0)
-        result.append({
-            'account_code': code,
-            'account_name': r['account_name'],
-            'account_type': ac_type,
-            'budget': r['budget_amount'],
-            'actual': r['actual'],
-            'variance': variance,
-            'variance_pct': round(variance_pct, 2),
-            'status': 'favourable' if favourable else 'unfavourable'
-        })
-        total_budget += r['budget_amount']
-        total_actual += r['actual']
-    
-    return {
-        'details': result,
-        'total_budget': total_budget,
-        'total_actual': total_actual,
-        'total_variance': total_actual - total_budget,
-        'total_variance_pct': round((total_actual - total_budget) / total_budget * 100, 2) if total_budget != 0 else 0.0
-    }
+                ), 0) as actual
+                FROM cost_center_allocations cca
+                JOIN journal_lines jl ON cca.journal_line_id = jl.id
+                JOIN journal_entries je ON jl.entry_id = je.id
+                WHERE cca.cost_center_id = ? 
+                  AND jl.account_name = ?
+                  AND {date_condition}
+            """
+            params = [budget['account_code'], cost_center_id, budget['account_code']] + date_params
+            actual_row = conn.execute(actual_query, params).fetchone()
+            actual = actual_row['actual'] if actual_row else 0.0
+            
+            variance = actual - budget['budget_amount']
+            variance_pct = (variance / budget['budget_amount'] * 100) if budget['budget_amount'] != 0 else 0.0
+            
+            # تحديد الحالة (ملائم/غير ملائم)
+            ac_type = _account_type_from_code(budget['account_code'] or '')
+            favourable = (ac_type in ('revenue', 'income') and variance > 0) or \
+                         (ac_type in ('expense', 'cost_of_sales') and variance < 0)
+            
+            result.append({
+                'account_code': budget['account_code'],
+                'account_name': budget['account_name'],
+                'account_type': ac_type,
+                'budget': budget['budget_amount'],
+                'actual': actual,
+                'variance': variance,
+                'variance_pct': round(variance_pct, 2),
+                'status': 'favourable' if favourable else 'unfavourable'
+            })
+            
+            total_budget += budget['budget_amount']
+            total_actual += actual
+        
+        return {
+            'details': result,
+            'total_budget': total_budget,
+            'total_actual': total_actual,
+            'total_variance': total_actual - total_budget,
+            'total_variance_pct': round((total_actual - total_budget) / total_budget * 100, 2) if total_budget != 0 else 0.0
+        }
+    except Exception as e:
+        raise e
+    finally:
+        conn.close()
 
 def get_budgets_for_center(cost_center_id, fiscal_year=None):
     conn = get_connection()
