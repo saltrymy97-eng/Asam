@@ -3,125 +3,145 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from services import cost_center_service as ccs
-from services import closing_service
+from services import closing_service as closing_service
 import database
 
-# ================== تصميم زجاجي مبهر (بدون مستطيلات غامضة) ==================
-def apply_glass_design():
+# ================== CSS زجاجي مع إخفاء المستطيلات الفارغة ==================
+def glass_style():
     st.markdown("""
     <style>
-    /* إخفاء أي عنصر فارغ داخل الأعمدة */
-    div[data-testid="stVerticalBlock"] > div:empty,
-    div[data-testid="stHorizontalBlock"] > div:empty {
-        display: none !important;
+    .glass-container {
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 25px;
+        padding: 30px;
+        margin-bottom: 25px;
+        box-shadow: 0 20px 40px rgba(0,0,0,0.3);
     }
-    /* إزالة حدود النماذج الافتراضية */
-    div[data-testid="stForm"] {
-        background: transparent !important;
-        border: none !important;
-        padding: 0 !important;
+    .glass-header {
+        background: linear-gradient(135deg, rgba(139, 92, 246, 0.3), rgba(59, 130, 246, 0.3));
+        backdrop-filter: blur(15px);
+        -webkit-backdrop-filter: blur(15px);
+        border-radius: 20px;
+        padding: 20px;
+        text-align: center;
+        margin-bottom: 30px;
+        border: 1px solid rgba(255,255,255,0.2);
     }
-    /* البطاقة الزجاجية الأساسية */
     .glass-card {
         background: rgba(255, 255, 255, 0.08);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        border-radius: 20px;
-        padding: 24px;
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-radius: 18px;
+        padding: 20px;
         margin-bottom: 20px;
-        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        border: 1px solid rgba(255,255,255,0.12);
         transition: all 0.3s ease;
     }
     .glass-card:hover {
         background: rgba(255, 255, 255, 0.12);
-        border-color: rgba(255, 255, 255, 0.25);
         transform: translateY(-3px);
     }
-    /* رأس الصفحة الزجاجي */
-    .glass-header {
-        background: linear-gradient(135deg, rgba(139, 92, 246, 0.3), rgba(59, 130, 246, 0.3));
-        backdrop-filter: blur(18px);
-        -webkit-backdrop-filter: blur(18px);
-        border: 1px solid rgba(255, 255, 255, 0.2);
-        border-radius: 24px;
-        padding: 28px;
-        text-align: center;
-        margin-bottom: 32px;
-        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
-    }
-    /* أرقام KPI */
     .kpi-number {
-        font-size: 2.6rem;
-        font-weight: 800;
+        font-size: 2.5rem;
+        font-weight: 700;
         background: linear-gradient(135deg, #a78bfa, #60a5fa);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-        margin: 8px 0;
     }
-    /* تبويبات محسنة */
+    
+    /* تعديل التبويبات وإزالة الخلفيات السميكة والمستطيلات المحيطة بها */
     div[data-testid="stTabs"] button {
-        background: rgba(255, 255, 255, 0.06) !important;
-        backdrop-filter: blur(12px);
-        border-radius: 14px 14px 0 0 !important;
-        border: 1px solid rgba(255, 255, 255, 0.12) !important;
-        color: #ddd !important;
+        background: transparent !important;
+        backdrop-filter: none !important;
+        border-radius: 10px 10px 0 0 !important;
+        border: none !important;
+        color: #b3b3b3 !important;
         font-weight: 500;
-        padding: 10px 22px !important;
-        margin: 0 5px !important;
-        transition: all 0.2s ease;
+        padding: 10px 20px !important;
     }
     div[data-testid="stTabs"] button[aria-selected="true"] {
-        background: linear-gradient(135deg, rgba(139, 92, 246, 0.35), rgba(59, 130, 246, 0.35)) !important;
-        border-bottom: 2px solid #a78bfa !important;
-        color: #fff !important;
-        font-weight: 600;
+        background: linear-gradient(135deg, rgba(139,92,246,0.15), rgba(59,130,246,0.15)) !important;
+        border-bottom: 3px solid #a78bfa !important;
+        color: white !important;
     }
-    /* حقول الإدخال الزجاجية */
+    div[data-testid="stTabs"] [data-fieldname="stTabBlock"] {
+        background: transparent !important;
+        border: none !important;
+    }
+
+    /* تحسين حقول الإدخال ومنع اقتصاص النص من الأسفل */
     div[data-baseweb="input"] {
-        background: rgba(255, 255, 255, 0.06) !important;
+        background: rgba(255, 255, 255, 0.05) !important;
         border: 1px solid rgba(255, 255, 255, 0.2) !important;
-        border-radius: 12px !important;
-        transition: all 0.2s ease;
+        border-radius: 10px !important;
+        color: white !important;
+        height: 48px !important;  /* زيادة الارتفاع لمنع قطع الحروف */
+        padding: 4px 8px !important;
     }
     div[data-baseweb="input"] input {
         background: transparent !important;
-        color: #fff !important;
-        padding: 12px 14px !important;
+        color: white !important;
+        line-height: 1.6 !important;
     }
     div[data-baseweb="select"] {
-        background: rgba(255, 255, 255, 0.06) !important;
+        background: rgba(255, 255, 255, 0.05) !important;
         border: 1px solid rgba(255, 255, 255, 0.2) !important;
-        border-radius: 12px !important;
+        border-radius: 10px !important;
     }
-    /* أزرار زجاجية */
     button {
         background: rgba(255, 255, 255, 0.1) !important;
-        backdrop-filter: blur(8px);
+        backdrop-filter: blur(5px);
         border: 1px solid rgba(255, 255, 255, 0.2) !important;
-        color: #fff !important;
-        border-radius: 12px !important;
+        color: white !important;
         transition: all 0.3s ease;
     }
     button:hover {
-        background: rgba(139, 92, 246, 0.35) !important;
+        background: rgba(139, 92, 246, 0.3) !important;
         border-color: #a78bfa !important;
+    }
+
+    /* 🧹 إخفاء أي مستطيلات فارغة تماماً أو عناصر دائرية غامضة */
+    div[data-testid="stVerticalBlock"] > div:empty,
+    div[data-testid="stHorizontalBlock"] > div:empty,
+    div[data-testid="element-container"]:empty {
+        display: none !important;
+        height: 0px !important;
+        margin: 0px !important;
+        padding: 0px !important;
+    }
+    
+    /* إلغاء مستطيلات الحدود الناتجة عن بلوكات المأخذ الافتراضي لـ Streamlit */
+    div[style*="background-color"][style*="border"] {
+        background-color: transparent !important;
+        border: none !important;
+    }
+    
+    /* إخفاء خلفية النموذج إذا كانت فارغة */
+    div[data-testid="stForm"] {
+        background: transparent !important;
+        border: none !important;
+        padding: 0px !important;
+    }
+    /* إخفاء المسافات الفارغة داخل التبويبات */
+    .stTabs div[data-testid="stVerticalBlock"] > div:empty {
+        display: none !important;
     }
     </style>
     """, unsafe_allow_html=True)
 
 def show():
-    apply_glass_design()
+    glass_style()
     
-    # ========== الرأس ==========
     st.markdown("""
     <div class="glass-header">
-        <h1 style="color: #fff; font-size: 3rem; margin: 0;">:material/account_balance: مراكز التكلفة</h1>
-        <p style="color: #ccc; font-size: 1.2rem; margin-top: 8px;">إدارة متطورة لتحليل الأداء المالي حسب القطاعات</p>
+        <h1 style="color: white; font-size: 2.8rem; margin: 0;">🏢 مراكز التكلفة</h1>
+        <p style="color: #ccc; font-size: 1.1rem; margin-top: 5px;">إدارة متطورة لتحليل الأداء المالي حسب القطاعات</p>
     </div>
     """, unsafe_allow_html=True)
     
-    # ========== التبويبات ==========
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         ":material/edit_note: إدارة المراكز",
         ":material/account_tree: توزيع المعاملات",
@@ -130,13 +150,13 @@ def show():
         ":material/lock: إقفال المراكز"
     ])
     
-    # ---------- تبويب 1: إدارة ----------
+    # ------------------------ تبويب 1: إدارة المراكز ------------------------
     with tab1:
-        col1, col2 = st.columns([1, 1])
+        col_left, col_right = st.columns([1, 1])
         
-        with col1:
+        with col_left:
             st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-            st.subheader("➕ إضافة مركز جديد")
+            st.subheader("➕ إضافة micro جديد")
             with st.form("add_cc_form"):
                 code = st.text_input("رمز المركز", placeholder="مثال: SALES-NORTH")
                 name = st.text_input("اسم المركز", placeholder="مبيعات المنطقة الشمالية")
@@ -148,7 +168,8 @@ def show():
                                          format_func=lambda x: parent_map[x])
                 parent_id = None if parent_id == 0 else parent_id
                 
-                if st.form_submit_button("✅ إضافة"):
+                submitted = st.form_submit_button("✅ إضافة")
+                if submitted:
                     if not code or not name:
                         st.error("الرجاء إدخال الرمز والاسم")
                     else:
@@ -160,7 +181,7 @@ def show():
                             st.error(str(e))
             st.markdown('</div>', unsafe_allow_html=True)
         
-        with col2:
+        with col_right:
             st.markdown('<div class="glass-card">', unsafe_allow_html=True)
             st.subheader("📌 الشجرة التنظيمية")
             tree = ccs.get_cost_center_tree()
@@ -178,14 +199,14 @@ def show():
                 render_tree(tree)
             st.markdown('</div>', unsafe_allow_html=True)
         
-        # قائمة المراكز
         st.markdown('<div class="glass-card">', unsafe_allow_html=True)
         st.subheader("📋 جميع المراكز")
         centers = ccs.get_all_cost_centers(active_only=False)
         if centers:
             df = pd.DataFrame(centers)
             df['الحالة'] = df['is_active'].map({1: '🟢 نشط', 0: '🔴 غير نشط'})
-            st.dataframe(df[['id', 'code', 'name', 'الحالة']], use_container_width=True, hide_index=True)
+            df_display = df[['id', 'code', 'name', 'الحالة']]
+            st.dataframe(df_display, use_container_width=True, hide_index=True)
             
             with st.expander("✏️ تعديل مركز"):
                 edit_id = st.selectbox("اختر المركز للتعديل", options=df['id'].tolist(),
@@ -202,7 +223,7 @@ def show():
             st.info("لا توجد بيانات")
         st.markdown('</div>', unsafe_allow_html=True)
     
-    # ---------- تبويب 2: توزيع ----------
+    # ------------------------ تبويب 2: توزيع المعاملات ------------------------
     with tab2:
         st.markdown('<div class="glass-card">', unsafe_allow_html=True)
         st.subheader("📌 توزيع سطر قيد على مراكز التكلفة")
@@ -215,6 +236,7 @@ def show():
         
         if not entries:
             st.info("لا توجد قيود مسجلة")
+            st.markdown('</div>', unsafe_allow_html=True)
             st.stop()
         
         entry_map = {e['id']: f"{e['id']} - {e['date']} - {e['description']}" for e in entries}
@@ -230,6 +252,7 @@ def show():
         
         if not lines:
             st.warning("القيد لا يحتوي على سطور")
+            st.markdown('</div>', unsafe_allow_html=True)
             st.stop()
         
         line_options = {l['id']: f"{l['account_name']} (مدين: {l['debit']:,.2f}, دائن: {l['credit']:,.2f})" for l in lines}
@@ -243,6 +266,7 @@ def show():
         centers_list = ccs.get_all_cost_centers(active_only=True)
         if not centers_list:
             st.warning("لا توجد مراكز تكلفة نشطة")
+            st.markdown('</div>', unsafe_allow_html=True)
             st.stop()
         
         if 'alloc_rows' not in st.session_state:
@@ -315,9 +339,10 @@ def show():
                         st.success("تم حفظ التوزيعات بنجاح")
                     except Exception as e:
                         st.error(str(e))
+        
         st.markdown('</div>', unsafe_allow_html=True)
     
-    # ---------- تبويب 3: تحليل ----------
+    # ------------------------ تبويب 3: تحليل وتقارير ------------------------
     with tab3:
         st.markdown('<div class="glass-card">', unsafe_allow_html=True)
         st.subheader("📊 تحليل الأداء حسب المركز")
@@ -360,7 +385,7 @@ def show():
             st.info("لا توجد مراكز")
         st.markdown('</div>', unsafe_allow_html=True)
     
-    # ---------- تبويب 4: موازنات ----------
+    # ------------------------ تبويب 4: الموازنات التقديرية ------------------------
     with tab4:
         st.markdown('<div class="glass-card">', unsafe_allow_html=True)
         st.subheader("💰 الموازنة التقديرية للمراكز")
@@ -408,8 +433,8 @@ def show():
         else:
             st.info("لا توجد مراكز")
         st.markdown('</div>', unsafe_allow_html=True)
-    
-    # ---------- تبويب 5: إقفال ----------
+
+    # ------------------------ تبويب 5: إقفال المراكز ------------------------
     with tab5:
         st.markdown('<div class="glass-card">', unsafe_allow_html=True)
         st.subheader("🔒 إقفال مركز تكلفة لسنة مالية")
