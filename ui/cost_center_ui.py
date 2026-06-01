@@ -6,10 +6,11 @@ from services import cost_center_service as ccs
 from services import closing_service
 import database
 
-# ================== CSS زجاجي ==================
+# ================== CSS زجاجي (تم تعزيزه لإخفاء حدود الحقول) ==================
 def glass_style():
     st.markdown("""
     <style>
+    /* البطاقات الزجاجية */
     .glass-container {
         background: rgba(255, 255, 255, 0.05);
         backdrop-filter: blur(18px);
@@ -64,6 +65,34 @@ def glass_style():
         border-bottom: 2px solid #a78bfa !important;
         color: white !important;
     }
+
+    /* 🆕 جعل حقول الإدخال زجاجية وبدون مستطيلات بيضاء */
+    div[data-baseweb="input"] {
+        background: rgba(255, 255, 255, 0.05) !important;
+        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        border-radius: 10px !important;
+        color: white !important;
+    }
+    div[data-baseweb="input"] input {
+        background: transparent !important;
+        color: white !important;
+    }
+    div[data-baseweb="select"] {
+        background: rgba(255, 255, 255, 0.05) !important;
+        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        border-radius: 10px !important;
+    }
+    button {
+        background: rgba(255, 255, 255, 0.1) !important;
+        backdrop-filter: blur(5px);
+        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        color: white !important;
+        transition: all 0.3s ease;
+    }
+    button:hover {
+        background: rgba(139, 92, 246, 0.3) !important;
+        border-color: #a78bfa !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -106,9 +135,7 @@ def show():
                                              format_func=lambda x: parent_map[x])
                     parent_id = None if parent_id == 0 else parent_id
                     
-                    col_btn1, col_btn2 = st.columns(2)
-                    with col_btn1:
-                        submitted = st.form_submit_button("✅ إضافة", use_container_width=True)
+                    submitted = st.form_submit_button("✅ إضافة")
                     if submitted:
                         if not code or not name:
                             st.error("الرجاء إدخال الرمز والاسم")
@@ -140,7 +167,7 @@ def show():
                     render_tree(tree)
                 st.markdown('</div>', unsafe_allow_html=True)
         
-        # قائمة المراكز مع إجراءات
+        # قائمة المراكز
         st.markdown('<div class="glass-card">', unsafe_allow_html=True)
         st.subheader("📋 جميع المراكز")
         centers = ccs.get_all_cost_centers(active_only=False)
@@ -150,7 +177,6 @@ def show():
             df_display = df[['id', 'code', 'name', 'الحالة']]
             st.dataframe(df_display, use_container_width=True, hide_index=True)
             
-            # تعديل سريع
             with st.expander("✏️ تعديل مركز"):
                 edit_id = st.selectbox("اختر المركز للتعديل", options=df['id'].tolist(),
                                        format_func=lambda x: df[df['id']==x]['code'].values[0])
@@ -166,12 +192,11 @@ def show():
             st.info("لا توجد بيانات")
         st.markdown('</div>', unsafe_allow_html=True)
     
-    # ------------------------ تبويب 2: توزيع المعاملات (نظيف وديناميكي) ------------------------
+    # ------------------------ تبويب 2: توزيع المعاملات (ديناميكي ونظيف) ------------------------
     with tab2:
         st.markdown('<div class="glass-card">', unsafe_allow_html=True)
         st.subheader("📌 توزيع سطر قيد على مراكز التكلفة")
         
-        # جلب القيود
         conn = database.get_connection()
         entries = conn.execute(
             "SELECT id, date, description FROM journal_entries ORDER BY id DESC LIMIT 20"
@@ -183,12 +208,10 @@ def show():
             st.markdown('</div>', unsafe_allow_html=True)
             st.stop()
         
-        # اختيار قيد
         entry_map = {e['id']: f"{e['id']} - {e['date']} - {e['description']}" for e in entries}
         selected_entry = st.selectbox("اختر القيد", options=list(entry_map.keys()),
                                       format_func=lambda x: entry_map[x], key="dist_entry")
         
-        # جلب سطور القيد
         conn = database.get_connection()
         lines = conn.execute(
             "SELECT id, account_name, debit, credit FROM journal_lines WHERE entry_id = ?",
@@ -201,7 +224,6 @@ def show():
             st.markdown('</div>', unsafe_allow_html=True)
             st.stop()
         
-        # اختيار سطر
         line_options = {l['id']: f"{l['account_name']} (مدين: {l['debit']:,.2f}, دائن: {l['credit']:,.2f})" for l in lines}
         selected_line_id = st.selectbox("اختر السطر", options=list(line_options.keys()),
                                         format_func=lambda x: line_options[x], key="dist_line")
@@ -216,16 +238,12 @@ def show():
             st.markdown('</div>', unsafe_allow_html=True)
             st.stop()
         
-        # عدد صفوف التوزيع (يبدأ بواحد)
         if 'alloc_rows' not in st.session_state:
             st.session_state.alloc_rows = 1
         
         center_map = {c['id']: f"{c['code']} - {c['name']}" for c in centers_list}
         alloc_data = []
         remaining = line_amount
-        
-        st.markdown("**حدد المراكز والنسب:**")
-        rows_to_remove = []
         
         for i in range(st.session_state.alloc_rows):
             cols = st.columns([3, 2, 1, 1])
@@ -246,7 +264,7 @@ def show():
                 )
             with cols[2]:
                 perc = st.number_input(
-                    f"النسبة % {i+1}",
+                    f"% {i+1}",
                     min_value=0.0,
                     max_value=100.0,
                     step=1.0,
@@ -254,7 +272,8 @@ def show():
                 )
             with cols[3]:
                 if i > 0 and st.button("🗑️", key=f"del_{i}"):
-                    rows_to_remove.append(i)
+                    st.session_state.alloc_rows = max(1, st.session_state.alloc_rows - 1)
+                    st.rerun()
             
             if center != "-- اختر مركز --" and amount > 0:
                 alloc_data.append({
@@ -263,11 +282,6 @@ def show():
                     'percentage': perc
                 })
                 remaining -= amount
-        
-        # تطبيق حذف الصفوف
-        for row_index in sorted(rows_to_remove, reverse=True):
-            st.session_state.alloc_rows = max(1, st.session_state.alloc_rows - 1)
-            st.rerun()
         
         total_alloc = sum(a['amount'] for a in alloc_data)
         if total_alloc > 0:
@@ -410,18 +424,8 @@ def show():
                 format_func=lambda x: center_options[x],
                 key="closing_center"
             )
-            closing_year = st.number_input(
-                "السنة المالية للإقفال",
-                min_value=2020,
-                max_value=2030,
-                value=2025,
-                key="closing_year"
-            )
-            retained_earnings = st.text_input(
-                "كود حساب الأرباح المحتجزة",
-                value="310000",
-                help="الكود الافتراضي للأرباح المحتجزة هو 310000"
-            )
+            closing_year = st.number_input("السنة المالية للإقفال", min_value=2020, max_value=2030, value=2025, key="closing_year")
+            retained_earnings = st.text_input("كود حساب الأرباح المحتجزة", value="310000")
             
             if st.button("🔒 تنفيذ إقفال المركز", type="primary", use_container_width=True):
                 with st.spinner("جارٍ إنشاء قيد الإقفال..."):
