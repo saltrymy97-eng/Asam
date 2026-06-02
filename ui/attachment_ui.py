@@ -1,30 +1,36 @@
-# ui/attachment_ui.py – واجهة المرفقات (تصميم زجاجي فخم + عربي بالكامل)
+# ui/attachment_ui.py – واجهة المرفقات (تصميم زجاجي فخم ومبهر)
 import streamlit as st
 import pandas as pd
 import os
 from services import attachment_service as att
 
-# ========== ألوان التصميم ==========
-GLASS_BG = "rgba(255, 255, 255, 0.12)"
-GLASS_BORDER = "rgba(255, 255, 255, 0.25)"
-GLASS_SHADOW = "0 8px 32px 0 rgba(0,0,0,0.37)"
-TEXT_PRIMARY = "#F8FAFC"
-TEXT_SECONDARY = "#CBD5E1"
-ACCENT_BLUE = "#3B82F6"
-ACCENT_GREEN = "#10B981"
-ACCENT_ORANGE = "#F59E0B"
-ACCENT_RED = "#EF4444"
-ACCENT_PURPLE = "#8B5CF6"
+# ========== ألوان التصميم الفاخر ==========
+T = "#F8FAFC"
+S = "#CBD5E1"
+BL = "#3B82F6"
+GR = "#10B981"
+OR = "#F59E0B"
+RD = "#EF4444"
+PR = "#8B5CF6"
+CY = "#06B6D4"
+
+def glass_card(content, padding="1.5rem"):
+    return f"""<div style="background:rgba(255,255,255,0.12);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.25);border-radius:20px;padding:{padding};margin:1rem 0;box-shadow:0 8px 32px rgba(0,0,0,0.37);color:{T};">{content}</div>"""
+
+def kpi_box(icon, label, value, color):
+    return f"""<div style="background:rgba(255,255,255,0.08);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.18);border-radius:20px;padding:1.5rem;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,0.3);height:100%;">
+        <div style="font-size:2.8rem;margin-bottom:0.5rem;">{icon}</div>
+        <div style="color:{S};font-size:0.85rem;margin-bottom:0.3rem;">{label}</div>
+        <div style="color:{color};font-size:2rem;font-weight:800;">{value}</div>
+    </div>"""
 
 def show():
-    # ========== الرأس الزجاجي ==========
+    # ========== رأس الصفحة ==========
     st.markdown(f"""
-    <div style="background: linear-gradient(135deg, rgba(139, 92, 246, 0.3), rgba(59, 130, 246, 0.3));
-         backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
-         border-radius: 20px; padding: 28px; text-align: center; margin-bottom: 30px;
-         border: 1px solid rgba(255,255,255,0.2); box-shadow: 0 12px 40px rgba(0,0,0,0.4);">
-        <h1 style="color: #fff; font-size: 3rem; margin: 0;">📎 المرفقات</h1>
-        <p style="color: #ccc; font-size: 1.2rem; margin-top: 8px;">أرشفة المستندات وربطها بالسجلات</p>
+    <div style="background:linear-gradient(135deg,rgba(139,92,246,0.4),rgba(59,130,246,0.4));backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-radius:25px;padding:35px;text-align:center;margin-bottom:35px;border:1px solid rgba(255,255,255,0.25);box-shadow:0 15px 50px rgba(0,0,0,0.5);">
+        <div style="font-size:4rem;margin-bottom:10px;">📎</div>
+        <h1 style="color:{T};font-size:3.2rem;margin:0;font-weight:800;">إدارة المرفقات</h1>
+        <p style="color:{S};font-size:1.2rem;margin-top:10px;">أرشفة المستندات وربطها بالسجلات بكل سهولة</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -33,74 +39,63 @@ def show():
     total_count = len(all_attachments)
     total_size_kb = sum(a['file_size'] for a in all_attachments) / 1024 if all_attachments else 0
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
-        st.markdown(f"""
-        <div style="background:{GLASS_BG}; backdrop-filter:blur(10px); border:1px solid {GLASS_BORDER}; 
-                    border-radius:16px; padding:1.2rem; text-align:center; box-shadow:{GLASS_SHADOW};">
-            <div style="font-size:2rem; color:{ACCENT_BLUE};">📦</div>
-            <div style="color:{TEXT_SECONDARY}; font-size:0.9rem;">عدد المرفقات</div>
-            <div style="color:{ACCENT_BLUE}; font-size:1.8rem; font-weight:800;">{total_count}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(kpi_box("📦", "عدد المرفقات", str(total_count), BL), unsafe_allow_html=True)
     with col2:
-        st.markdown(f"""
-        <div style="background:{GLASS_BG}; backdrop-filter:blur(10px); border:1px solid {GLASS_BORDER}; 
-                    border-radius:16px; padding:1.2rem; text-align:center; box-shadow:{GLASS_SHADOW};">
-            <div style="font-size:2rem; color:{ACCENT_GREEN};">💾</div>
-            <div style="color:{TEXT_SECONDARY}; font-size:0.9rem;">الحجم الإجمالي</div>
-            <div style="color:{ACCENT_GREEN}; font-size:1.8rem; font-weight:800;">{total_size_kb:.1f} ك.ب</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(kpi_box("💾", "الحجم الإجمالي", f"{total_size_kb:.1f} ك.ب", GR), unsafe_allow_html=True)
+    with col3:
+        st.markdown(kpi_box("📁", "الصيغ المدعومة", "6 صيغ", OR), unsafe_allow_html=True)
 
-    st.markdown("---")
+    st.markdown("<br>", unsafe_allow_html=True)
 
-    tab1, tab2 = st.tabs(["📤 رفع مرفق", "📁 المرفقات الحالية"])
+    # ========== التبويبات ==========
+    tab1, tab2 = st.tabs(["📤 رفع مرفق جديد", "📁 تصفح المرفقات"])
 
-    # ---------- تبويب الرفع ----------
+    # ---------- رفع مرفق ----------
     with tab1:
-        st.markdown(f"""
-        <div style="background:{GLASS_BG}; backdrop-filter:blur(10px); border:1px solid {GLASS_BORDER}; 
-                    border-radius:16px; padding:1.5rem; box-shadow:{GLASS_SHADOW}; margin-bottom:1rem;">
-            <h3 style="color:{ACCENT_BLUE}; margin-top:0;">رفع مرفق جديد</h3>
-        """, unsafe_allow_html=True)
-        
+        st.markdown(glass_card(f"""
+            <h3 style="color:{BL};margin-top:0;font-size:1.5rem;">📤 رفع مرفق جديد</h3>
+            <p style="color:{S};">ارفع ملفاً وأرفقه بأي سجل في النظام</p>
+        """), unsafe_allow_html=True)
+
         uploaded_file = st.file_uploader(
             "اختر ملفاً للرفع",
             type=["pdf", "jpg", "jpeg", "png", "xlsx", "docx", "zip"],
             help="الصيغ المدعومة: PDF، صور، Excel، Word، ZIP"
         )
-        
+
         col1, col2 = st.columns(2)
         with col1:
             linked_table = st.selectbox("نوع السجل المرتبط", [
                 "invoices", "journal_entries", "customers", "suppliers",
                 "employees", "products", "cost_centers"
             ], format_func=lambda x: {
-                "invoices": "فاتورة", "journal_entries": "قيد", "customers": "عميل",
-                "suppliers": "مورد", "employees": "موظف", "products": "منتج",
-                "cost_centers": "مركز تكلفة"
+                "invoices": "🧾 فاتورة", "journal_entries": "📝 قيد", "customers": "👤 عميل",
+                "suppliers": "🚚 مورد", "employees": "👔 موظف", "products": "📦 منتج",
+                "cost_centers": "🏢 مركز تكلفة"
             }[x])
         with col2:
             linked_id = st.number_input("رقم السجل", min_value=1, step=1, value=1)
-        
-        if st.button("📤 رفع المرفق", type="primary", disabled=not uploaded_file, use_container_width=True):
+
+        if st.button("🚀 رفع المرفق الآن", type="primary", disabled=not uploaded_file, use_container_width=True):
             try:
                 success, name = att.upload_attachment(
                     uploaded_file, linked_table, linked_id,
                     st.session_state.user.get('username', 'admin')
                 )
                 st.success(f"✅ تم رفع الملف '{uploaded_file.name}' بنجاح")
+                st.balloons()
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ فشل الرفع: {str(e)}")
-        
-        st.markdown("</div>", unsafe_allow_html=True)
 
-    # ---------- تبويب المرفقات الحالية ----------
+    # ---------- تصفح المرفقات ----------
     with tab2:
-        st.markdown(f"<h3 style='color:{ACCENT_GREEN};'>المرفقات الحالية</h3>", unsafe_allow_html=True)
-        
+        st.markdown(glass_card(f"""
+            <h3 style="color:{GR};margin-top:0;font-size:1.5rem;">📁 المرفقات الحالية</h3>
+        """), unsafe_allow_html=True)
+
         filter_table = st.selectbox(
             "تصفية حسب النوع",
             ["الكل", "فواتير", "قيود", "عملاء", "موردون", "موظفون", "منتجات", "مراكز تكلفة"]
@@ -111,26 +106,26 @@ def show():
             "مراكز تكلفة": "cost_centers"
         }
         link_table = table_map.get(filter_table) if filter_table != "الكل" else None
-        
+
         attachments = att.get_attachments(linked_table=link_table)
         if attachments:
             df = pd.DataFrame(attachments)
             df['نوع السجل'] = df['linked_table'].map({
-                "invoices": "فاتورة", "journal_entries": "قيد", "customers": "عميل",
-                "suppliers": "مورد", "employees": "موظف", "products": "منتج",
-                "cost_centers": "مركز تكلفة"
+                "invoices": "🧾 فاتورة", "journal_entries": "📝 قيد", "customers": "👤 عميل",
+                "suppliers": "🚚 مورد", "employees": "👔 موظف", "products": "📦 منتج",
+                "cost_centers": "🏢 مركز تكلفة"
             })
             df_display = df.rename(columns={
                 "id": "رقم", "original_name": "اسم الملف",
-                "file_size": "الحجم (بايت)", "linked_id": "رقم السجل",
+                "file_size": "الحجم", "linked_id": "رقم السجل",
                 "uploaded_at": "تاريخ الرفع"
             })
             st.dataframe(
-                df_display[["رقم", "اسم الملف", "الحجم (بايت)", "نوع السجل", "رقم السجل", "تاريخ الرفع"]],
+                df_display[["رقم", "اسم الملف", "الحجم", "نوع السجل", "رقم السجل", "تاريخ الرفع"]],
                 use_container_width=True,
                 hide_index=True
             )
-            
+
             attach_ids = [a['id'] for a in attachments]
             selected_id = st.selectbox(
                 "اختر مرفقاً للإجراءات",
@@ -154,4 +149,4 @@ def show():
                         st.success("تم حذف المرفق بنجاح")
                         st.rerun()
         else:
-            st.info("ℹ️ لا توجد مرفقات حالياً")
+            st.markdown(glass_card("ℹ️ لا توجد مرفقات حالياً. ابدأ برفع ملفاتك الآن!"), unsafe_allow_html=True)
