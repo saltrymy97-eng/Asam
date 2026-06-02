@@ -1,12 +1,12 @@
-# services/vat_service.py – منطق ضريبة القيمة المضافة (VAT) مع إصلاح الأعمدة
+# services/vat_service.py – منطق ضريبة القيمة المضافة (VAT) مع إصلاح نهائي لعمود name
 import sqlite3
 from database import get_connection
 
 def create_vat_table():
-    """إنشاء جدول إعدادات الضريبة إذا لم يكن موجوداً، وإصلاح الأعمدة الناقصة"""
+    """إنشاء جدول إعدادات الضريبة وإصلاحه تلقائياً إذا كان ناقصاً"""
     conn = get_connection()
     
-    # إنشاء الجدول الأساسي (قد يكون موجوداً)
+    # 1. التأكد من وجود الجدول
     conn.execute("""
         CREATE TABLE IF NOT EXISTS vat_config (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -17,16 +17,17 @@ def create_vat_table():
         )
     """)
     
-    # 🆕 إضافة عمود name إذا كان الجدول موجوداً مسبقاً بدون هذا العمود
+    # 2. إضافة عمود name إذا كان الجدول موجوداً مسبقاً ولا يحتويه
     try:
         conn.execute("ALTER TABLE vat_config ADD COLUMN name TEXT NOT NULL DEFAULT 'ضريبة القيمة المضافة'")
     except sqlite3.OperationalError:
-        pass  # العمود موجود مسبقاً
+        pass  # العمود موجود بالفعل، لا مشكلة
     
-    # تعبئة الأعمدة الفارغة بقيمة افتراضية (للبيانات القديمة)
+    # 3. تعبئة أي قيم فارغة في عمود name بقيمة افتراضية
     conn.execute("UPDATE vat_config SET name = 'ضريبة القيمة المضافة' WHERE name IS NULL OR name = ''")
+    conn.commit()
     
-    # إدراج سجل افتراضي إذا كان الجدول فارغاً
+    # 4. إدراج سجل افتراضي إذا كان الجدول فارغاً
     exists = conn.execute("SELECT COUNT(*) FROM vat_config").fetchone()[0]
     if exists == 0:
         conn.execute(
@@ -49,9 +50,7 @@ def get_vat_rate():
 def update_vat_rate(new_rate, name=None):
     """تحديث نسبة الضريبة (تعطيل القديم وإدراج جديد)"""
     conn = get_connection()
-    # تعطيل جميع السجلات القديمة
     conn.execute("UPDATE vat_config SET is_active = 0")
-    # إدراج السجل الجديد
     conn.execute(
         "INSERT INTO vat_config (name, rate, is_active) VALUES (?, ?, 1)",
         (name or "ضريبة القيمة المضافة", new_rate)
@@ -67,7 +66,7 @@ def calculate_vat(amount, rate=None):
     return round(amount * rate, 2)
 
 def calculate_reverse_vat(total_amount, rate=None):
-    """حساب الضريبة العكسية (استخراج المبلغ قبل الضريبة وقيمة الضريبة من الإجمالي)"""
+    """حساب الضريبة العكسية"""
     if rate is None:
         rate = get_vat_rate()
     amount_before_tax = round(total_amount / (1 + rate), 2)
@@ -75,7 +74,7 @@ def calculate_reverse_vat(total_amount, rate=None):
     return amount_before_tax, vat_amount
 
 def get_vat_report(start_date=None, end_date=None):
-    """تقرير الضريبة (المخرجات والمدخلات)"""
+    """تقرير الضريبة"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     
@@ -117,7 +116,7 @@ def get_vat_report(start_date=None, end_date=None):
     }
 
 def get_tax_return_report(start_date=None, end_date=None):
-    """تقرير الإقرار الضريبي (Tax Return) باستخدام بيانات الضريبة الفعلية المخزنة"""
+    """تقرير الإقرار الضريبي"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
 
@@ -168,17 +167,17 @@ def get_tax_return_report(start_date=None, end_date=None):
     }
 
 def get_vat_history():
-    """سجل تغييرات نسبة الضريبة"""
+    """سجل تغييرات نسبة الضريبة (يضمن وجود عمود name دائماً)"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         "SELECT * FROM vat_config ORDER BY id DESC LIMIT 10"
     ).fetchall()
     conn.close()
-    # التأكد من وجود اسم افتراضي للسجلات القديمة
     history = []
     for r in rows:
         rec = dict(r)
+        # إذا كان العمود غير موجود (للأمان)، نضيفه يدوياً
         if 'name' not in rec or not rec.get('name'):
             rec['name'] = 'ضريبة القيمة المضافة'
         history.append(rec)
