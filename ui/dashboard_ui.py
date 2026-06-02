@@ -217,13 +217,11 @@ def show():
         if sales_data:
             df_sales = pd.DataFrame(sales_data).sort_values('month')
             fig = go.Figure()
-            # البارات بتأثير الزجاج المضاء
             fig.add_trace(go.Bar(
                 x=df_sales['month'], y=df_sales['total'],
                 marker=dict(color=df_sales['total'], colorscale=[[0, '#3B82F6'], [1, '#8B5CF6']], line=dict(width=0)),
                 hovertemplate='%{y:,.0f} ر.ي', name='المبيعات'
             ))
-            # خط الاتجاه اللامع
             fig.add_trace(go.Scatter(
                 x=df_sales['month'], y=df_sales['total'].rolling(2).mean(),
                 mode='lines', line=dict(color=OR, width=4), name='الاتجاه العامة'
@@ -292,15 +290,17 @@ def show():
         activities = get_recent_activities()
         if activities:
             for act in activities[:5]:
-                # تحديد النقطة التفاعلية بناءً على نوع العملية
-                dot_color = PR if 'فاتورة' in act['action'] else BL if 'قيد' in act['action'] else OR
+                dot_color = PR if 'فاتورة' in str(act.get('action', '')) else BL if 'قيد' in str(act.get('action', '')) else OR
+                # استخدام المفتاح الصحيح للوقت: 'time' أو 'created_at' أو 'timestamp'
+                time_value = act.get('time') or act.get('created_at') or act.get('timestamp') or ''
+                action_value = act.get('action', '')
                 st.markdown(f"""
                 <div class="luxury-card" style="padding: 14px 20px; margin-bottom: 10px; border-radius: 16px; box-shadow: none;">
                     <div style="display: flex; align-items: center; gap: 12px; width: 100%;">
                         <span style="background: {dot_color}; width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 10px {dot_color};"></span>
                         <div style="flex: 1; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
-                            <span style="color: {TEXT_PRIMARY}; font-weight: 500; font-size: 0.92rem;">{act['action']}</span>
-                            <small style="color: {TEXT_SECONDARY}; font-size: 0.8rem; font-weight: 500;">{act['time']}</small>
+                            <span style="color: {TEXT_PRIMARY}; font-weight: 500; font-size: 0.92rem;">{action_value}</span>
+                            <small style="color: {TEXT_SECONDARY}; font-size: 0.8rem; font-weight: 500;">{time_value}</small>
                         </div>
                     </div>
                 </div>
