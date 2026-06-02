@@ -32,7 +32,8 @@ from ui.ai_ui import show as ai_show
 from ui.vat_ui import show as vat_show
 from ui.crm_ui import show as crm_show
 from ui.assets_ui import show as assets_show
-from ui.cost_center_ui import show as cost_center_show  # 🆕 مراكز التكلفة
+from ui.cost_center_ui import show as cost_center_show
+from ui.currency_ui import show as currency_show  # 🆕 العملات
 
 st.set_page_config(page_title="XD ERP", layout="wide")
 
@@ -66,7 +67,8 @@ else:
                 "الأصول الثابتة",         # الأصول الثابتة
                 "شجرة الحسابات",
                 "القوائم المالية",
-                "مراكز التكلفة",          # 🆕 مراكز التكلفة
+                "العملات",               # 🆕 العملات
+                "مراكز التكلفة",          # مراكز التكلفة
                 "الصلاحيات",
                 "إغلاق الفترات",
                 "إغلاق الحسابات",
@@ -91,7 +93,8 @@ else:
                 "building",               # الأصول الثابتة
                 "diagram-3",              # شجرة الحسابات
                 "file-earmark-bar-graph", # القوائم المالية
-                "pie-chart",              # 🆕 أيقونة مراكز التكلفة
+                "currency-exchange",      # 🆕 أيقونة العملات
+                "pie-chart",              # مراكز التكلفة
                 "shield-lock",            # الصلاحيات
                 "calendar-check",
                 "journal-x",
@@ -130,7 +133,9 @@ else:
         chart_show()
     elif selected == "القوائم المالية":
         financial_show()
-    elif selected == "مراكز التكلفة":      # 🆕
+    elif selected == "العملات":           # 🆕
+        currency_show()
+    elif selected == "مراكز التكلفة":
         cost_center_show()
     elif selected == "الصلاحيات":
         roles_show()
