@@ -8,31 +8,31 @@ from services.auth_service import (
     logout_session
 )
 
-# ========== ألوان وتصميم فاخر ==========
-T = "#FFFFFF"       # أبيض ناصع للنصوص الرئيسية
-S = "#94A3B8"       # رمادي فضي للنصوص الفرعية
-PR = "#8B5CF6"      # بنفسجي فخم
-BL = "#3B82F6"      # أزرق ساطع
-CY = "#06B6D4"      # سماوي للتوهج
+# ========== لوحة ألوان النخبة والفخامة المطلقة ==========
+T = "#F8FAFC"        # أبيض بلاتيني ناصع للنصوص القيادية
+S = "#64748B"        # رمادي فضي خافت للنصوص الثانوية
+PR = "#7C3AED"       # بنفسجي ملكي عميق (Royal Violet)
+BL = "#2563EB"       # أزرق سيادي (Sovereign Blue)
+BG_CORE = "#020617"  # أسود بركاني عميق للخلفية الأساسية
 
 def apply_ultra_premium_css():
-    """حقن CSS متقدم لتصميم زجاجي فائق الفخامة (Ultra-Premium)"""
+    """حقن نظام التصميم السيادي والـ Obsidian Glassmorphism لصفحة الدخول"""
     st.markdown(f"""
     <style>
-        /* 1. خلفية متدرجة ديناميكية تتحرك ببطء */
-        @keyframes gradientBG {{
+        /* 1. خلفية كونية متحركة بنعومة متناهية دون تشتيت */
+        @keyframes subtleOrbit {{
             0% {{ background-position: 0% 50%; }}
             50% {{ background-position: 100% 50%; }}
             100% {{ background-position: 0% 50%; }}
         }}
         .stApp {{
-            background: linear-gradient(-45deg, #020617, #0f172a, #1e1b4b, #172554) !important;
-            background-size: 400% 400% !important;
-            animation: gradientBG 20s ease infinite !important;
+            background: radial-gradient(circle at top right, #1e1b4b 0%, #090d16 60%, {BG_CORE} 100%) !important;
+            background-size: 200% 200% !important;
+            animation: subtleOrbit 25s ease infinite !important;
             background-attachment: fixed !important;
         }}
 
-        /* 🧹 إخفاء أي مستطيلات فارغة نهائياً */
+        /* 🧹 تطهير تام للواجهة لمنع قفزات العناصر أو الفراغات الهيكلية */
         div[data-testid="stVerticalBlock"] > div:empty,
         div[data-testid="stHorizontalBlock"] > div:empty,
         div[data-testid="element-container"]:empty,
@@ -43,160 +43,165 @@ def apply_ultra_premium_css():
             padding: 0px !important;
         }}
 
-        /* 2. بطاقة تسجيل الدخول (زجاج نقي ثلاثي الأبعاد) */
+        /* 2. حاوية الزجاج البركاني (Obsidian Luxury Card) */
         div[data-testid="stVerticalBlock"] > div > div > div[data-testid="stVerticalBlock"] {{
-            background: rgba(15, 23, 42, 0.4) !important;
-            backdrop-filter: blur(40px) saturate(150%) !important;
-            -webkit-backdrop-filter: blur(40px) saturate(150%) !important;
-            border: 1px solid rgba(255, 255, 255, 0.08) !important;
-            border-top: 1px solid rgba(255, 255, 255, 0.2) !important; /* انعكاس الضوء من الأعلى */
-            border-radius: 35px !important;
-            padding: 3.5rem 3rem !important;
-            box-shadow: 0 40px 80px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255,255,255,0.1) !important;
+            background: linear-gradient(145deg, rgba(15, 23, 42, 0.55) 0%, rgba(8, 13, 24, 0.75) 100%) !important;
+            backdrop-filter: blur(50px) saturate(160%) !important;
+            -webkit-backdrop-filter: blur(50px) saturate(160%) !important;
+            border: 1px solid rgba(255, 255, 255, 0.04) !important;
+            border-top: 1px solid rgba(255, 255, 255, 0.12) !important;
+            border-radius: 40px !important;
+            padding: 4rem 3.5rem !important;
+            box-shadow: 0 50px 100px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255,255,255,0.02) !important;
         }}
 
-        /* 3. حقول الإدخال الفاخرة */
+        /* 3. حقول الإدخال الأنيقة والذكية */
         div[data-baseweb="input"] {{
-            background: rgba(0, 0, 0, 0.3) !important;
-            border: 1px solid rgba(255, 255, 255, 0.05) !important;
+            background: rgba(3, 7, 18, 0.5) !important;
+            border: 1px solid rgba(255, 255, 255, 0.06) !important;
             border-radius: 20px !important;
-            padding: 8px 16px !important;
-            transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
+            padding: 10px 18px !important;
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1) !important;
         }}
         div[data-baseweb="input"]:focus-within {{
-            background: rgba(0, 0, 0, 0.5) !important;
-            border-color: {PR} !important;
-            box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.15), 0 15px 30px rgba(0,0,0,0.4) !important;
-            transform: translateY(-3px);
+            background: rgba(0, 0, 0, 0.7) !important;
+            border-color: rgba(124, 58, 237, 0.6) !important;
+            box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.6), 0 20px 40px rgba(0,0,0,0.5) !important;
+            transform: translateY(-2px);
         }}
         div[data-baseweb="input"] input {{
             background: transparent !important;
             color: {T} !important;
-            font-size: 1.1rem !important;
-            letter-spacing: 1px;
+            font-size: 1.15rem !important;
             font-weight: 500 !important;
         }}
         div[data-baseweb="input"] input::placeholder {{
-            color: rgba(255, 255, 255, 0.2) !important;
-            font-weight: 400 !important;
+            color: rgba(255, 255, 255, 0.15) !important;
         }}
 
-        /* 4. تنسيق العناوين فوق حقول الإدخال */
+        /* عناوين الحقول السلوكية */
         .stTextInput label p {{
             color: {S} !important;
-            font-size: 0.95rem !important;
-            font-weight: 600 !important;
+            font-size: 0.92rem !important;
+            font-weight: 700 !important;
             letter-spacing: 0.5px !important;
-            margin-bottom: 10px !important;
+            margin-bottom: 12px !important;
+            text-transform: uppercase;
         }}
 
-        /* 5. زر الدخول الرئيسي (3D و Gradient) */
+        /* 4. زر الدخول التنفيذي المتدرج (Executive Call-to-Action) */
         button[kind="primary"] {{
             background: linear-gradient(135deg, {PR} 0%, {BL} 100%) !important;
             border: none !important;
             font-weight: 800 !important;
             font-size: 1.15rem !important;
-            letter-spacing: 1px !important;
-            padding: 20px 24px !important;
+            letter-spacing: 0.5px !important;
+            padding: 22px 28px !important;
             border-radius: 20px !important;
             color: white !important;
-            transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
-            box-shadow: 0 10px 20px -5px rgba(139, 92, 246, 0.5), inset 0 -3px 0 rgba(0,0,0,0.2) !important;
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1) !important;
+            box-shadow: 0 15px 30px -5px rgba(124, 58, 237, 0.4), inset 0 -3px 0 rgba(0,0,0,0.15) !important;
         }}
         button[kind="primary"]:hover {{
             transform: translateY(-4px) !important;
-            box-shadow: 0 20px 40px -10px rgba(139, 92, 246, 0.8), inset 0 -3px 0 rgba(0,0,0,0.2) !important;
-            filter: brightness(1.15) !important;
+            box-shadow: 0 25px 50px -10px rgba(124, 58, 237, 0.6), inset 0 -3px 0 rgba(0,0,0,0.15) !important;
+            filter: brightness(1.1) !important;
         }}
 
-        /* 6. الزر الثانوي (نسيت كلمة المرور) */
+        /* 5. الزر الثانوي المحيد والمعزز */
         button[kind="secondary"] {{
-            background: rgba(255, 255, 255, 0.03) !important;
-            border: 1px solid rgba(255, 255, 255, 0.08) !important;
+            background: rgba(255, 255, 255, 0.02) !important;
+            border: 1px solid rgba(255, 255, 255, 0.05) !important;
             color: {S} !important;
             font-weight: 700 !important;
-            font-size: 1.05rem !important;
+            font-size: 1rem !important;
             border-radius: 20px !important;
-            padding: 20px 24px !important;
+            padding: 22px 28px !important;
             transition: all 0.4s ease !important;
         }}
         button[kind="secondary"]:hover {{
-            background: rgba(255, 255, 255, 0.1) !important;
-            color: white !important;
-            border-color: rgba(255, 255, 255, 0.2) !important;
+            background: rgba(255, 255, 255, 0.06) !important;
+            color: {T} !important;
+            border-color: rgba(255, 255, 255, 0.15) !important;
             transform: translateY(-2px);
         }}
 
-        /* 7. أنيميشن شعار الهيدر */
-        @keyframes glowPulse {{
-            0%, 100% {{ filter: drop-shadow(0 0 25px rgba(139, 92, 246, 0.4)); transform: translateY(0); }}
-            50% {{ filter: drop-shadow(0 0 45px rgba(59, 130, 246, 0.6)); transform: translateY(-5px); }}
+        /* 6. تأثير النبض الضوئي المستقر للشعار */
+        @keyframes executiveGlow {{
+            0%, 100% {{ filter: drop-shadow(0 0 30px rgba(124, 58, 237, 0.3)); transform: translateY(0); }}
+            50% {{ filter: drop-shadow(0 0 50px rgba(37, 99, 219, 0.45)); transform: translateY(-4px); }}
+        }}
+        .executive-logo-box {{
+            animation: executiveGlow 6s ease-in-out infinite;
         }}
     </style>
     """, unsafe_allow_html=True)
 
 def render_premium_header(is_change_password=False):
-    """هيدر فاخر مع تأثيرات بصرية متقدمة"""
+    """توليد الهيدر التنفيذي الفاخر وتثبيت شعار XD الأيقوني"""
     if not is_change_password:
         st.markdown(f"""
-        <div style="text-align:center; margin-bottom: 2.5rem; margin-top: 1rem;">
-            <div style="
-                width: 130px; height: 130px; margin: 0 auto 1.8rem auto;
-                background: linear-gradient(145deg, rgba(255,255,255,0.05), rgba(255,255,255,0.01));
-                backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-                border: 1px solid rgba(255, 255, 255, 0.1); 
-                border-top: 1px solid rgba(255, 255, 255, 0.3);
-                border-radius: 35px;
+        <div style="text-align:center; margin-bottom: 3rem; margin-top: 0.5rem;">
+            <!-- حاضنة شعار XD الفاخرة -->
+            <div class="executive-logo-box" style="
+                width: 140px; height: 140px; margin: 0 auto 2rem auto;
+                background: linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%);
+                backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px);
+                border: 1px solid rgba(255, 255, 255, 0.08); 
+                border-top: 1px solid rgba(255, 255, 255, 0.25);
+                border-radius: 38px;
                 display: flex; align-items: center; justify-content: center;
-                animation: glowPulse 4s ease-in-out infinite;
-                box-shadow: inset 0 0 20px rgba(139, 92, 246, 0.2);
+                box-shadow: inset 0 0 25px rgba(124, 58, 237, 0.15);
             ">
-                <span style="font-size: 4.5rem; font-weight: 900; 
-                    background: linear-gradient(135deg, #FFFFFF, {PR}, {CY});
+                <span style="font-size: 3.6rem; font-weight: 950; 
+                    background: linear-gradient(135deg, #FFFFFF 20%, #A78BFA 70%, #2563EB 100%);
                     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-                ">X</span>
+                    letter-spacing: -2px; display: inline-block; padding-right: 2px;
+                ">XD</span>
             </div>
-            <h1 style="color:{T}; font-size: 3.5rem; margin: 0; font-weight: 900; letter-spacing: 8px;">XD ERP</h1>
-            <p style="color:{S}; margin-top: 0.8rem; font-size: 1.1rem; letter-spacing: 4px; font-weight: 300; text-transform: uppercase;">
-                مرحباً بك مجدداً
+            <h1 style="color:{T}; font-size: 3rem; margin: 0; font-weight: 900; letter-spacing: 6px; text-transform: uppercase;">XD ENTERPRISE</h1>
+            <p style="color:{S}; margin-top: 0.9rem; font-size: 1.05rem; letter-spacing: 3px; font-weight: 500; text-transform: uppercase;">
+                بوابة الوصول الآمن للنظام
             </p>
         </div>
         """, unsafe_allow_html=True)
     else:
         st.markdown(f"""
-        <div style="text-align:center; margin-bottom: 2.5rem; margin-top: 1rem;">
-            <div style="
-                width: 100px; height: 100px; margin: 0 auto 1.5rem auto;
+        <div style="text-align:center; margin-bottom: 3rem; margin-top: 0.5rem;">
+            <div class="executive-logo-box" style="
+                width: 110px; height: 110px; margin: 0 auto 1.8rem auto;
+                background: rgba(239, 68, 68, 0.03);
+                border: 1px solid rgba(239, 68, 68, 0.1);
+                border-radius: 32px;
                 display: flex; align-items: center; justify-content: center;
-                animation: glowPulse 4s ease-in-out infinite;
             ">
-                <span style="font-size: 4rem;">🛡️</span>
+                <span style="font-size: 3.5rem;">🛡️</span>
             </div>
-            <h2 style="color:{T}; margin:0; font-weight:800; font-size:2.5rem; letter-spacing: 2px;">تأمين الحساب</h2>
-            <p style="color:{S}; margin-top:0.8rem; font-size:1.1rem; letter-spacing: 1px;">الرجاء تعيين كلمة مرور قوية وجديدة</p>
+            <h2 style="color:{T}; margin:0; font-weight:900; font-size:2.4rem; letter-spacing: 1px;">تأمين الهوية الرقمية</h2>
+            <p style="color:{S}; margin-top:0.8rem; font-size:1.05rem; letter-spacing: 0.5px;">يرجى تحديث رمز الحماية الخاص بك للمتابعة</p>
         </div>
         """, unsafe_allow_html=True)
 
 def login_form():
     render_premium_header(is_change_password=False)
     
-    # نسبة 1:2:1 لمركزة البطاقة بأناقة (متجاوبة مع الشاشات)
-    spacer_left, main_col, spacer_right = st.columns([1, 2, 1])
+    # شبكة محاذية متناظرة ومستقرة تماماً وعالية الاستجابة
+    spacer_left, main_col, spacer_right = st.columns([1, 2.2, 1])
     
     with main_col:
         with st.container():
-            username = st.text_input("👤 اسم المستخدم", placeholder="admin", key="login_user")
-            st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True) 
+            username = st.text_input("👤 معرف المستخدم (ID)", placeholder="أدخل اسم المستخدم", key="login_user")
+            st.markdown("<div style='margin-bottom: 16px;'></div>", unsafe_allow_html=True) 
             
-            password = st.text_input("🔒 كلمة المرور", type="password", placeholder="••••••••", key="login_pass")
-            st.markdown("<div style='margin-bottom: 35px;'></div>", unsafe_allow_html=True)
+            password = st.text_input("🔒 رمز المرور السري", type="password", placeholder="••••••••", key="login_pass")
+            st.markdown("<div style='margin-bottom: 40px;'></div>", unsafe_allow_html=True)
             
-            # ترتيب الأزرار لتبدو احترافية
-            col1, col2 = st.columns([1.5, 1])
+            # محاذاة أزرار التحكم التنفيذية
+            col1, col2 = st.columns([1.6, 1])
             with col1:
-                login_btn = st.button("🚀 الدخول للنظام", use_container_width=True, type="primary")
+                login_btn = st.button("🚀 مصادقة والدخول", use_container_width=True, type="primary")
             with col2:
-                if st.button("🔑 نسيت الرمز", use_container_width=True):
+                if st.button("🔑 استعادة الحساب", use_container_width=True):
                     st.session_state.show_password_change = True
                     st.rerun()
             
@@ -207,12 +212,12 @@ def login_form():
                     st.session_state.user = user
                     st.rerun()
                 else:
-                    st.error("❌ بيانات الدخول غير صحيحة. يرجى المحاولة مجدداً.")
+                    st.error("❌ فشلت المصادقة المباشرة. يرجى مراجعة البيانات المدخلة.")
     
     st.markdown(f"""
-    <div style="text-align:center; margin-top: 4rem; margin-bottom: 1rem;">
-        <p style="color: rgba(255,255,255,0.2); font-size: 0.85rem; letter-spacing: 2px; font-weight: 300;">
-            SECURE ENTERPRISE SYSTEM © 2026
+    <div style="text-align:center; margin-top: 5rem; margin-bottom: 1rem;">
+        <p style="color: rgba(255,255,255,0.15); font-size: 0.82rem; letter-spacing: 2px; font-weight: 400;">
+            POWERED BY XD SYSTEMS HUB • SECURE LAYER © 2026
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -220,31 +225,31 @@ def login_form():
 def password_change_form():
     render_premium_header(is_change_password=True)
     
-    spacer_left, main_col, spacer_right = st.columns([1, 2, 1])
+    spacer_left, main_col, spacer_right = st.columns([1, 2.2, 1])
     
     with main_col:
         with st.container():
-            username = st.text_input("👤 اسم المستخدم", value="admin", disabled=True, key="change_user")
-            st.markdown("<div style='margin-bottom: 8px;'></div>", unsafe_allow_html=True)
+            username = st.text_input("👤 الحساب المستهدف", value="admin", disabled=True, key="change_user")
+            st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
             
-            old_password = st.text_input("🔓 كلمة المرور الحالية", type="password", placeholder="أدخل الرمز الحالي", key="change_old")
-            st.markdown("<div style='margin-bottom: 8px;'></div>", unsafe_allow_html=True)
+            old_password = st.text_input("🔓 رمز المرور السري الحالي", type="password", placeholder="الرمز الحالي", key="change_old")
+            st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
             
-            new_password = st.text_input("✨ كلمة المرور الجديدة", type="password", placeholder="الرمز الجديد", key="change_new")
-            st.markdown("<div style='margin-bottom: 8px;'></div>", unsafe_allow_html=True)
+            new_password = st.text_input("✨ رمز المرور السري الجديد", type="password", placeholder="الرمز الجديد القوي", key="change_new")
+            st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
             
-            confirm_password = st.text_input("✅ تأكيد كلمة المرور", type="password", placeholder="أعد إدخال الرمز للتأكيد", key="change_confirm")
-            st.markdown("<div style='margin-bottom: 30px;'></div>", unsafe_allow_html=True)
+            confirm_password = st.text_input("✅ تأكيد الرمز الجديد", type="password", placeholder="إعادة كتابة الرمز", key="change_confirm")
+            st.markdown("<div style='margin-bottom: 35px;'></div>", unsafe_allow_html=True)
             
-            col1, col2 = st.columns([1.5, 1])
+            col1, col2 = st.columns([1.6, 1])
             with col1:
-                if st.button("💾 تأكيد وتحديث", use_container_width=True, type="primary"):
+                if st.button("💾 حفظ البيانات وتحديث", use_container_width=True, type="primary"):
                     if not old_password or not new_password:
-                        st.warning("⚠️ يرجى تعبئة جميع الحقول")
+                        st.warning("⚠️ الحقول الإلزامية فارغة.")
                     elif new_password != confirm_password:
-                        st.error("❌ كلمتا المرور غير متطابقتين")
+                        st.error("❌ عدم تطابق في تأكيد رمز المرور الجديد.")
                     elif len(new_password) < 4:
-                        st.error("⚠️ كلمة المرور قصيرة جداً (الحد الأدنى 4 أحرف)")
+                        st.error("⚠️ رمز المرور ضعيف (يجب ألا يقل عن 4 خانات).")
                     else:
                         success, message = change_password(username, old_password, new_password)
                         if success:
@@ -254,7 +259,7 @@ def password_change_form():
                         else:
                             st.error(f"❌ {message}")
             with col2:
-                if st.button("↩️ إلغاء", use_container_width=True):
+                if st.button("↩️ إلغاء العملية", use_container_width=True):
                     st.session_state.show_password_change = False
                     st.rerun()
 
@@ -265,7 +270,7 @@ def show():
     if 'show_password_change' not in st.session_state:
         st.session_state.show_password_change = False
     
-    # تطبيق التنسيق الفائق الفخامة
+    # استدعاء وبناء طبقة الواجهة فائقة الاحترافية
     apply_ultra_premium_css()
     
     if st.session_state.show_password_change:
