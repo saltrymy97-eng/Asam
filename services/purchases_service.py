@@ -1,9 +1,10 @@
-# services/purchases_service.py – منطق أعمال المشتريات (SQLite + VAT)
+# services/purchases_service.py – منطق أعمال المشتريات (SQLite + VAT + تعدد العملات)
 import sqlite3
 from datetime import date
 from database import get_connection
 from services.audit_service import log_action
-from services.vat_service import get_vat_rate  # 🆕 استيراد نسبة الضريبة
+from services.vat_service import get_vat_rate
+from services.currency_service import get_exchange_rate, get_base_currency
 
 def get_suppliers():
     """جلب الموردين"""
@@ -21,15 +22,25 @@ def get_products_for_purchase():
     conn.close()
     return [dict(p) for p in products]
 
-def create_purchase_invoice(supplier_id, items, username="admin"):
-    """إنشاء فاتورة مشتريات محمية مع حساب الضريبة تلقائياً"""
+def create_purchase_invoice(supplier_id, items, username="admin", currency_code="YER", exchange_rate=None):
+    """
+    إنشاء فاتورة مشتريات محمية مع دعم تعدد العملات
+    :param currency_code: رمز العملة (YER, USD, SAR...)
+    :param exchange_rate: سعر الصرف للعملة الأساسية (إذا لم يُعطى، يجلب تلقائياً)
+    """
     subtotal = sum(item["quantity"] * item["unit_price"] for item in items)
-    vat_rate = get_vat_rate()  # 🆕 جلب نسبة الضريبة الحالية
-    vat_amount = round(subtotal * vat_rate, 2)  # 🆕 حساب قيمة الضريبة
-    total = round(subtotal + vat_amount, 2)  # 🆕 الإجمالي النهائي
+    vat_rate = get_vat_rate()
+    vat_amount = round(subtotal * vat_rate, 2)
+    total = round(subtotal + vat_amount, 2)
+
+    # تحديد سعر الصرف
+    base_currency = get_base_currency()
+    if currency_code != base_currency['code'] and exchange_rate is None:
+        exchange_rate = get_exchange_rate(currency_code, base_currency['code'])
+    if exchange_rate is None:
+        exchange_rate = 1.0
 
     conn = get_connection()
-
     try:
         conn.execute("BEGIN")
 
@@ -46,10 +57,10 @@ def create_purchase_invoice(supplier_id, items, username="admin"):
                 conn.close()
                 return None, 0, f"المنتج {item.get('name', item['product_id'])} غير موجود"
 
-        # 🆕 إدراج الفاتورة مع أعمدة الضريبة
         cur = conn.execute(
-            "INSERT INTO invoices (type, party_id, invoice_date, total, status, vat_rate, vat_amount) VALUES ('purchase', ?, date('now'), ?, 'completed', ?, ?)",
-            (supplier_id, total, vat_rate, vat_amount)
+            """INSERT INTO invoices (type, party_id, invoice_date, total, status, vat_rate, vat_amount, currency_code, exchange_rate)
+               VALUES ('purchase', ?, date('now'), ?, 'completed', ?, ?, ?, ?)""",
+            (supplier_id, total, vat_rate, vat_amount, currency_code, exchange_rate)
         )
         invoice_id = cur.lastrowid
 
@@ -83,7 +94,7 @@ def create_purchase_invoice(supplier_id, items, username="admin"):
             action="فاتورة مشتريات",
             table_name="invoices",
             record_id=invoice_id,
-            new_value=f"المورد: {supplier_name}, الإجمالي: {total:,.2f}, الضريبة: {vat_amount:,.2f}"
+            new_value=f"المورد: {supplier_name}, الإجمالي: {total:,.2f}, العملة: {currency_code}, الضريبة: {vat_amount:,.2f}"
         )
 
         return invoice_id, total, None
@@ -99,7 +110,7 @@ def get_purchase_invoices():
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     invoices = conn.execute("""
-        SELECT i.id, s.name as supplier, i.invoice_date, i.total, i.status, i.vat_rate, i.vat_amount
+        SELECT i.id, s.name as supplier, i.invoice_date, i.total, i.status, i.vat_rate, i.vat_amount, i.currency_code, i.exchange_rate
         FROM invoices i
         LEFT JOIN suppliers s ON i.party_id = s.id
         WHERE i.type = 'purchase'
