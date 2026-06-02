@@ -1,5 +1,5 @@
 # services/sales_service.py – منطق أعمال المبيعات المُحسَّن
-# يدعم: التحقق من المخزون، تعدد العملات بدقة مالية، تدقيق الإجراءات، ضريبة القيمة المضافة
+# يدعم: التحقق من المخزون، تعدد العملات بدقة مالية، تدقيق الإجراءات، ضريبة القيمة المضافة، القيد المحاسبي التلقائي
 
 import sqlite3
 from decimal import Decimal, ROUND_HALF_UP
@@ -91,6 +91,7 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
     - دعم العملات المتعددة (التحويل من عملة الأساس)
     - حسابات دقيقة باستخدام Decimal
     - تدقيق الإجراء
+    - إنشاء قيد محاسبي تلقائي
 
     :param customer_id: معرف العميل
     :param items: قائمة من dict تحتوي على المفاتيح product_id, quantity, unit_price (السعر الذي اختاره المستخدم)
@@ -215,9 +216,10 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
                 (item["product_id"], qty, f"فاتورة مبيعات #{invoice_id}")
             )
 
+        # 5. تأكيد العملية
         conn.commit()
 
-        # تسجيل التدقيق
+        # 6. إنشاء القيد المحاسبي تلقائياً
         customer_name = "غير معروف"
         try:
             row = conn.execute("SELECT name FROM customers WHERE id = ?", (customer_id,)).fetchone()
@@ -226,6 +228,47 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
         except:
             pass
 
+        try:
+            from services.accounting_service import save_journal_entry
+            
+            lines = [
+                {
+                    "account": customer_name,
+                    "debit": float(total_local),
+                    "credit": 0,
+                    "currency_code": currency_code,
+                    "exchange_rate": float(exchange_rate)
+                },
+                {
+                    "account": "المبيعات",
+                    "debit": 0,
+                    "credit": float(subtotal_local),
+                    "currency_code": currency_code,
+                    "exchange_rate": float(exchange_rate)
+                }
+            ]
+            
+            # إضافة سطر الضريبة فقط إذا كان هناك مبلغ ضريبة
+            if float(vat_amount_local) > 0:
+                lines.append({
+                    "account": "ضريبة القيمة المضافة المستحقة",
+                    "debit": 0,
+                    "credit": float(vat_amount_local),
+                    "currency_code": currency_code,
+                    "exchange_rate": float(exchange_rate)
+                })
+            
+            save_journal_entry(
+                description=f"فاتورة مبيعات #{invoice_id} - {customer_name}",
+                lines=lines,
+                entry_date=date.today().strftime("%Y-%m-%d")
+            )
+        except Exception as e:
+            # إذا فشل القيد، نتراجع عن الفاتورة كاملة
+            conn.rollback()
+            return None, Decimal("0"), f"فشل إنشاء القيد المحاسبي: {e}"
+
+        # تسجيل التدقيق
         log_action(
             username=username,
             action="فاتورة مبيعات",
