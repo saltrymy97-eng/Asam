@@ -288,7 +288,7 @@ def get_invoice_details(invoice_id):
         SELECT p.name,
                ii.quantity,
                ii.unit_price,
-               (ii.quantity * ii.unit_price) AS line_total
+               (ii.quantity * ii.unit_price) AS total
         FROM invoice_items ii
         JOIN products p ON ii.product_id = p.id
         WHERE ii.invoice_id = ?
@@ -299,7 +299,7 @@ def get_invoice_details(invoice_id):
             "name": d["name"],
             "quantity": d["quantity"],
             "unit_price": _to_decimal(d["unit_price"]),
-            "line_total": _to_decimal(d["line_total"])
+            "total": _to_decimal(d["total"])
         }
         for d in details
     ]
