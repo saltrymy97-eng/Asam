@@ -73,7 +73,6 @@ def get_products_for_sale():
         "SELECT id, name, selling_price, quantity FROM products WHERE quantity > 0 ORDER BY name"
     ).fetchall()
     conn.close()
-    # نحول السعر إلى float للسهولة، مع العلم أنه سيُستخدم كـ Decimal لاحقاً
     return [
         {
             "id": p["id"],
@@ -94,7 +93,7 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
     - تدقيق الإجراء
 
     :param customer_id: معرف العميل
-    :param items: قائمة من dict تحتوي على المفاتيح product_id, quantity, unit_price_base (السعر بعملة الأساس)
+    :param items: قائمة من dict تحتوي على المفاتيح product_id, quantity, unit_price (السعر الذي اختاره المستخدم)
     :param currency_code: رمز العملة المطلوبة للفاتورة (مثلاً USD)
     :param exchange_rate: سعر صرف العملة المطلوبة مقابل عملة الأساس (إذا لم يُعطَ يُحسَب تلقائياً)
     :return: (invoice_id, total_local, error_string)
@@ -105,10 +104,12 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
     for item in items:
         if item["quantity"] <= 0:
             return None, Decimal("0"), "الكمية يجب أن تكون موجبة"
-        if item["unit_price_base"] < 0:
+        # دعم unit_price أو unit_price_base
+        price = item.get("unit_price") or item.get("unit_price_base") or 0
+        if Decimal(str(price)) < 0:
             return None, Decimal("0"), "سعر الوحدة يجب أن لا يكون سالباً"
 
-    base_currency = get_base_currency()  # يفترض إرجاع قاموس {'code':..., 'name':...}
+    base_currency = get_base_currency()
     base_code = base_currency["code"]
 
     # إذا كانت العملة هي عملة الأساس، نجبر exchange_rate = 1
@@ -122,10 +123,10 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
         exchange_rate = Decimal(str(exchange_rate))
 
     # جلب نسبة الضريبة
-    vat_rate = _to_decimal(get_vat_rate())  # مثلاً Decimal('0.15')
+    vat_rate = _to_decimal(get_vat_rate())
 
     conn = get_connection()
-    conn.row_factory = sqlite3.Row  # لاستعلام الصفوف كقواميس عند الحاجة
+    conn.row_factory = sqlite3.Row
     try:
         conn.execute("BEGIN")
 
@@ -142,8 +143,13 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
             if available < item["quantity"]:
                 raise Exception(f"المخزون غير كافٍ للمنتج '{item['product_id']}'، المتاح: {available}")
 
-            # تخزين السعر الأساسي للاستخدام في الحسابات
-            product_prices[item["product_id"]] = _to_decimal(row["selling_price"])
+            # استخدام السعر الذي أدخله المستخدم إن وُجد، وإلا سعر قاعدة البيانات
+            user_price = item.get("unit_price") or item.get("unit_price_base")
+            if user_price is not None:
+                base_price = _to_decimal(user_price)
+            else:
+                base_price = _to_decimal(row["selling_price"])
+            product_prices[item["product_id"]] = base_price
 
             # خصم المخزون مباشرة (Optimistic lock)
             conn.execute(
@@ -151,35 +157,16 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
                 (item["quantity"], item["product_id"], item["quantity"])
             )
             if conn.total_changes == 0:
-                # فشل التحديث بسبب تغير الكمية بين الفحص والتحديث
                 raise Exception(f"تعذر خصم المخزون للمنتج {item['product_id']} (تحديث متزامن)")
 
         # 2. حساب المبالغ باستخدام Decimal
         subtotal_base = Decimal("0")
         subtotal_local = Decimal("0")
 
-        # نعيد حساب unit_price_base إن أردنا تجاهل المُدخل من المستخدم والاعتماد على قاعدة البيانات
         for item in items:
-            # نأخذ السعر الأساسي من قاعدة البيانات لضمان الدقة وعدم التلاعب
             base_price = product_prices[item["product_id"]]
             qty = Decimal(str(item["quantity"]))
             line_total_base = base_price * qty
-            # السعر المحلي = السعر الأساسي / سعر الصرف (إذا كانت العملة الأساس أقوى، نضرب؟)
-            # حسب منطق: exchange_rate يمثل كم وحدة من العملة الأساس تساوي وحدة واحدة من العملة الأجنبية؟
-            # الافتراض: exchange_rate = كمية العملة الأساس (مثلاً YER) لكل 1 من العملة المطلوبة (USD)
-            # إذن السعر المحلي = السعر الأساسي × exchange_rate
-            # ولكن الواقع: إذا كان سعر البيع الأساسي بالريال، والعميل يدفع بالدولار، نحتاج لتحويل الريال إلى دولار.
-            # لذا الأصح: local_unit_price = base_price / exchange_rate (إذا exchange_rate هو YER/USD)
-            # في الكود المقدم سابقاً exchange_rate كان يُمرر كـ "سعر الصرف للعملة الأساسية" وكان يضبط إلى 1 للعملة الأساس.
-            # الغموض وارد. لتجنب الخطأ، سنفترض تعريفاً واضحاً: exchange_rate = كمية العملة الأجنبية التي تعادل 1 وحدة من العملة الأساس.
-            # لكن الأكثر شيوعاً: exchange_rate = كم وحدة من العملة الأساس تحتاج لوحدة واحدة من العملة الأجنبية.
-            # سأستخدم المنطق التالي: إذا العملة الأساس هي YER والعملة المطلوبة USD،
-            # exchange_rate يحمل قيمة مثل 250 (أي 1 دولار = 250 ريال).
-            # عندها السعر المحلي (بالدولار) = السعر الأساسي (بالريال) / exchange_rate
-            # لأننا نريد تحويل الريال إلى دولار.
-            # هذا يتوافق مع أن السعر الأساسي للسلعة هو 2500 ريال، وعند البيع بالدولار يكون السعر = 10 دولار.
-            # في الكود القديم، لم يكن هناك تحويل، فقط كان يخزن exchange_rate بدون استخدام.
-            # سأضبط هذا السلوك:
             local_unit_price = base_price / exchange_rate
             local_unit_price = _quantize(local_unit_price)
             line_total_local = local_unit_price * qty
@@ -188,13 +175,10 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
             subtotal_base += line_total_base
             subtotal_local += line_total_local
 
-        # الضريبة تحسب على الإجمالي المحلي (لأن البائع يحصل على المبلغ بالعملة المحلية)
         subtotal_local = _quantize(subtotal_local)
         vat_amount_local = _quantize(subtotal_local * vat_rate)
         total_local = _quantize(subtotal_local + vat_amount_local)
 
-        # الإجمالي بعملة الأساس = (الإجمالي المحلي - الضريبة المحلية) / سعر الصرف + الضريبة الأساسية؟
-        # الأفضل حسابها بشكل مستقل:
         subtotal_base = _quantize(subtotal_base)
         vat_amount_base = _quantize(subtotal_base * vat_rate)
         total_base = _quantize(subtotal_base + vat_amount_base)
@@ -226,13 +210,11 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
                 "INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?)",
                 (invoice_id, item["product_id"], qty, float(local_unit_price))
             )
-            # حركة المخزون
             conn.execute(
                 "INSERT INTO stock_movements (product_id, type, quantity, date, reference) VALUES (?, 'out', ?, date('now'), ?)",
                 (item["product_id"], qty, f"فاتورة مبيعات #{invoice_id}")
             )
 
-        # 5. تأكيد العملية
         conn.commit()
 
         # تسجيل التدقيق
@@ -287,7 +269,6 @@ def get_sale_invoices():
         ORDER BY i.id DESC
     """).fetchall()
     conn.close()
-    # تحويل total و total_base إلى Decimal للدقة
     result = []
     for inv in invoices:
         d = dict(inv)
