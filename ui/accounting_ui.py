@@ -1,4 +1,4 @@
-# ui/accounting_ui.py - واجهة الحسابات (تصميم زجاجي فخم + قوائم منسدلة + مراكز التكلفة)
+# ui/accounting_ui.py – واجهة الحسابات (تصميم زجاجي فخم + عرض احترافي للأسماء والأرصدة)
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -13,7 +13,7 @@ from services.accounting_service import (
     get_distinct_accounts
 )
 from services.audit_service import log_action
-from services import cost_center_service  # 🆕 مراكز التكلفة
+from services import cost_center_service
 
 DB_PATH = "erp.db"
 
@@ -28,6 +28,23 @@ ACCENT_GREEN = "#10B981"
 ACCENT_ORANGE = "#F59E0B"
 ACCENT_RED = "#EF4444"
 ACCENT_PURPLE = "#8B5CF6"
+
+# ---------- دوال مساعدة للعرض الاحترافي ----------
+def get_account_display_name(code):
+    """تحويل كود الحساب إلى اسمه الكامل من شجرة الحسابات"""
+    if not code:
+        return ""
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    # إذا كان الكود رقماً، نبحث عنه في شجرة الحسابات
+    if code.isdigit():
+        row = conn.execute("SELECT code, name FROM accounts WHERE code = ?", (code,)).fetchone()
+        conn.close()
+        if row:
+            return f"{row['code']} - {row['name']}"
+    # إذا لم يكن رقماً (مثل اسم العميل)، نرجعه كما هو
+    conn.close()
+    return code
 
 def get_accounts_list():
     """جلب جميع الحسابات من شجرة الحسابات"""
@@ -61,7 +78,7 @@ def show():
         st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>تسجيل قيد يومية</h3>", unsafe_allow_html=True)
         
         accounts_list = get_accounts_list()
-        cc_options, cc_mapping = get_cost_centers_list()  # 🆕 مراكز التكلفة
+        cc_options, cc_mapping = get_cost_centers_list()
         
         if not accounts_list:
             st.warning("لا توجد حسابات. أضف حسابات من شجرة الحسابات أولاً.")
@@ -73,10 +90,9 @@ def show():
                 st.markdown(f"<p style='color:{TEXT_SECONDARY}; margin-top:1rem;'>الأسطر المحاسبية (حتى 4 أسطر)</p>", unsafe_allow_html=True)
                 
                 lines = []
-                cost_center_allocations = []  # لتجميع توزيعات مراكز التكلفة
+                cost_center_allocations = []
                 
                 for i in range(4):
-                    # سطر الحساب الأساسي
                     cols = st.columns([3, 2, 2])
                     account = cols[0].selectbox(
                         f"الحساب {i+1}",
@@ -90,12 +106,11 @@ def show():
                         code = account.split(" - ")[-1]
                         lines.append({"account": code, "debit": debit, "credit": credit})
                         
-                        # 🆕 توزيع مراكز التكلفة لهذا السطر
                         if cc_options:
                             with st.expander(f"🎯 توزيع مراكز التكلفة للسطر {i+1}", expanded=False):
                                 st.caption("يمكنك توزيع مبلغ السطر على حتى 3 مراكز تكلفة")
                                 allocs_for_line = []
-                                remaining_amount = debit if debit > 0 else credit  # المبلغ الأصلي
+                                remaining_amount = debit if debit > 0 else credit
                                 
                                 for j in range(3):
                                     c_cols = st.columns([3, 2, 2])
@@ -149,7 +164,6 @@ def show():
                         if abs(total_debit - total_credit) > 0.001:
                             st.error(f"القيد غير متوازن! المدين: {total_debit:,.2f} ، الدائن: {total_credit:,.2f}")
                         else:
-                            # 🆕 تمرير توزيعات مراكز التكلفة إلى دالة الحفظ
                             entry_id, error = save_journal_entry(
                                 description, lines, entry_date.strftime("%Y-%m-%d"),
                                 cost_center_allocations=cost_center_allocations if cost_center_allocations else None
@@ -178,15 +192,16 @@ def show():
             entry_ids = [e['id'] for e in entries]
             selected_entry = st.selectbox("اختر قيداً لعرض تفاصيله", entry_ids)
             if selected_entry:
-                details = get_entry_details(selected_entry)  # الآن تحتوي على cost_center_allocations
+                details = get_entry_details(selected_entry)
                 if details:
-                    # عرض جدول الأسطر الرئيسي مع التوزيعات
                     for idx, line in enumerate(details):
+                        # 🔧 عرض اسم الحساب الكامل بدلاً من الكود فقط
+                        display_name = get_account_display_name(line['account_name'])
                         with st.container():
                             st.markdown(f"""
                             <div style="background:{GLASS_BG}; border:1px solid {GLASS_BORDER}; 
                                         border-radius:10px; padding:10px; margin-bottom:10px;">
-                                <strong>الحساب:</strong> {line['account_name']} &nbsp;&nbsp;
+                                <strong>الحساب:</strong> {display_name} &nbsp;&nbsp;
                                 <strong>مدين:</strong> {line['debit']:,.2f} &nbsp;&nbsp;
                                 <strong>دائن:</strong> {line['credit']:,.2f}
                             </div>
@@ -206,15 +221,37 @@ def show():
     # ---------- دفتر الأستاذ ----------
     with tab2:
         st.markdown(f"<h3 style='color:{ACCENT_GREEN};'>دفتر الأستاذ العام</h3>", unsafe_allow_html=True)
+        # 🔧 عرض أسماء الحسابات للاختيار بدلاً من الأكواد
         accounts = get_distinct_accounts()
         if accounts:
-            selected_account = st.selectbox("اختر الحساب", accounts)
+            # تحويل الأكواد إلى أسماء قابلة للقراءة
+            display_accounts = [f"{acc} - {get_account_display_name(acc)}" if acc.isdigit() else acc for acc in accounts]
+            acc_mapping = dict(zip(display_accounts, accounts))
+            
+            selected_display = st.selectbox("اختر الحساب", display_accounts)
+            selected_account = acc_mapping[selected_display]
+            
             ledger = get_ledger(selected_account)
             if ledger:
                 df_ledger = pd.DataFrame(ledger)
-                df_ledger["balance"] = (df_ledger["debit"] - df_ledger["credit"]).cumsum()
+                # 🔧 إظهار الأرصدة بدون إشارة سالبة (عمود للدائن وآخر للمدين)
+                df_ledger["رصيد مدين"] = df_ledger["debit"] - df_ledger["credit"]
+                df_ledger["رصيد دائن"] = df_ledger["credit"] - df_ledger["debit"]
+                # نجعل القيم السالبة صفراً في العمود المناسب
+                df_ledger["رصيد مدين"] = df_ledger["رصيد مدين"].apply(lambda x: x if x > 0 else 0)
+                df_ledger["رصيد دائن"] = df_ledger["رصيد دائن"].apply(lambda x: x if x > 0 else 0)
+                # إعادة ترتيب الأعمدة للعرض
+                df_ledger = df_ledger[["date", "description", "debit", "credit", "رصيد مدين", "رصيد دائن", "currency_code", "exchange_rate"]]
                 st.dataframe(df_ledger, use_container_width=True, hide_index=True)
-                st.markdown(f"**الرصيد النهائي: {df_ledger['balance'].iloc[-1]:,.2f}**")
+                
+                # حساب الرصيد النهائي (بالإشارة الصحيحة داخلياً)
+                final_balance = (df_ledger["debit"].sum() - df_ledger["credit"].sum())
+                if final_balance > 0:
+                    st.markdown(f"**الرصيد النهائي: {final_balance:,.2f} (مدين)**")
+                elif final_balance < 0:
+                    st.markdown(f"**الرصيد النهائي: {abs(final_balance):,.2f} (دائن)**")
+                else:
+                    st.markdown(f"**الرصيد النهائي: 0.00**")
             else:
                 st.info("لا توجد حركات على هذا الحساب")
         else:
@@ -226,8 +263,19 @@ def show():
         tb = get_trial_balance()
         if tb:
             df_tb = pd.DataFrame(tb)
-            df_tb["balance"] = df_tb["total_debit"] - df_tb["total_credit"]
+            # 🔧 فصل الأرصدة المدينة والدائنة بدون إشارات سالبة
+            df_tb["رصيد مدين"] = df_tb["total_debit"] - df_tb["total_credit"]
+            df_tb["رصيد دائن"] = df_tb["total_credit"] - df_tb["total_debit"]
+            df_tb["رصيد مدين"] = df_tb["رصيد مدين"].apply(lambda x: x if x > 0 else 0)
+            df_tb["رصيد دائن"] = df_tb["رصيد دائن"].apply(lambda x: x if x > 0 else 0)
+            
+            # تحسين أسماء الحسابات
+            df_tb["account_name"] = df_tb["account_name"].apply(get_account_display_name)
+            
+            # إعادة ترتيب الأعمدة
+            df_tb = df_tb[["account_name", "total_debit", "total_credit", "رصيد مدين", "رصيد دائن"]]
             st.dataframe(df_tb, use_container_width=True, hide_index=True)
+            
             total_d = df_tb["total_debit"].sum()
             total_c = df_tb["total_credit"].sum()
             st.markdown(f"**إجمالي المدين: {total_d:,.2f} | إجمالي الدائن: {total_c:,.2f}**")
