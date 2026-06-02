@@ -85,7 +85,7 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
     - تدقيق الإجراء
 
     :param supplier_id: معرف المورد
-    :param items: قائمة من dict تحتوي على المفاتيح product_id, quantity, unit_price_base (السعر بعملة الأساس)
+    :param items: قائمة من dict تحتوي على المفاتيح product_id, quantity, unit_price (السعر الذي اختاره المستخدم)
     :param currency_code: رمز العملة المطلوبة للفاتورة
     :param exchange_rate: سعر الصرف (إذا لم يُعطَ، يُحسَب تلقائياً)
     :return: (invoice_id, total_local, error_string)
@@ -96,8 +96,9 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
     for item in items:
         if item["quantity"] <= 0:
             return None, Decimal("0"), "الكمية يجب أن تكون موجبة"
-        # unit_price_base اختياري: إن وُجد يجب ألا يكون سالباً
-        if "unit_price_base" in item and item["unit_price_base"] is not None and item["unit_price_base"] < 0:
+        # دعم unit_price أو unit_price_base
+        price = item.get("unit_price") or item.get("unit_price_base")
+        if price is not None and Decimal(str(price)) < 0:
             return None, Decimal("0"), "سعر الوحدة يجب أن لا يكون سالباً"
 
     base_currency = get_base_currency()
@@ -134,11 +135,13 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
             ).fetchone()
             if not row:
                 raise Exception(f"المنتج {item['product_id']} غير موجود")
-            # السعر الأساسي للشراء (بعملة الأساس)
-            base_price = _to_decimal(row["purchase_price"])
-            # إذا أرسل المستخدم unit_price_base نستخدمه بدلاً من سعر قاعدة البيانات
-            if "unit_price_base" in item and item["unit_price_base"] is not None:
-                base_price = _to_decimal(item["unit_price_base"])
+            
+            # استخدام السعر الذي أدخله المستخدم إن وُجد، وإلا سعر قاعدة البيانات
+            user_price = item.get("unit_price") or item.get("unit_price_base")
+            if user_price is not None:
+                base_price = _to_decimal(user_price)
+            else:
+                base_price = _to_decimal(row["purchase_price"])
             product_prices[item["product_id"]] = base_price
 
         # 3. حساب المبالغ
@@ -150,7 +153,7 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
             qty = Decimal(str(item["quantity"]))
             line_total_base = base_price * qty
 
-            # السعر المحلي = السعر الأساسي / سعر الصرف (تحويل من عملة الأساس إلى العملة المحلية)
+            # السعر المحلي = السعر الأساسي / سعر الصرف
             local_unit_price = base_price / exchange_rate
             local_unit_price = _quantize(local_unit_price)
             line_total_local = local_unit_price * qty
