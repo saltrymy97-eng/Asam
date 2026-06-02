@@ -1,6 +1,7 @@
 # services/attachment_service.py – منطق المرفقات (رفع، تخزين، جلب، حذف)
 import os
 import uuid
+import sqlite3
 from datetime import datetime
 import database
 
