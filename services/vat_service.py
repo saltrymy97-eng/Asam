@@ -1,10 +1,12 @@
-# services/vat_service.py – منطق ضريبة القيمة المضافة (VAT)
+# services/vat_service.py – منطق ضريبة القيمة المضافة (VAT) مع إصلاح الأعمدة
 import sqlite3
 from database import get_connection
 
 def create_vat_table():
-    """إنشاء جدول إعدادات الضريبة إذا لم يكن موجوداً"""
+    """إنشاء جدول إعدادات الضريبة إذا لم يكن موجوداً، وإصلاح الأعمدة الناقصة"""
     conn = get_connection()
+    
+    # إنشاء الجدول الأساسي (قد يكون موجوداً)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS vat_config (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -14,6 +16,16 @@ def create_vat_table():
             created_at TEXT DEFAULT (datetime('now','localtime'))
         )
     """)
+    
+    # 🆕 إضافة عمود name إذا كان الجدول موجوداً مسبقاً بدون هذا العمود
+    try:
+        conn.execute("ALTER TABLE vat_config ADD COLUMN name TEXT NOT NULL DEFAULT 'ضريبة القيمة المضافة'")
+    except sqlite3.OperationalError:
+        pass  # العمود موجود مسبقاً
+    
+    # تعبئة الأعمدة الفارغة بقيمة افتراضية (للبيانات القديمة)
+    conn.execute("UPDATE vat_config SET name = 'ضريبة القيمة المضافة' WHERE name IS NULL OR name = ''")
+    
     # إدراج سجل افتراضي إذا كان الجدول فارغاً
     exists = conn.execute("SELECT COUNT(*) FROM vat_config").fetchone()[0]
     if exists == 0:
@@ -67,13 +79,11 @@ def get_vat_report(start_date=None, end_date=None):
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     
-    # ضريبة المبيعات (المخرجات)
     sales_query = """
         SELECT COALESCE(SUM(total), 0) as total_sales
         FROM invoices
         WHERE type = 'sale' AND status = 'completed'
     """
-    # ضريبة المشتريات (المدخلات)
     purchases_query = """
         SELECT COALESCE(SUM(total), 0) as total_purchases
         FROM invoices
@@ -111,7 +121,6 @@ def get_tax_return_report(start_date=None, end_date=None):
     conn = get_connection()
     conn.row_factory = sqlite3.Row
 
-    # استعلامات لجلب بيانات الضريبة الفعلية من الفواتير
     sales_query = """
         SELECT COALESCE(SUM(vat_amount), 0) as total_output_vat,
                COALESCE(SUM(total - vat_amount), 0) as total_sales_before_tax
@@ -135,7 +144,6 @@ def get_tax_return_report(start_date=None, end_date=None):
     sales_data = conn.execute(sales_query, params).fetchone()
     purchases_data = conn.execute(purchases_query, params).fetchone()
     
-    # تفاصيل الفواتير (اختياري، لجعل التقرير أكثر تفصيلاً)
     invoices_query = """
         SELECT id, type, invoice_date, total, vat_amount, vat_rate
         FROM invoices
@@ -167,4 +175,11 @@ def get_vat_history():
         "SELECT * FROM vat_config ORDER BY id DESC LIMIT 10"
     ).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    # التأكد من وجود اسم افتراضي للسجلات القديمة
+    history = []
+    for r in rows:
+        rec = dict(r)
+        if 'name' not in rec or not rec.get('name'):
+            rec['name'] = 'ضريبة القيمة المضافة'
+        history.append(rec)
+    return history
