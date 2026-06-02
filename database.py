@@ -64,6 +64,7 @@ def init_db():
         party_id INTEGER,
         invoice_date TEXT,
         total REAL DEFAULT 0,
+        total_base REAL DEFAULT 0,
         status TEXT DEFAULT 'draft',
         vat_rate REAL DEFAULT 0.15,
         vat_amount REAL DEFAULT 0,
@@ -72,6 +73,7 @@ def init_db():
         FOREIGN KEY (party_id) REFERENCES customers(id)
     )''')
 
+    # أوامر ALTER للتوافق مع الإصدارات السابقة
     try:
         c.execute("ALTER TABLE invoices ADD COLUMN vat_rate REAL DEFAULT 0.15")
     except sqlite3.OperationalError:
@@ -86,6 +88,10 @@ def init_db():
         pass
     try:
         c.execute("ALTER TABLE invoices ADD COLUMN exchange_rate REAL DEFAULT 1.0")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE invoices ADD COLUMN total_base REAL DEFAULT 0")
     except sqlite3.OperationalError:
         pass
 
@@ -328,7 +334,7 @@ def init_db():
         uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
-    # 🧾 جدول إعدادات ضريبة القيمة المضافة (الحل)
+    # 🧾 جدول إعدادات ضريبة القيمة المضافة
     c.execute('''CREATE TABLE IF NOT EXISTS vat_config (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         rate REAL NOT NULL DEFAULT 0.15,
