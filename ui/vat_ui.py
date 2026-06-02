@@ -1,4 +1,4 @@
-# ui/vat_ui.py – واجهة إدارة ضريبة القيمة المضافة (تصميم زجاجي فخم + الضريبة العكسية والإقرار)
+# ui/vat_ui.py – واجهة إدارة ضريبة القيمة المضافة (تصميم زجاجي فخم + إصلاح نهائي)
 import streamlit as st
 from datetime import date
 import pandas as pd
@@ -13,7 +13,6 @@ from services.vat_service import (
     get_vat_history
 )
 
-# ========== ألوان التصميم الزجاجي ==========
 T = "#F8FAFC"
 S = "#CBD5E1"
 BL = "#3B82F6"
@@ -48,7 +47,6 @@ def show():
 
     tab1, tab2, tab3, tab4 = st.tabs(["⚙️ الإعدادات", "🧮 حاسبة الضريبة", "🔄 الضريبة العكسية", "📊 التقارير"])
 
-    # ---------- تبويب الإعدادات ----------
     with tab1:
         h3("إعدادات الضريبة", BL)
         current_rate = get_vat_rate()
@@ -68,14 +66,19 @@ def show():
         history = get_vat_history()
         if history:
             df = pd.DataFrame(history)
+            # ✅ ضمان وجود العمود name حتى لو كان الجدول قديماً
+            if 'name' not in df.columns:
+                df['name'] = 'ضريبة القيمة المضافة'
+            # إعادة تسمية الأعمدة
             df = df.rename(columns={"name": "الاسم", "rate": "النسبة", "is_active": "نشط", "created_at": "التاريخ"})
             df["النسبة"] = df["النسبة"].apply(lambda x: f"{x * 100:.0f}%")
             df["نشط"] = df["نشط"].apply(lambda x: "✅" if x else "❌")
-            st.dataframe(df[["الاسم", "النسبة", "نشط", "التاريخ"]], use_container_width=True, hide_index=True)
+            # عرض الأعمدة المتاحة فقط (تجنب KeyError)
+            cols_to_show = [c for c in ["الاسم", "النسبة", "نشط", "التاريخ"] if c in df.columns]
+            st.dataframe(df[cols_to_show], use_container_width=True, hide_index=True)
         else:
             st.info("لا توجد تغييرات سابقة")
 
-    # ---------- تبويب الحاسبة ----------
     with tab2:
         h3("حساب الضريبة على مبلغ", CY)
         amount = st.number_input("المبلغ (قبل الضريبة)", min_value=0.0, step=100.0)
@@ -90,7 +93,6 @@ def show():
             with col3:
                 st.markdown(kpi_card("💎", "الإجمالي", f"{total:,.2f}", GR), unsafe_allow_html=True)
 
-    # ---------- تبويب الضريبة العكسية ----------
     with tab3:
         h3("الضريبة العكسية (استخراج المبلغ قبل الضريبة)", CY)
         total_amount = st.number_input("المبلغ الإجمالي (شامل الضريبة)", min_value=0.0, step=100.0)
@@ -104,7 +106,6 @@ def show():
             with col3:
                 st.markdown(kpi_card("🧾", "قيمة الضريبة", f"{vat_amt:,.2f}", OR), unsafe_allow_html=True)
 
-    # ---------- تبويب التقارير ----------
     with tab4:
         h3("تقارير الضريبة", PR)
         col1, col2 = st.columns(2)
