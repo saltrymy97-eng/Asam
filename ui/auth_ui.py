@@ -46,10 +46,10 @@ def login_form():
     </div>
     
     <style>
-        @keyframes logoPulse {
-            0%, 100% { transform: scale(1); box-shadow: 0 0 80px rgba(139, 92, 246, 0.5), 0 0 150px rgba(59, 130, 246, 0.3); }
-            50% { transform: scale(1.02); box-shadow: 0 0 120px rgba(139, 92, 246, 0.7), 0 0 200px rgba(59, 130, 246, 0.5); }
-        }
+        @keyframes logoPulse {{
+            0%, 100% {{ transform: scale(1); box-shadow: 0 0 80px rgba(139, 92, 246, 0.5), 0 0 150px rgba(59, 130, 246, 0.3); }}
+            50% {{ transform: scale(1.02); box-shadow: 0 0 120px rgba(139, 92, 246, 0.7), 0 0 200px rgba(59, 130, 246, 0.5); }}
+        }}
     </style>
     """, unsafe_allow_html=True)
     
