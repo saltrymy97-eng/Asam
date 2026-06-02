@@ -1,4 +1,4 @@
-# ui/sales_ui.py – واجهة المبيعات (تصميم زجاجي فخم)
+# ui/sales_ui.py – واجهة المبيعات (تصميم زجاجي فخم + دعم العملات)
 import streamlit as st
 import pandas as pd
 from services.sales_service import (
@@ -10,6 +10,7 @@ from services.sales_service import (
     add_customer,
     get_all_customers
 )
+from services.currency_service import get_all_currencies, get_base_currency
 
 # ========== ألوان التصميم ==========
 GLASS_BG = "rgba(255, 255, 255, 0.12)"
@@ -45,6 +46,15 @@ def show():
             customer_names = [c['name'] for c in customers]
             selected_customer = st.selectbox("اختر العميل", customer_names)
             customer_id = next(c['id'] for c in customers if c['name'] == selected_customer)
+
+        # 🆕 اختيار العملة
+        currencies = get_all_currencies()
+        base_currency = get_base_currency()
+        currency_options = {f"{c['code']} - {c['name']}": c['code'] for c in currencies}
+        default_currency = base_currency['code'] if base_currency else 'YER'
+        default_label = next((k for k, v in currency_options.items() if v == default_currency), list(currency_options.keys())[0])
+        selected_currency_label = st.selectbox("💱 العملة", list(currency_options.keys()), index=list(currency_options.keys()).index(default_label))
+        currency_code = currency_options[selected_currency_label]
 
         products = get_products_for_sale()
         if not products:
@@ -82,7 +92,7 @@ def show():
             items_df = pd.DataFrame(st.session_state.invoice_items)
             st.dataframe(items_df[["name", "quantity", "unit_price", "total"]], use_container_width=True)
             total_invoice = sum(item["total"] for item in st.session_state.invoice_items)
-            st.markdown(f"### الإجمالي: {total_invoice:,.2f}")
+            st.markdown(f"### الإجمالي: {total_invoice:,.2f} {currency_code}")
 
             if st.button("💾 حفظ الفاتورة", type="primary"):
                 if customer_id is None:
@@ -91,7 +101,8 @@ def show():
                     invoice_id, total, error = create_sale_invoice(
                         customer_id=customer_id,
                         items=st.session_state.invoice_items,
-                        username=st.session_state.user.get('username', 'admin')
+                        username=st.session_state.user.get('username', 'admin'),
+                        currency_code=currency_code
                     )
                     if error:
                         st.error(f"فشل في حفظ الفاتورة: {error}")
