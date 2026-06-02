@@ -33,7 +33,8 @@ from ui.vat_ui import show as vat_show
 from ui.crm_ui import show as crm_show
 from ui.assets_ui import show as assets_show
 from ui.cost_center_ui import show as cost_center_show
-from ui.currency_ui import show as currency_show  # 🆕 العملات
+from ui.currency_ui import show as currency_show
+from ui.bank_ui import show as bank_show  # 🆕 التعاملات البنكية
 
 st.set_page_config(page_title="XD ERP", layout="wide")
 
@@ -67,7 +68,8 @@ else:
                 "الأصول الثابتة",         # الأصول الثابتة
                 "شجرة الحسابات",
                 "القوائم المالية",
-                "العملات",               # 🆕 العملات
+                "العملات",               # العملات
+                "التعاملات البنكية",      # 🆕 التعاملات البنكية
                 "مراكز التكلفة",          # مراكز التكلفة
                 "الصلاحيات",
                 "إغلاق الفترات",
@@ -93,7 +95,8 @@ else:
                 "building",               # الأصول الثابتة
                 "diagram-3",              # شجرة الحسابات
                 "file-earmark-bar-graph", # القوائم المالية
-                "currency-exchange",      # 🆕 أيقونة العملات
+                "currency-exchange",      # العملات
+                "bank",                   # 🆕 التعاملات البنكية
                 "pie-chart",              # مراكز التكلفة
                 "shield-lock",            # الصلاحيات
                 "calendar-check",
@@ -133,8 +136,10 @@ else:
         chart_show()
     elif selected == "القوائم المالية":
         financial_show()
-    elif selected == "العملات":           # 🆕
+    elif selected == "العملات":
         currency_show()
+    elif selected == "التعاملات البنكية":  # 🆕
+        bank_show()
     elif selected == "مراكز التكلفة":
         cost_center_show()
     elif selected == "الصلاحيات":
