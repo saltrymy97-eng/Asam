@@ -1,4 +1,4 @@
-# database.py - قاعدة بيانات نظام ERP كاملة (SQLite) مع VAT ومراكز التكلفة والعملات والبنوك والمرفقات
+# database.py - قاعدة بيانات نظام ERP كاملة (SQLite) مع جميع الجداول
 import sqlite3
 import bcrypt
 
@@ -117,7 +117,6 @@ def init_db():
         FOREIGN KEY (entry_id) REFERENCES journal_entries(id)
     )''')
 
-    # إضافة أعمدة العملات لجدول journal_lines إذا كان موجوداً مسبقاً
     try:
         c.execute("ALTER TABLE journal_lines ADD COLUMN currency_code TEXT DEFAULT 'YER'")
     except sqlite3.OperationalError:
@@ -219,7 +218,7 @@ def init_db():
         FOREIGN KEY (role_id) REFERENCES roles(id)
     )''')
 
-    # 🆕 جداول مراكز التكلفة
+    # جداول مراكز التكلفة
     c.execute('''CREATE TABLE IF NOT EXISTS cost_centers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT UNIQUE NOT NULL,
@@ -253,7 +252,7 @@ def init_db():
         UNIQUE(cost_center_id, account_id, fiscal_year)
     )''')
 
-    # 💱 جداول تعدد العملات
+    # جداول العملات
     c.execute('''CREATE TABLE IF NOT EXISTS currencies (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT UNIQUE NOT NULL,
@@ -274,7 +273,7 @@ def init_db():
         UNIQUE(from_currency, to_currency, date)
     )''')
 
-    # 🏦 جداول التعاملات البنكية
+    # جداول التعاملات البنكية
     c.execute('''CREATE TABLE IF NOT EXISTS bank_accounts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         bank_name TEXT NOT NULL,
@@ -315,7 +314,7 @@ def init_db():
         FOREIGN KEY (bank_account_id) REFERENCES bank_accounts(id)
     )''')
 
-    # 📎 جدول المرفقات
+    # جدول المرفقات
     c.execute('''CREATE TABLE IF NOT EXISTS attachments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         filename TEXT NOT NULL,
@@ -328,6 +327,16 @@ def init_db():
         uploaded_by TEXT,
         uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
+
+    # 🧾 جدول إعدادات ضريبة القيمة المضافة (الحل)
+    c.execute('''CREATE TABLE IF NOT EXISTS vat_config (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        rate REAL NOT NULL DEFAULT 0.15,
+        is_active BOOLEAN DEFAULT 1,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+    # إدراج نسبة افتراضية إذا كان الجدول فارغاً
+    c.execute("INSERT OR IGNORE INTO vat_config (id, rate, is_active) VALUES (1, 0.15, 1)")
 
     conn.commit()
     conn.close()
