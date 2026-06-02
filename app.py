@@ -5,6 +5,10 @@ import database
 database.init_db()
 database.create_default_admin()
 
+# 🆕 تهيئة العملات الافتراضية (يجب أن تكون قبل استيراد الوحدات التي تستخدمها)
+from services.currency_service import create_default_currencies
+create_default_currencies()
+
 # استيراد وحدات المصادقة
 from ui.auth_ui import show as auth_show
 from services.auth_service import logout_session
