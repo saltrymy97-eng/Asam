@@ -14,6 +14,17 @@ def add_reason_column():
     finally:
         conn.close()
 
+def add_reference_column():
+    """إضافة عمود reference لجدول invoices إذا لم يكن موجوداً"""
+    conn = get_connection()
+    try:
+        conn.execute("ALTER TABLE invoices ADD COLUMN reference INTEGER")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    finally:
+        conn.close()
+
 def get_sales_invoices():
     """جلب فواتير المبيعات المكتملة"""
     conn = get_connection()
@@ -44,22 +55,45 @@ def get_purchase_invoices():
 
 def get_invoice_items(invoice_id):
     """جلب بنود فاتورة محددة مع اسم المنتج والكمية المتاحة للإرجاع"""
+    # تأكد من وجود الأعمدة المطلوبة
+    add_reason_column()
+    add_reference_column()
+    
     conn = get_connection()
     conn.row_factory = sqlite3.Row
+    
+    # استعلام بسيط وآمن: نجلب الكميات الأصلية أولاً
     items = conn.execute("""
-        SELECT ii.id, ii.quantity, ii.unit_price, p.name,
-               (ii.quantity - COALESCE(
-                   (SELECT SUM(ri.quantity) FROM invoice_items ri 
-                    JOIN invoices r ON ri.invoice_id = r.id 
-                    WHERE r.type IN ('sale_return', 'purchase_return') 
-                      AND ri.product_id = ii.product_id 
-                      AND r.reference = ii.invoice_id), 0)) as available_qty
+        SELECT ii.id, ii.quantity, ii.unit_price, p.name, ii.product_id
         FROM invoice_items ii
         JOIN products p ON ii.product_id = p.id
         WHERE ii.invoice_id = ?
     """, (invoice_id,)).fetchall()
+    
+    # حساب الكمية المتاحة للإرجاع يدوياً (أكثر أماناً من استعلام معقد)
+    result = []
+    for item in items:
+        # الكمية التي تم إرجاعها سابقاً لهذا المنتج من نفس الفاتورة
+        returned_qty = conn.execute("""
+            SELECT COALESCE(SUM(ri.quantity), 0)
+            FROM invoice_items ri
+            JOIN invoices r ON ri.invoice_id = r.id
+            WHERE r.type IN ('sale_return', 'purchase_return')
+              AND r.reference = ?
+              AND ri.product_id = ?
+        """, (invoice_id, item["product_id"])).fetchone()[0]
+        
+        available = item["quantity"] - returned_qty
+        result.append({
+            "id": item["id"],
+            "quantity": item["quantity"],
+            "unit_price": item["unit_price"],
+            "name": item["name"],
+            "available_qty": max(0, available)
+        })
+    
     conn.close()
-    return items
+    return result
 
 def process_return(invoice_type, invoice_id, items_to_return, return_date, reason=""):
     """
@@ -71,6 +105,8 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
     :param reason: سبب المرتجع
     """
     add_reason_column()
+    add_reference_column()
+    
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     
