@@ -1,4 +1,4 @@
-# services/returns_service.py – منطق أعمال المرتجعات (مع إدارة العمليات - نسخة آمنة)
+# services/returns_service.py – منطق أعمال المرتجعات (مع إدارة العمليات - نسخة آمنة ومُحسَّنة)
 import sqlite3
 from database import get_connection
 from services.audit_service import log_action
@@ -43,11 +43,17 @@ def get_purchase_invoices():
     return invoices
 
 def get_invoice_items(invoice_id):
-    """جلب بنود فاتورة محددة مع اسم المنتج"""
+    """جلب بنود فاتورة محددة مع اسم المنتج والكمية المتاحة للإرجاع"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     items = conn.execute("""
-        SELECT ii.id, ii.quantity, ii.unit_price, p.name
+        SELECT ii.id, ii.quantity, ii.unit_price, p.name,
+               (ii.quantity - COALESCE(
+                   (SELECT SUM(ri.quantity) FROM invoice_items ri 
+                    JOIN invoices r ON ri.invoice_id = r.id 
+                    WHERE r.type IN ('sale_return', 'purchase_return') 
+                      AND ri.product_id = ii.product_id 
+                      AND r.reference = ii.invoice_id), 0)) as available_qty
         FROM invoice_items ii
         JOIN products p ON ii.product_id = p.id
         WHERE ii.invoice_id = ?
@@ -57,7 +63,7 @@ def get_invoice_items(invoice_id):
 
 def process_return(invoice_type, invoice_id, items_to_return, return_date, reason=""):
     """
-    تنفيذ عملية المرتجع مع إدارة العمليات
+    تنفيذ عملية المرتجع مع إدارة العمليات والتحقق من الكميات
     :param invoice_type: 'sale' أو 'purchase'
     :param invoice_id: رقم الفاتورة الأصلية
     :param items_to_return: قائمة من (product_name, quantity)
@@ -69,7 +75,17 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
     conn.row_factory = sqlite3.Row
     
     try:
-        # 1. حساب الإجمالي أولاً لتجنب UPDATE إضافي
+        # 1. التحقق من الكميات المتاحة للإرجاع
+        available_items = get_invoice_items(invoice_id)
+        available_dict = {item['name']: item['available_qty'] for item in available_items}
+        
+        for product_name, qty in items_to_return:
+            if product_name not in available_dict:
+                return False, f"المنتج '{product_name}' غير موجود في الفاتورة الأصلية", 0
+            if qty > available_dict[product_name]:
+                return False, f"الكمية المطلوبة ({qty}) أكبر من المتاح للإرجاع ({available_dict[product_name]}) للمنتج '{product_name}'", 0
+        
+        # 2. حساب الإجمالي
         total_return = 0.0
         items_data = []
         
@@ -89,17 +105,17 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
         if total_return == 0:
             return False, "لا توجد منتجات صالحة للمرتجع", 0
         
-        # 2. بدء العملية المحمية
+        # 3. بدء العملية المحمية
         conn.execute("BEGIN")
         
-        # 🆕 إدراج فاتورة المرتجع مع الإجمالي الفعلي و party_id = NULL (آمن)
+        # إدراج فاتورة المرتجع
         cursor = conn.execute("""
-            INSERT INTO invoices (type, party_id, invoice_date, total, status, reason)
-            VALUES (?, NULL, ?, ?, 'completed', ?)
-        """, (f'{invoice_type}_return', return_date, total_return, reason))
+            INSERT INTO invoices (type, party_id, invoice_date, total, status, reason, reference)
+            VALUES (?, NULL, ?, ?, 'completed', ?, ?)
+        """, (f'{invoice_type}_return', return_date, total_return, reason, invoice_id))
         return_invoice_id = cursor.lastrowid
         
-        # 3. إدراج البنود وتحديث المخزون
+        # 4. إدراج البنود وتحديث المخزون
         for product_id, qty, unit_price, line_total in items_data:
             conn.execute("""
                 INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price)
@@ -107,14 +123,12 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
             """, (return_invoice_id, product_id, qty, unit_price))
             
             if invoice_type == "sale":
-                # مرتجع مبيعات: نرجع البضاعة للمخزون
                 conn.execute("UPDATE products SET quantity = quantity + ? WHERE id = ?", (qty, product_id))
                 conn.execute("""
                     INSERT INTO stock_movements (product_id, type, quantity, date, reference)
                     VALUES (?, 'in', ?, ?, ?)
                 """, (product_id, qty, return_date, f"مرتجع مبيعات #{return_invoice_id}"))
             else:
-                # مرتجع مشتريات: نخرج البضاعة من المخزون
                 conn.execute("UPDATE products SET quantity = quantity - ? WHERE id = ?", (qty, product_id))
                 conn.execute("""
                     INSERT INTO stock_movements (product_id, type, quantity, date, reference)
@@ -123,7 +137,7 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
         
         conn.commit()
         
-        # 4. تسجيل العملية في سجل التدقيق
+        # 5. تسجيل العملية في سجل التدقيق
         return_type_name = "مرتجع مبيعات" if invoice_type == "sale" else "مرتجع مشتريات"
         log_action(
             username="admin",
