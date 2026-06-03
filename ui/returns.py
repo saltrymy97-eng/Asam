@@ -1,4 +1,4 @@
-# ui/returns.py - واجهة مرتجعات البضاعة (تصميم زجاجي فخم)
+# ui/returns.py - واجهة مرتجعات البضاعة (تصميم زجاجي فخم + عرض احترافي)
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -53,17 +53,31 @@ def show():
                 
                 if items:
                     st.markdown("**بنود الفاتورة:**")
-                    items_df = pd.DataFrame(items)
+                    # 🔧 عرض احترافي بأعمدة مسمّاة
+                    display_items = []
+                    for item in items:
+                        display_items.append({
+                            "اسم المنتج": item['name'],
+                            "الكمية المباعة": item['quantity'],
+                            "سعر الوحدة": f"{item['unit_price']:,.2f}",
+                            "المتاح للإرجاع": item.get('available_qty', item['quantity'])
+                        })
+                    items_df = pd.DataFrame(display_items)
                     st.dataframe(items_df, use_container_width=True, hide_index=True)
                     
                     st.markdown("---")
                     h3("اختر المنتجات المرتجعة", OR)
                     
                     return_items = []
+                    has_available = False
                     for item in items:
+                        available = item.get('available_qty', item['quantity'])
+                        if available <= 0:
+                            continue
+                        has_available = True
                         col1, col2 = st.columns([2, 1])
                         with col1:
-                            st.write(f"**{item['name']}** - المتاح: {item['quantity']}")
+                            st.write(f"**{item['name']}** - المتاح للإرجاع: {available}")
                         with col2:
                             qty_str = st.text_input(
                                 "الكمية",
@@ -77,10 +91,14 @@ def show():
                                 qty = 0
                             if qty < 0:
                                 qty = 0
-                            if qty > int(item["quantity"]):
-                                qty = int(item["quantity"])
+                            if qty > available:
+                                qty = available
+                                st.warning(f"تم تخفيض الكمية إلى {available} (الحد الأقصى المتاح)")
                             if qty > 0:
                                 return_items.append((item["name"], qty))
+                    
+                    if not has_available:
+                        st.info("لا توجد كميات متاحة للإرجاع في هذه الفاتورة")
                     
                     if return_items:
                         return_date = st.date_input("تاريخ المرتجع", value=date.today())
@@ -114,17 +132,31 @@ def show():
                 
                 if items:
                     st.markdown("**بنود الفاتورة:**")
-                    items_df = pd.DataFrame(items)
+                    # 🔧 عرض احترافي بأعمدة مسمّاة
+                    display_items = []
+                    for item in items:
+                        display_items.append({
+                            "اسم المنتج": item['name'],
+                            "الكمية المشتراة": item['quantity'],
+                            "سعر الوحدة": f"{item['unit_price']:,.2f}",
+                            "المتاح للإرجاع": item.get('available_qty', item['quantity'])
+                        })
+                    items_df = pd.DataFrame(display_items)
                     st.dataframe(items_df, use_container_width=True, hide_index=True)
                     
                     st.markdown("---")
                     h3("اختر المنتجات المرتجعة", OR)
                     
                     return_items = []
+                    has_available = False
                     for item in items:
+                        available = item.get('available_qty', item['quantity'])
+                        if available <= 0:
+                            continue
+                        has_available = True
                         col1, col2 = st.columns([2, 1])
                         with col1:
-                            st.write(f"**{item['name']}** - المتاح: {item['quantity']}")
+                            st.write(f"**{item['name']}** - المتاح للإرجاع: {available}")
                         with col2:
                             qty_str = st.text_input(
                                 "الكمية",
@@ -138,10 +170,14 @@ def show():
                                 qty = 0
                             if qty < 0:
                                 qty = 0
-                            if qty > int(item["quantity"]):
-                                qty = int(item["quantity"])
+                            if qty > available:
+                                qty = available
+                                st.warning(f"تم تخفيض الكمية إلى {available} (الحد الأقصى المتاح)")
                             if qty > 0:
                                 return_items.append((item["name"], qty))
+                    
+                    if not has_available:
+                        st.info("لا توجد كميات متاحة للإرجاع في هذه الفاتورة")
                     
                     if return_items:
                         return_date = st.date_input("تاريخ المرتجع", value=date.today(), key="purchase_ret_date")
@@ -163,7 +199,19 @@ def show():
         h3("سجل عمليات المرتجعات", PR)
         returns = get_return_history()
         if returns:
-            df = pd.DataFrame(returns)
+            # 🔧 عرض احترافي بأعمدة مسمّاة
+            display_returns = []
+            for r in returns:
+                type_name = "مرتجع مبيعات" if r['type'] == 'sale_return' else "مرتجع مشتريات"
+                display_returns.append({
+                    "رقم المرتجع": r['id'],
+                    "النوع": type_name,
+                    "التاريخ": r['invoice_date'],
+                    "الإجمالي": f"{r['total']:,.2f}",
+                    "الكمية": r['total_qty'],
+                    "السبب": r.get('reason', '')
+                })
+            df = pd.DataFrame(display_returns)
             st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.info("لا توجد مرتجعات بعد")
