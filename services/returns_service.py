@@ -55,14 +55,12 @@ def get_purchase_invoices():
 
 def get_invoice_items(invoice_id):
     """جلب بنود فاتورة محددة مع اسم المنتج والكمية المتاحة للإرجاع"""
-    # تأكد من وجود الأعمدة المطلوبة
     add_reason_column()
     add_reference_column()
     
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     
-    # استعلام بسيط وآمن: نجلب الكميات الأصلية أولاً
     items = conn.execute("""
         SELECT ii.id, ii.quantity, ii.unit_price, p.name, ii.product_id
         FROM invoice_items ii
@@ -70,10 +68,8 @@ def get_invoice_items(invoice_id):
         WHERE ii.invoice_id = ?
     """, (invoice_id,)).fetchall()
     
-    # حساب الكمية المتاحة للإرجاع يدوياً (أكثر أماناً من استعلام معقد)
     result = []
     for item in items:
-        # الكمية التي تم إرجاعها سابقاً لهذا المنتج من نفس الفاتورة
         returned_qty = conn.execute("""
             SELECT COALESCE(SUM(ri.quantity), 0)
             FROM invoice_items ri
@@ -89,7 +85,8 @@ def get_invoice_items(invoice_id):
             "quantity": item["quantity"],
             "unit_price": item["unit_price"],
             "name": item["name"],
-            "available_qty": max(0, available)
+            "available_qty": max(0, available),
+            "product_id": item["product_id"]
         })
     
     conn.close()
@@ -97,12 +94,7 @@ def get_invoice_items(invoice_id):
 
 def process_return(invoice_type, invoice_id, items_to_return, return_date, reason=""):
     """
-    تنفيذ عملية المرتجع مع إدارة العمليات والتحقق من الكميات
-    :param invoice_type: 'sale' أو 'purchase'
-    :param invoice_id: رقم الفاتورة الأصلية
-    :param items_to_return: قائمة من (product_name, quantity)
-    :param return_date: تاريخ المرتجع
-    :param reason: سبب المرتجع
+    تنفيذ عملية المرتجع مع إدارة العمليات والتحقق من الكميات والرصيد
     """
     add_reason_column()
     add_reference_column()
@@ -113,13 +105,24 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
     try:
         # 1. التحقق من الكميات المتاحة للإرجاع
         available_items = get_invoice_items(invoice_id)
-        available_dict = {item['name']: item['available_qty'] for item in available_items}
+        available_dict = {item['name']: item for item in available_items}
         
         for product_name, qty in items_to_return:
             if product_name not in available_dict:
                 return False, f"المنتج '{product_name}' غير موجود في الفاتورة الأصلية", 0
-            if qty > available_dict[product_name]:
-                return False, f"الكمية المطلوبة ({qty}) أكبر من المتاح للإرجاع ({available_dict[product_name]}) للمنتج '{product_name}'", 0
+            if qty > available_dict[product_name]['available_qty']:
+                return False, f"الكمية المطلوبة ({qty}) أكبر من المتاح للإرجاع ({available_dict[product_name]['available_qty']}) للمنتج '{product_name}'", 0
+        
+        # ✅ حماية إضافية لمرتجع المشتريات: التحقق من الرصيد الحالي
+        if invoice_type == "purchase":
+            for product_name, qty in items_to_return:
+                current = conn.execute(
+                    "SELECT quantity FROM products WHERE name = ?", (product_name,)
+                ).fetchone()
+                if not current:
+                    return False, f"المنتج '{product_name}' غير موجود في المخزون", 0
+                if qty > current["quantity"]:
+                    return False, f"لا يمكن إرجاع {qty} وحدة من '{product_name}'. الرصيد الحالي: {current['quantity']} فقط", 0
         
         # 2. حساب الإجمالي
         total_return = 0.0
@@ -144,7 +147,6 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
         # 3. بدء العملية المحمية
         conn.execute("BEGIN")
         
-        # إدراج فاتورة المرتجع
         cursor = conn.execute("""
             INSERT INTO invoices (type, party_id, invoice_date, total, status, reason, reference)
             VALUES (?, NULL, ?, ?, 'completed', ?, ?)
@@ -173,7 +175,6 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
         
         conn.commit()
         
-        # 5. تسجيل العملية في سجل التدقيق
         return_type_name = "مرتجع مبيعات" if invoice_type == "sale" else "مرتجع مشتريات"
         log_action(
             username="admin",
