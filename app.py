@@ -16,11 +16,12 @@ from services.auth_service import logout_session
 # استيراد جميع الوحدات
 from ui.dashboard_ui import show as dashboard_show
 from ui.inventory_ui import show as inventory_show
+from ui.inventory_adjustment_ui import show as inventory_adjustment_show
 from ui.sales_ui import show as sales_show
 from ui.purchases_ui import show as purchases_show
 from ui.returns import show as returns_show
 from ui.receipts_ui import show as receipts_show
-from ui.expenses_ui import show as expenses_show  # 🆕 وحدة المصروفات
+from ui.expenses_ui import show as expenses_show
 from ui.accounting_ui import show as accounting_show
 from ui.chart_ui import show as chart_show
 from ui.financial_ui import show as financial_show
@@ -47,13 +48,11 @@ st.set_page_config(page_title="XD ERP", layout="wide")
 # ========== تصميم القائمة الجانبية الفاخرة ==========
 st.markdown("""
 <style>
-    /* خلفية القائمة الجانبية بتدرج زجاجي */
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, rgba(20,20,40,0.95) 0%, rgba(10,10,30,0.98) 100%);
         backdrop-filter: blur(20px);
         border-right: 1px solid rgba(255,255,255,0.1);
     }
-    /* حاوية القسم */
     .menu-section {
         margin: 15px 10px 5px 10px;
         padding: 8px 12px;
@@ -65,7 +64,6 @@ st.markdown("""
         color: #a78bfa;
         text-transform: uppercase;
     }
-    /* أزرار القائمة */
     .stButton > button {
         width: 100%;
         background: rgba(255,255,255,0.05);
@@ -84,7 +82,6 @@ st.markdown("""
         color: white;
         transform: translateX(-5px);
     }
-    /* زر الخروج */
     .logout-btn > button {
         background: rgba(239, 68, 68, 0.2);
         border-color: rgba(239, 68, 68, 0.4);
@@ -133,11 +130,12 @@ else:
             if st.button("🛒 مبيعات", key="sales"): st.session_state.current_page = "المبيعات"
             if st.button("📋 مشتريات", key="purchases"): st.session_state.current_page = "المشتريات"
             if st.button("🔄 مرتجعات", key="returns"): st.session_state.current_page = "مرتجعات البضاعة"
+            if st.button("💵 سندات قبض/صرف", key="receipts"): st.session_state.current_page = "سندات القبض والصرف"
         with col2:
             if st.button("📦 مخزون", key="inventory"): st.session_state.current_page = "المخزون"
+            if st.button("📦 تسويات مخزنية", key="adjustments"): st.session_state.current_page = "التسويات المخزنية"
+            if st.button("🧾 مصروفات", key="expenses"): st.session_state.current_page = "المصروفات"
             if st.button("👥 CRM", key="crm"): st.session_state.current_page = "إدارة العملاء"
-            if st.button("💵 سندات قبض/صرف", key="receipts"): st.session_state.current_page = "سندات القبض والصرف"
-            if st.button("🧾 مصروفات", key="expenses"): st.session_state.current_page = "المصروفات"  # 🆕
 
         # المجموعة 3: المحاسبة والمالية
         st.markdown('<div class="menu-section">💰 المحاسبة والمالية</div>', unsafe_allow_html=True)
@@ -189,11 +187,12 @@ else:
     page = st.session_state.current_page
     if page == "لوحة المعلومات": dashboard_show()
     elif page == "المخزون": inventory_show()
+    elif page == "التسويات المخزنية": inventory_adjustment_show()
     elif page == "المبيعات": sales_show()
     elif page == "المشتريات": purchases_show()
     elif page == "مرتجعات البضاعة": returns_show()
     elif page == "سندات القبض والصرف": receipts_show()
-    elif page == "المصروفات": expenses_show()  # 🆕
+    elif page == "المصروفات": expenses_show()
     elif page == "الحسابات": accounting_show()
     elif page == "الموارد البشرية": hr_show()
     elif page == "إدارة العملاء": crm_show()
