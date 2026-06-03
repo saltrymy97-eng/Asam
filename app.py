@@ -19,7 +19,8 @@ from ui.inventory_ui import show as inventory_show
 from ui.sales_ui import show as sales_show
 from ui.purchases_ui import show as purchases_show
 from ui.returns import show as returns_show
-from ui.receipts_ui import show as receipts_show  # 🆕 وحدة سندات القبض والصرف
+from ui.receipts_ui import show as receipts_show
+from ui.expenses_ui import show as expenses_show  # 🆕 وحدة المصروفات
 from ui.accounting_ui import show as accounting_show
 from ui.chart_ui import show as chart_show
 from ui.financial_ui import show as financial_show
@@ -135,7 +136,8 @@ else:
         with col2:
             if st.button("📦 مخزون", key="inventory"): st.session_state.current_page = "المخزون"
             if st.button("👥 CRM", key="crm"): st.session_state.current_page = "إدارة العملاء"
-            if st.button("💵 سندات قبض/صرف", key="receipts"): st.session_state.current_page = "سندات القبض والصرف"  # 🆕
+            if st.button("💵 سندات قبض/صرف", key="receipts"): st.session_state.current_page = "سندات القبض والصرف"
+            if st.button("🧾 مصروفات", key="expenses"): st.session_state.current_page = "المصروفات"  # 🆕
 
         # المجموعة 3: المحاسبة والمالية
         st.markdown('<div class="menu-section">💰 المحاسبة والمالية</div>', unsafe_allow_html=True)
@@ -190,7 +192,8 @@ else:
     elif page == "المبيعات": sales_show()
     elif page == "المشتريات": purchases_show()
     elif page == "مرتجعات البضاعة": returns_show()
-    elif page == "سندات القبض والصرف": receipts_show()  # 🆕
+    elif page == "سندات القبض والصرف": receipts_show()
+    elif page == "المصروفات": expenses_show()  # 🆕
     elif page == "الحسابات": accounting_show()
     elif page == "الموارد البشرية": hr_show()
     elif page == "إدارة العملاء": crm_show()
