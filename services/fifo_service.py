@@ -1,4 +1,4 @@
-# services/fifo_service.py – منطق FIFO للمخزون (مع إدارة العمليات)
+# services/fifo_service.py – منطق FIFO للمخزون (متوافق مع المعاملات المشتركة)
 import sqlite3
 from database import get_connection
 
@@ -29,27 +29,37 @@ def create_fifo_tables():
     conn.commit()
     conn.close()
 
-def add_batch(product_id, quantity, unit_cost, batch_date, reference=""):
-    """إضافة دفعة شراء مع حماية العملية"""
-    conn = get_connection()
+def add_batch(product_id, quantity, unit_cost, batch_date, reference="", conn=None):
+    """إضافة دفعة شراء مع حماية العملية (يدعم اتصال خارجي)"""
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
     try:
-        conn.execute("BEGIN")
+        if own_conn:
+            conn.execute("BEGIN")
         conn.execute(
             "INSERT INTO inventory_batches (product_id, quantity, unit_cost, batch_date, reference) VALUES (?,?,?,?,?)",
             (product_id, quantity, unit_cost, batch_date, reference)
         )
-        conn.commit()
+        if own_conn:
+            conn.commit()
         return True, None
     except Exception as e:
-        conn.rollback()
+        if own_conn:
+            conn.rollback()
         return False, str(e)
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
 
-def get_available_batches(product_id):
-    """جلب الدفعات المتاحة لمنتج معين"""
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
+def get_available_batches(product_id, conn=None):
+    """جلب الدفعات المتاحة لمنتج معين (يدعم اتصال خارجي)"""
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        conn.row_factory = sqlite3.Row
+        own_conn = True
     cursor = conn.execute("""
         SELECT b.*, 
                b.quantity - COALESCE(SUM(c.consumed_qty), 0) as remaining
@@ -61,19 +71,46 @@ def get_available_batches(product_id):
         ORDER BY b.batch_date ASC, b.id ASC
     """, (product_id,))
     batches = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+    if own_conn:
+        conn.close()
     return batches
 
-def consume_fifo(product_id, quantity, consumption_date, reference=""):
-    """استهلاك المخزون حسب FIFO مع حماية العملية"""
-    batches = get_available_batches(product_id)
+def get_fifo_cost(product_id, quantity, conn=None):
+    """
+    حساب تكلفة الكمية المطلوبة حسب FIFO (بدون استهلاك فعلي).
+    يُرجع التكلفة الإجمالية أو None إذا كانت الكمية غير كافية.
+    """
+    batches = get_available_batches(product_id, conn)
     total_cost = 0.0
-    remaining_to_consume = quantity
-    conn = get_connection()
-    
+    remaining = quantity
+    for batch in batches:
+        if remaining <= 0:
+            break
+        take = min(batch["remaining"], remaining)
+        total_cost += take * batch["unit_cost"]
+        remaining -= take
+    if remaining > 0:
+        return None  # لا توجد دفعات كافية
+    return total_cost
+
+def consume_fifo(product_id, quantity, conn=None, reference=""):
+    """
+    استهلاك المخزون حسب FIFO مع حماية العملية (يدعم اتصال خارجي).
+    إذا تم تمرير conn، يفترض أن المعاملة تدار خارجياً.
+    """
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
+
     try:
-        conn.execute("BEGIN")
-        
+        if own_conn:
+            conn.execute("BEGIN")
+
+        batches = get_available_batches(product_id, conn)
+        total_cost = 0.0
+        remaining_to_consume = quantity
+
         for batch in batches:
             if remaining_to_consume <= 0:
                 break
@@ -83,23 +120,26 @@ def consume_fifo(product_id, quantity, consumption_date, reference=""):
             total_cost += cost
 
             conn.execute(
-                "INSERT INTO fifo_consumptions (batch_id, consumed_qty, consumption_date, reference) VALUES (?,?,?,?)",
-                (batch["id"], qty_to_take, consumption_date, reference)
+                "INSERT INTO fifo_consumptions (batch_id, consumed_qty, consumption_date, reference) VALUES (?,?,?, date('now'), ?)",
+                (batch["id"], qty_to_take, reference)
             )
             remaining_to_consume -= qty_to_take
 
         if remaining_to_consume > 0:
-            conn.rollback()
-            conn.close()
+            if own_conn:
+                conn.rollback()
             return None, remaining_to_consume
 
-        conn.commit()
+        if own_conn:
+            conn.commit()
         return total_cost, 0
     except Exception as e:
-        conn.rollback()
+        if own_conn:
+            conn.rollback()
         return None, str(e)
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
 
 def get_product_cost(product_id):
     """تكلفة المخزون المتبقي حسب FIFO"""
