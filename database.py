@@ -5,9 +5,10 @@ import bcrypt
 DB_PATH = "erp.db"
 
 def get_connection():
-    """إنشاء اتصال بقاعدة البيانات"""
+    """إنشاء اتصال بقاعدة البيانات مع دعم الوصول القاموسي للصفوف"""
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.row_factory = sqlite3.Row  # يسمح بالوصول للعمود بالاسم أو المؤشر
     return conn
 
 def init_db():
