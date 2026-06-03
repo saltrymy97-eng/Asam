@@ -22,7 +22,8 @@ from ui.purchases_ui import show as purchases_show
 from ui.returns import show as returns_show
 from ui.receipts_ui import show as receipts_show
 from ui.expenses_ui import show as expenses_show
-from ui.opening_balances_ui import show as opening_show  # 🆕 الأرصدة الافتتاحية
+from ui.opening_balances_ui import show as opening_show
+from ui.currency_revaluation_ui import show as revaluation_show  # 🆕 فروق أسعار الصرف
 from ui.accounting_ui import show as accounting_show
 from ui.chart_ui import show as chart_show
 from ui.financial_ui import show as financial_show
@@ -147,13 +148,14 @@ else:
             if st.button("📈 قوائم مالية", key="financial"): st.session_state.current_page = "القوائم المالية"
             if st.button("🏢 مراكز تكلفة", key="cost_center"): st.session_state.current_page = "مراكز التكلفة"
             if st.button("💱 عملات", key="currency"): st.session_state.current_page = "العملات"
-            if st.button("📋 أرصدة افتتاحية", key="opening"): st.session_state.current_page = "الأرصدة الافتتاحية"  # 🆕
+            if st.button("📋 أرصدة افتتاحية", key="opening"): st.session_state.current_page = "الأرصدة الافتتاحية"
         with col2:
             if st.button("🏦 بنوك", key="bank"): st.session_state.current_page = "التعاملات البنكية"
             if st.button("🧾 ضريبة", key="vat"): st.session_state.current_page = "الضريبة"
             if st.button("🔒 إغلاق حسابات", key="closing"): st.session_state.current_page = "إغلاق الحسابات"
             if st.button("📅 إغلاق فترات", key="period"): st.session_state.current_page = "إغلاق الفترات"
             if st.button("📊 FIFO", key="fifo"): st.session_state.current_page = "FIFO المخزون"
+            if st.button("💱 تقييم عملات", key="revaluation"): st.session_state.current_page = "تقييم العملات"  # 🆕
 
         # المجموعة 4: إدارة الأعمال
         st.markdown('<div class="menu-section">👥 إدارة الأعمال</div>', unsafe_allow_html=True)
@@ -195,7 +197,8 @@ else:
     elif page == "مرتجعات البضاعة": returns_show()
     elif page == "سندات القبض والصرف": receipts_show()
     elif page == "المصروفات": expenses_show()
-    elif page == "الأرصدة الافتتاحية": opening_show()  # 🆕
+    elif page == "الأرصدة الافتتاحية": opening_show()
+    elif page == "تقييم العملات": revaluation_show()  # 🆕
     elif page == "الحسابات": accounting_show()
     elif page == "الموارد البشرية": hr_show()
     elif page == "إدارة العملاء": crm_show()
