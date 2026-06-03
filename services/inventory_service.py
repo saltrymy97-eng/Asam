@@ -1,4 +1,4 @@
-# services/inventory_service.py – منطق إدارة المخزون (مع إدارة العمليات)
+# services/inventory_service.py – منطق إدارة المخزون (مع إدارة العمليات وحماية من الصرف الزائد)
 import sqlite3
 from database import get_connection
 from services.audit_service import log_action
@@ -37,20 +37,46 @@ def add_product(name, barcode, category, purchase_price, selling_price, quantity
         conn.close()
 
 def record_stock_movement(product_id, product_name, move_type, quantity, reference, username="admin"):
-    """تسجيل حركة مخزون مع حماية العملية"""
+    """
+    تسجيل حركة مخزون مع حماية العملية ومنع الصرف الزائد
+    :param move_type: 'داخل' أو 'خارج'
+    """
     conn = get_connection()
     try:
+        # تحديد نوع الحركة باللغة الإنجليزية
+        if "داخل" in move_type or "in" in move_type.lower():
+            type_en = "in"
+            sign = 1
+        else:
+            type_en = "out"
+            sign = -1
+
+        # ✅ حماية: إذا كانت الحركة صرف، تحقق من الرصيد المتاح
+        if type_en == "out":
+            current = conn.execute(
+                "SELECT quantity FROM products WHERE id = ?", (product_id,)
+            ).fetchone()
+            if not current:
+                return False, "المنتج غير موجود"
+            available = current[0]
+            if quantity > available:
+                return False, f"❌ لا يمكن صرف {quantity} وحدة. الرصيد المتاح: {available} فقط"
+
+        # بدء المعاملة المحمية
         conn.execute("BEGIN")
-        type_en = "in" if "داخل" in move_type else "out"
+        
+        # تسجيل الحركة
         conn.execute(
             "INSERT INTO stock_movements (product_id, type, quantity, date, reference) VALUES (?, ?, ?, date('now'), ?)",
             (product_id, type_en, quantity, reference)
         )
-        sign = 1 if type_en == "in" else -1
+        
+        # تحديث الكمية
         conn.execute(
             "UPDATE products SET quantity = quantity + ? WHERE id = ?",
             (sign * quantity, product_id)
         )
+        
         conn.commit()
         
         log_action(
