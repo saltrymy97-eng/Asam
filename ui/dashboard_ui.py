@@ -176,7 +176,7 @@ def show():
     html_quick += make_premium_card("مبيعات اليوم", f"{quick['today_sales']:,.0f} ر.ي", "💰", GN, "↑ 12% عن أمس")
     html_quick += make_premium_card("مشتريات اليوم", f"{quick['today_purchases']:,.0f} ر.ي", "🛒", RD, "↓ 5% عن أمس")
     
-    stock_status = "بحتاج طلب عاجل" if quick['low_stock'] > 0 else "الكل آمن ومستقر"
+    stock_status = "يحتاج طلب عاجل" if quick['low_stock'] > 0 else "الكل آمن ومستقر"
     stock_col = RD if quick['low_stock'] > 0 else GN
     html_quick += make_premium_card("منتجات منخفضة", str(quick['low_stock']), "⚠️", stock_col, stock_status)
     html_quick += make_premium_card("شركاء جدد", str(quick['total_customers']), "👥", BL, "+3 هذا الشهر")
