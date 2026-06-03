@@ -1,9 +1,13 @@
-# services/returns_service.py – منطق أعمال المرتجعات (احترافي: قيود + FIFO + حماية كاملة)
+# services/returns_service.py – منطق أعمال المرتجعات (إصدار تجاري: FIFO دقيق + قيود + حماية)
 import sqlite3
 from datetime import date
 from database import get_connection
 from services.audit_service import log_action
-from services.fifo_service import return_fifo, remove_last_batch, get_fifo_cost
+from services.fifo_service import (
+    return_fifo_to_original_batch,
+    remove_last_batch,
+    get_fifo_cost
+)
 
 def add_reason_column():
     """إضافة عمود reason لجدول invoices إذا لم يكن موجوداً"""
@@ -98,10 +102,10 @@ def get_invoice_items(invoice_id):
 
 def process_return(invoice_type, invoice_id, items_to_return, return_date, reason=""):
     """
-    تنفيذ عملية المرتجع كاملة مع:
+    تنفيذ عملية المرتجع كاملة (إصدار تجاري):
     - فحص الكميات والرصيد
     - تحديث المخزون
-    - تحديث FIFO (إعادة/خصم الدفعات)
+    - FIFO دقيق: مرتجع المبيعات يعيد البضاعة لنفس دفعة الشراء الأصلية
     - القيد المحاسبي قبل commit
     """
     add_reason_column()
@@ -210,14 +214,17 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
                 """, (item["product_id"], item["quantity"], return_date,
                      f"مرتجع مبيعات #{return_invoice_id}"))
                 
-                # FIFO: إعادة البضاعة كدفعة جديدة بتكلفة البيع
-                success, err = return_fifo(
-                    item["product_id"], item["quantity"], item["unit_price"],
-                    conn=conn, reference=f"مرتجع مبيعات #{return_invoice_id}"
+                # ✅ FIFO تجاري: إعادة البضاعة لنفس دفعة الشراء الأصلية
+                cost, err = return_fifo_to_original_batch(
+                    product_id=item["product_id"],
+                    quantity=item["quantity"],
+                    sale_invoice_id=invoice_id,
+                    conn=conn,
+                    reference=f"مرتجع مبيعات #{return_invoice_id}"
                 )
-                if not success:
+                if cost is None:
                     raise Exception(f"فشل إرجاع FIFO: {err}")
-                total_fifo_cost += item["quantity"] * item["unit_price"]
+                total_fifo_cost += cost
                 
             else:
                 # مرتجع مشتريات: نخصم من المخزون ونسجل حركة صادر
@@ -276,14 +283,13 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
         if entry_error:
             raise Exception(f"فشل إنشاء القيد المحاسبي: {entry_error}")
         
-        # ✅ الكل ناجح: commit
         conn.commit()
         
         return_type_name = "مرتجع مبيعات" if invoice_type == "sale" else "مرتجع مشتريات"
         log_action(
             username="admin", action=return_type_name, table_name="invoices",
             record_id=return_invoice_id,
-            new_value=f"الإجمالي: {total_return:,.2f}, السبب: {reason}, تكلفة FIFO: {total_fifo_cost:,.2f}"
+            new_value=f"الإجمالي: {total_return:,.2f}, السبب: {reason}, تكلفة FIFO الأصلية: {total_fifo_cost:,.2f}"
         )
         
         return True, return_invoice_id, total_return
@@ -295,7 +301,7 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
         conn.close()
 
 def get_return_history():
-    """سجل المرتجعات مع سبب الإرجاع والكمية المرتجعة"""
+    """سجل المرتجعات"""
     add_reason_column()
     conn = get_connection()
     conn.row_factory = sqlite3.Row
