@@ -1,4 +1,4 @@
-# ui/inventory_ui.py – واجهة المخزون (تصميم زجاجي فخم)
+# ui/inventory_ui.py – واجهة المخزون (تصميم زجاجي فخم + حماية من الصرف الزائد)
 import streamlit as st
 import pandas as pd
 from services.inventory_service import (
@@ -9,6 +9,7 @@ from services.inventory_service import (
     get_low_stock_products,
     get_products_for_select
 )
+from database import get_connection
 
 # ========== ألوان التصميم ==========
 GLASS_BG = "rgba(255, 255, 255, 0.12)"
@@ -79,8 +80,21 @@ def show():
             selected_product = st.selectbox("اختر المنتج", product_names)
             product_id = next(p['id'] for p in products_list if p['name'] == selected_product)
 
+            # جلب الرصيد الحالي للمنتج وعرضه بوضوح
+            conn = get_connection()
+            current_qty_row = conn.execute("SELECT quantity FROM products WHERE id = ?", (product_id,)).fetchone()
+            conn.close()
+            current_qty = current_qty_row[0] if current_qty_row else 0
+            st.info(f"📊 الرصيد الحالي: **{current_qty}**")
+
             move_type = st.radio("نوع الحركة", ["داخل (إضافة)", "خارج (صرف)"])
-            quantity = st.number_input("الكمية", min_value=1, step=1)
+            quantity = st.number_input("الكمية", min_value=0, step=1)
+
+            # إذا كانت الحركة صرف، نتحقق من الكمية قبل التفعيل
+            if "خارج" in move_type and quantity > current_qty:
+                st.error(f"❌ لا يمكن صرف {quantity} وحدة. الرصيد المتاح: {current_qty} فقط")
+                quantity = 0  # نعيد تعيين الكمية لتجنب استمرار الخطأ
+
             reference = st.text_input("المرجع (رقم الفاتورة أو الإذن)")
 
             if st.button("تسجيل الحركة"):
