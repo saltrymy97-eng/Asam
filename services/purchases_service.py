@@ -1,5 +1,5 @@
 # services/purchases_service.py – منطق أعمال المشتريات المُحسَّن
-# يدعم: تعدد العملات بدقة مالية، تدقيق الإجراءات، ضريبة القيمة المضافة، القيد المحاسبي التلقائي
+# يدعم: تعدد العملات، FIFO، ضريبة القيمة المضافة، القيد المحاسبي التلقائي
 
 import sqlite3
 from decimal import Decimal, ROUND_HALF_UP
@@ -8,6 +8,7 @@ from database import get_connection
 from services.audit_service import log_action
 from services.vat_service import get_vat_rate
 from services.currency_service import get_exchange_rate, get_base_currency
+from services.fifo_service import add_batch
 
 
 # ---------- دوال مساعدة ----------
@@ -43,7 +44,7 @@ def get_all_suppliers():
 
 
 def add_supplier(name, phone, address, username="admin"):
-    """إضافة مورد جديد، وتُرجع معرّف المورد"""
+    """إضافة مورد جديد"""
     conn = get_connection()
     cur = conn.execute(
         "INSERT INTO suppliers (name, phone, address) VALUES (?, ?, ?)",
@@ -52,18 +53,13 @@ def add_supplier(name, phone, address, username="admin"):
     supplier_id = cur.lastrowid
     conn.commit()
     conn.close()
-
-    log_action(
-        username=username,
-        action="إضافة مورد",
-        table_name="suppliers",
-        new_value=f"المورد: {name}, الهاتف: {phone}"
-    )
+    log_action(username=username, action="إضافة مورد", table_name="suppliers",
+               new_value=f"المورد: {name}, الهاتف: {phone}")
     return supplier_id
 
 
 def get_products_for_purchase():
-    """جلب جميع المنتجات للشراء (السعر الأساسي للشراء)"""
+    """جلب جميع المنتجات للشراء"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     products = conn.execute(
@@ -78,26 +74,17 @@ def get_products_for_purchase():
 
 def create_purchase_invoice(supplier_id, items, username="admin", currency_code="YER", exchange_rate=None):
     """
-    إنشاء فاتورة مشتريات مع:
-    - التحقق من المورد والمنتجات
-    - دعم العملات المتعددة (التحويل من عملة الأساس)
-    - حسابات دقيقة باستخدام Decimal
-    - تدقيق الإجراء
-    - إنشاء قيد محاسبي تلقائي
-
-    :param supplier_id: معرف المورد
-    :param items: قائمة من dict تحتوي على المفاتيح product_id, quantity, unit_price (السعر الذي اختاره المستخدم)
-    :param currency_code: رمز العملة المطلوبة للفاتورة
-    :param exchange_rate: سعر الصرف (إذا لم يُعطَ، يُحسَب تلقائياً)
-    :return: (invoice_id, total_local, error_string)
+    إنشاء فاتورة مشتريات كاملة مع:
+    - فحص المورد والمنتجات
+    - دعم العملات المتعددة
+    - إضافة دفعات FIFO تلقائياً
+    - القيد المحاسبي قبل commit
     """
-    # التحقق من المدخلات
     if not items:
         return None, Decimal("0"), "يجب إضافة منتج واحد على الأقل"
     for item in items:
         if item["quantity"] <= 0:
             return None, Decimal("0"), "الكمية يجب أن تكون موجبة"
-        # دعم unit_price أو unit_price_base
         price = item.get("unit_price") or item.get("unit_price_base")
         if price is not None and Decimal(str(price)) < 0:
             return None, Decimal("0"), "سعر الوحدة يجب أن لا يكون سالباً"
@@ -105,7 +92,6 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
     base_currency = get_base_currency()
     base_code = base_currency["code"]
 
-    # ضبط سعر الصرف
     if currency_code == base_code:
         exchange_rate = Decimal("1")
     else:
@@ -123,11 +109,12 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
         conn.execute("BEGIN")
 
         # 1. التحقق من وجود المورد
-        supplier_row = conn.execute("SELECT id FROM suppliers WHERE id = ?", (supplier_id,)).fetchone()
+        supplier_row = conn.execute("SELECT id, name FROM suppliers WHERE id = ?", (supplier_id,)).fetchone()
         if not supplier_row:
             raise Exception("المورد غير موجود")
+        supplier_name = supplier_row["name"]
 
-        # 2. التحقق من وجود المنتجات وجلب أسعار الشراء الأساسية
+        # 2. التحقق من المنتجات وتجهيز البيانات
         product_prices = {}
         for item in items:
             row = conn.execute(
@@ -136,8 +123,7 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
             ).fetchone()
             if not row:
                 raise Exception(f"المنتج {item['product_id']} غير موجود")
-            
-            # استخدام السعر الذي أدخله المستخدم إن وُجد، وإلا سعر قاعدة البيانات
+
             user_price = item.get("unit_price") or item.get("unit_price_base")
             if user_price is not None:
                 base_price = _to_decimal(user_price)
@@ -146,23 +132,19 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
             product_prices[item["product_id"]] = base_price
 
         # 3. حساب المبالغ
-        subtotal_base = Decimal("0")
         subtotal_local = Decimal("0")
+        subtotal_base = Decimal("0")
 
         for item in items:
             base_price = product_prices[item["product_id"]]
             qty = Decimal(str(item["quantity"]))
             line_total_base = base_price * qty
-
-            # السعر المحلي = السعر الأساسي / سعر الصرف
-            local_unit_price = base_price / exchange_rate
-            local_unit_price = _quantize(local_unit_price)
+            local_unit_price = _quantize(base_price / exchange_rate)
             line_total_local = local_unit_price * qty
 
             subtotal_base += line_total_base
             subtotal_local += line_total_local
 
-        # الضريبة تحسب على الإجمالي المحلي
         subtotal_local = _quantize(subtotal_local)
         vat_amount_local = _quantize(subtotal_local * vat_rate)
         total_local = _quantize(subtotal_local + vat_amount_local)
@@ -171,106 +153,105 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
         vat_amount_base = _quantize(subtotal_base * vat_rate)
         total_base = _quantize(subtotal_base + vat_amount_base)
 
-        # 4. إدراج الفاتورة
+        # 4. إدراج الفاتورة (بدون commit)
         cur = conn.execute(
             """INSERT INTO invoices 
                (type, party_id, invoice_date, total, total_base, status, vat_rate, vat_amount, currency_code, exchange_rate)
                VALUES (?, ?, date('now'), ?, ?, 'completed', ?, ?, ?, ?)""",
-            (
-                "purchase",
-                supplier_id,
-                float(total_local),
-                float(total_base),
-                float(vat_rate),
-                float(vat_amount_local),
-                currency_code,
-                float(exchange_rate)
-            )
+            ("purchase", supplier_id, float(total_local), float(total_base), float(vat_rate),
+             float(vat_amount_local), currency_code, float(exchange_rate))
         )
         invoice_id = cur.lastrowid
 
-        # 5. إدراج بنود الفاتورة وتحديث المخزون
+        # 5. إدراج بنود الفاتورة وتحديث المخزون وإضافة دفعات FIFO
         for item in items:
             base_price = product_prices[item["product_id"]]
             qty = item["quantity"]
             local_unit_price = _quantize(base_price / exchange_rate)
 
+            # بنود الفاتورة
             conn.execute(
                 "INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?)",
                 (invoice_id, item["product_id"], qty, float(local_unit_price))
             )
-            conn.execute(
-                "INSERT INTO stock_movements (product_id, type, quantity, date, reference) VALUES (?, 'in', ?, date('now'), ?)",
-                (item["product_id"], qty, f"فاتورة مشتريات #{invoice_id}")
-            )
+
+            # تحديث المخزون
             conn.execute(
                 "UPDATE products SET quantity = quantity + ? WHERE id = ?",
                 (qty, item["product_id"])
             )
 
+            # حركة المخزون
+            conn.execute(
+                "INSERT INTO stock_movements (product_id, type, quantity, date, reference) VALUES (?, 'in', ?, date('now'), ?)",
+                (item["product_id"], qty, f"فاتورة مشتريات #{invoice_id}")
+            )
+
+            # ✅ إضافة دفعة FIFO (باستخدام نفس اتصال المعاملة)
+            success, error = add_batch(
+                product_id=item["product_id"],
+                quantity=qty,
+                unit_cost=float(base_price),
+                batch_date=date.today().strftime("%Y-%m-%d"),
+                reference=f"فاتورة مشتريات #{invoice_id}",
+                conn=conn  # تمرير الاتصال المفتوح
+            )
+            if not success:
+                raise Exception(f"فشل إضافة دفعة FIFO للمنتج {item['product_id']}: {error}")
+
+        # 6. إنشاء القيد المحاسبي (قبل commit)
+        from services.accounting_service import save_journal_entry
+
+        lines = [
+            {
+                "account": "المشتريات",
+                "debit": float(subtotal_local),
+                "credit": 0,
+                "currency_code": currency_code,
+                "exchange_rate": float(exchange_rate)
+            },
+            {
+                "account": "المخزون",
+                "debit": float(subtotal_local),
+                "credit": 0,
+                "currency_code": currency_code,
+                "exchange_rate": float(exchange_rate)
+            },
+            {
+                "account": supplier_name,
+                "debit": 0,
+                "credit": float(total_local),
+                "currency_code": currency_code,
+                "exchange_rate": float(exchange_rate)
+            }
+        ]
+
+        if float(vat_amount_local) > 0:
+            lines.insert(1, {
+                "account": "ضريبة القيمة المضافة المدخلة",
+                "debit": float(vat_amount_local),
+                "credit": 0,
+                "currency_code": currency_code,
+                "exchange_rate": float(exchange_rate)
+            })
+
+        entry_id, entry_error = save_journal_entry(
+            description=f"فاتورة مشتريات #{invoice_id} - {supplier_name}",
+            lines=lines,
+            entry_date=date.today().strftime("%Y-%m-%d")
+        )
+
+        if entry_error:
+            raise Exception(f"فشل إنشاء القيد المحاسبي: {entry_error}")
+
+        # ✅ فقط بعد نجاح كل شيء: commit
         conn.commit()
 
-        # 6. إنشاء القيد المحاسبي تلقائياً
-        supplier_name = "غير معروف"
-        try:
-            row = conn.execute("SELECT name FROM suppliers WHERE id = ?", (supplier_id,)).fetchone()
-            if row:
-                supplier_name = row["name"]
-        except:
-            pass
-
-        try:
-            from services.accounting_service import save_journal_entry
-            
-            lines = [
-                {
-                    "account": "المشتريات",
-                    "debit": float(subtotal_local),
-                    "credit": 0,
-                    "currency_code": currency_code,
-                    "exchange_rate": float(exchange_rate)
-                },
-                {
-                    "account": supplier_name,
-                    "debit": 0,
-                    "credit": float(total_local),
-                    "currency_code": currency_code,
-                    "exchange_rate": float(exchange_rate)
-                }
-            ]
-            
-            # إضافة سطر الضريبة فقط إذا كان هناك مبلغ ضريبة
-            if float(vat_amount_local) > 0:
-                lines.insert(1, {
-                    "account": "ضريبة القيمة المضافة المدخلة",
-                    "debit": float(vat_amount_local),
-                    "credit": 0,
-                    "currency_code": currency_code,
-                    "exchange_rate": float(exchange_rate)
-                })
-            
-            save_journal_entry(
-                description=f"فاتورة مشتريات #{invoice_id} - {supplier_name}",
-                lines=lines,
-                entry_date=date.today().strftime("%Y-%m-%d")
-            )
-        except Exception as e:
-            # إذا فشل القيد، نتراجع عن الفاتورة كاملة
-            conn.rollback()
-            return None, Decimal("0"), f"فشل إنشاء القيد المحاسبي: {e}"
-
-        # تسجيل التدقيق
         log_action(
-            username=username,
-            action="فاتورة مشتريات",
-            table_name="invoices",
+            username=username, action="فاتورة مشتريات", table_name="invoices",
             record_id=invoice_id,
-            new_value=(
-                f"المورد: {supplier_name}, "
-                f"الإجمالي المحلي: {float(total_local):,.2f} {currency_code}, "
-                f"الضريبة: {float(vat_amount_local):,.2f}, "
-                f"سعر الصرف: {float(exchange_rate)}"
-            )
+            new_value=f"المورد: {supplier_name}, الإجمالي: {float(total_local):,.2f} {currency_code}, "
+                      f"الضريبة: {float(vat_amount_local):,.2f}"
         )
 
         return invoice_id, total_local, None
@@ -283,24 +264,15 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
 
 
 def get_purchase_invoices():
-    """جلب فواتير المشتريات مع الإجمالي بالعملة الأساس والمحلية"""
+    """جلب فواتير المشتريات"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     invoices = conn.execute("""
-        SELECT i.id,
-               s.name AS supplier,
-               i.invoice_date,
-               i.total,
-               i.total_base,
-               i.status,
-               i.vat_rate,
-               i.vat_amount,
-               i.currency_code,
-               i.exchange_rate
+        SELECT i.id, s.name AS supplier, i.invoice_date, i.total, i.total_base,
+               i.status, i.vat_rate, i.vat_amount, i.currency_code, i.exchange_rate
         FROM invoices i
         LEFT JOIN suppliers s ON i.party_id = s.id
-        WHERE i.type = 'purchase'
-        ORDER BY i.id DESC
+        WHERE i.type = 'purchase' ORDER BY i.id DESC
     """).fetchall()
     conn.close()
     result = []
@@ -319,9 +291,7 @@ def get_invoice_details(invoice_id):
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     details = conn.execute("""
-        SELECT p.name,
-               ii.quantity,
-               ii.unit_price,
+        SELECT p.name, ii.quantity, ii.unit_price,
                (ii.quantity * ii.unit_price) AS total
         FROM invoice_items ii
         JOIN products p ON ii.product_id = p.id
@@ -329,11 +299,7 @@ def get_invoice_details(invoice_id):
     """, (invoice_id,)).fetchall()
     conn.close()
     return [
-        {
-            "name": d["name"],
-            "quantity": d["quantity"],
-            "unit_price": _to_decimal(d["unit_price"]),
-            "total": _to_decimal(d["total"])
-        }
+        {"name": d["name"], "quantity": d["quantity"],
+         "unit_price": _to_decimal(d["unit_price"]), "total": _to_decimal(d["total"])}
         for d in details
     ]
