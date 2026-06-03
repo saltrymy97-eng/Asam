@@ -1,4 +1,4 @@
-# services/accounting_service.py - منطق الحسابات وقيود اليومية (مع إدارة العمليات ومراكز التكلفة وتعدد العملات)
+# services/accounting_service.py - منطق الحسابات وقيود اليومية (مع دعم الاتصال الخارجي)
 import sqlite3
 from datetime import date
 from services import cost_center_service
@@ -38,20 +38,10 @@ def get_account_code(account_input):
     
     return None
 
-def save_journal_entry(description, lines, entry_date=None, cost_center_allocations=None):
+def save_journal_entry(description, lines, entry_date=None, cost_center_allocations=None, conn=None):
     """
-    حفظ قيد يومية جديد مع إدارة العمليات ودعم مراكز التكلفة والعملات
-    
-    Parameters:
-    - description: وصف القيد
-    - lines: قائمة من dict تحتوي على:
-        - account: اسم أو كود الحساب
-        - debit: المبلغ المدين (بالعملة الأصلية)
-        - credit: المبلغ الدائن (بالعملة الأصلية)
-        - currency_code: رمز العملة (افتراضي YER)
-        - exchange_rate: سعر الصرف إلى العملة الأساسية (افتراضي 1.0)
-    - entry_date: تاريخ القيد (اختياري، الافتراضي اليوم)
-    - cost_center_allocations: توزيعات مراكز التكلفة (اختياري)
+    حفظ قيد يومية جديد.
+    إذا تم تمرير conn خارجي، لا يتم إنشاء معاملة منفصلة (المعاملة تدار خارجياً).
     """
     if entry_date is None:
         entry_date = date.today().strftime("%Y-%m-%d")
@@ -59,9 +49,14 @@ def save_journal_entry(description, lines, entry_date=None, cost_center_allocati
     base_currency = get_base_currency()
     base_code = base_currency['code'] if base_currency else 'YER'
     
-    conn = get_conn()
+    own_conn = False
+    if conn is None:
+        conn = get_conn()
+        own_conn = True
+    
     try:
-        conn.execute("BEGIN")
+        if own_conn:
+            conn.execute("BEGIN")
         
         cur = conn.execute(
             "INSERT INTO journal_entries (date, description, reference) VALUES (?, ?, ?)",
@@ -79,7 +74,6 @@ def save_journal_entry(description, lines, entry_date=None, cost_center_allocati
             
             currency_code = line.get("currency_code", base_code)
             exchange_rate = line.get("exchange_rate", 1.0)
-            # إذا لم يحدد سعر الصرف والعملة ليست الأساس، نحاول جلبه
             if currency_code != base_code and exchange_rate == 1.0:
                 fetched_rate = get_exchange_rate(currency_code, base_code)
                 if fetched_rate:
@@ -100,13 +94,16 @@ def save_journal_entry(description, lines, entry_date=None, cost_center_allocati
                     if allocations:
                         cost_center_service.allocate_journal_line(journal_line_id, allocations)
         
-        conn.commit()
+        if own_conn:
+            conn.commit()
         return entry_id, None
     except Exception as e:
-        conn.rollback()
+        if own_conn:
+            conn.rollback()
         return None, str(e)
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
 
 def update_journal_entry(entry_id, description, lines, entry_date=None, cost_center_allocations=None):
     """تحديث قيد موجود مع دعم العملات"""
