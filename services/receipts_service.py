@@ -1,4 +1,4 @@
-# services/receipts_service.py – سندات القبض والصرف الاحترافية
+# services/receipts_service.py – سندات القبض والصرف الاحترافية (إصدار احترافي)
 import sqlite3
 from datetime import date
 from database import get_connection
@@ -32,7 +32,6 @@ def get_cash_accounts():
     """جلب حسابات النقدية (المستوى الثاني تحت الأصول)"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
-    # نحصل على حساب الأصول (كود 1)
     accounts = conn.execute("""
         SELECT code, name FROM accounts
         WHERE parent_id = (SELECT id FROM accounts WHERE code = '1')
@@ -40,7 +39,6 @@ def get_cash_accounts():
     """).fetchall()
     conn.close()
     if not accounts:
-        # إذا لم توجد حسابات فرعية، نعطي خيارات افتراضية
         return [{"code": "صندوق", "name": "صندوق"}, {"code": "بنك", "name": "بنك"}]
     return [{"code": a["code"], "name": a["name"]} for a in accounts]
 
@@ -51,12 +49,10 @@ def get_customers_with_balances():
     customers = conn.execute("SELECT id, name FROM customers ORDER BY name").fetchall()
     result = []
     for c in customers:
-        # مجموع فواتير المبيعات
         total_sales = conn.execute("""
             SELECT COALESCE(SUM(total), 0) FROM invoices
-            WHERE type='sale' AND party_id=? AND status='completed'
+            WHERE type='sale' AND customer_id=? AND status='completed'
         """, (c["id"],)).fetchone()[0]
-        # مجموع سندات القبض
         total_receipts = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM vouchers
             WHERE party_type='customer' AND party_id=?
@@ -75,7 +71,7 @@ def get_suppliers_with_balances():
     for s in suppliers:
         total_purchases = conn.execute("""
             SELECT COALESCE(SUM(total), 0) FROM invoices
-            WHERE type='purchase' AND party_id=? AND status='completed'
+            WHERE type='purchase' AND supplier_id=? AND status='completed'
         """, (s["id"],)).fetchone()[0]
         total_payments = conn.execute("""
             SELECT COALESCE(SUM(amount), 0) FROM vouchers
@@ -92,18 +88,19 @@ def get_invoices_for_party(party_type, party_id):
     conn.row_factory = sqlite3.Row
     if party_type == 'customer':
         type_filter = 'sale'
+        id_column = 'customer_id'
     else:
         type_filter = 'purchase'
+        id_column = 'supplier_id'
     
-    invoices = conn.execute("""
+    invoices = conn.execute(f"""
         SELECT id, invoice_date, total, 
                COALESCE((SELECT SUM(amount) FROM vouchers WHERE invoice_id = invoices.id), 0) as paid
         FROM invoices
-        WHERE type=? AND party_id=? AND status='completed'
+        WHERE type=? AND {id_column}=? AND status='completed'
         ORDER BY invoice_date
     """, (type_filter, party_id)).fetchall()
     conn.close()
-    # نعيد فقط الفواتير التي لها رصيد متبقي
     pending = []
     for inv in invoices:
         remaining = inv["total"] - inv["paid"]
@@ -129,7 +126,6 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
     try:
         conn.execute("BEGIN")
         
-        # 1. إدراج السند
         cur = conn.execute("""
             INSERT INTO vouchers (type, date, party_type, party_id, amount, account, 
                                  invoice_id, reference, notes, created_by)
@@ -138,32 +134,20 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
               invoice_id, reference, notes, created_by))
         voucher_id = cur.lastrowid
         
-        # 2. تحديد أسماء الحسابات
         if party_type == 'customer':
             party_name = conn.execute("SELECT name FROM customers WHERE id=?", 
                                      (party_id,)).fetchone()["name"]
-            debit_account = account       # النقدية
-            credit_account = party_name   # العميل
-            if voucher_type == 'payment':  # صرف للمورد (لكن هنا الطرف عميل) - نادر
-                # لكننا نتعامل مع العميل في سندات القبض فقط
-                pass
-        else:  # supplier
+        else:
             party_name = conn.execute("SELECT name FROM suppliers WHERE id=?", 
                                      (party_id,)).fetchone()["name"]
-            debit_account = party_name    # المورد
-            credit_account = account      # النقدية
-            
-        # تعديل حسب نوع السند
+        
         if voucher_type == 'receipt':
-            # قبض: مدين النقدية، دائن العميل
             debit_acc = account
             credit_acc = party_name
-        else:  # payment
-            # صرف: مدين المورد، دائن النقدية
+        else:
             debit_acc = party_name
             credit_acc = account
             
-        # 3. إنشاء القيد المحاسبي
         lines = [
             {"account": debit_acc, "debit": amount, "credit": 0},
             {"account": credit_acc, "debit": 0, "credit": amount}
@@ -182,7 +166,6 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
         if error:
             raise Exception(f"فشل القيد المحاسبي: {error}")
         
-        # 4. تحديث السند برقم القيد
         conn.execute("UPDATE vouchers SET journal_entry_id=? WHERE id=?", 
                     (entry_id, voucher_id))
         
@@ -235,7 +218,6 @@ def get_voucher_details(voucher_id):
         conn.close()
         return None
     voucher = dict(voucher)
-    # جلب تفاصيل القيد
     entry_id = voucher.get("journal_entry_id")
     if entry_id:
         lines = conn.execute("""
