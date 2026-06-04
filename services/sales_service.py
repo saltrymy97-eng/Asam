@@ -73,7 +73,7 @@ def get_products_for_sale():
 def create_sale_invoice(customer_id, items, username="admin", currency_code="YER", exchange_rate=None):
     """
     إنشاء فاتورة مبيعات كاملة مع:
-    - فحص المخزون
+    - تجميع الكميات حسب المنتج وفحص المخزون
     - حساب تكلفة البضاعة المباعة FIFO
     - القيد المحاسبي قبل commit (ضمان التراجع الكامل)
     """
@@ -85,6 +85,12 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
         price = item.get("unit_price") or item.get("unit_price_base") or 0
         if Decimal(str(price)) < 0:
             return None, Decimal("0"), "سعر الوحدة يجب أن لا يكون سالباً"
+
+    # ✅ تجميع الكميات حسب المنتج للفحص الشامل (يمنع التجاوز إذا تكرر نفس المنتج)
+    from collections import defaultdict
+    qty_by_product = defaultdict(int)
+    for item in items:
+        qty_by_product[item["product_id"]] += item["quantity"]
 
     base_currency = get_base_currency()
     base_code = base_currency["code"]
@@ -105,41 +111,44 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
     try:
         conn.execute("BEGIN")
 
-        # 1. التحقق من المخزون وتجهيز بيانات FIFO
+        # 1. التحقق من المخزون لكل منتج (بعد تجميع الكميات)
         product_prices = {}
         total_cogs = Decimal("0")
         fifo_details = []
 
-        for item in items:
+        for product_id, total_qty in qty_by_product.items():
             row = conn.execute(
                 "SELECT selling_price, quantity FROM products WHERE id = ?",
-                (item["product_id"],)
+                (product_id,)
             ).fetchone()
             if not row:
-                raise Exception(f"المنتج {item['product_id']} غير موجود")
+                raise Exception(f"المنتج {product_id} غير موجود")
             
             available = row["quantity"]
-            if available < item["quantity"]:
-                raise Exception(f"المخزون غير كافٍ للمنتج '{item['product_id']}'، المتاح: {available}")
+            if available < total_qty:
+                raise Exception(f"المخزون غير كافٍ للمنتج '{product_id}'، المتاح: {available}، المطلوب: {total_qty}")
 
-            qty = item["quantity"]
-            fifo_cost = get_fifo_cost(item["product_id"], qty)
+            # حساب تكلفة FIFO للكمية الإجمالية لهذا المنتج
+            fifo_cost = get_fifo_cost(product_id, total_qty)
             if fifo_cost is None:
-                raise Exception(f"لا توجد دفعات FIFO كافية للمنتج {item['product_id']}")
+                raise Exception(f"لا توجد دفعات FIFO كافية للمنتج {product_id}")
             
             total_cogs += _to_decimal(fifo_cost)
             fifo_details.append({
-                "product_id": item["product_id"],
-                "quantity": qty,
+                "product_id": product_id,
+                "quantity": total_qty,
                 "fifo_cost": fifo_cost
             })
 
+        # تجهيز الأسعار حسب كل عنصر (قد تختلف الأسعار)
+        for item in items:
             user_price = item.get("unit_price") or item.get("unit_price_base")
             if user_price is not None:
-                base_price = _to_decimal(user_price)
-            else:
-                base_price = _to_decimal(row["selling_price"])
-            product_prices[item["product_id"]] = base_price
+                product_prices[item["product_id"]] = _to_decimal(user_price)
+            elif item["product_id"] not in product_prices:
+                # إذا لم يحدد السعر، نأخذه من قاعدة البيانات مرة واحدة فقط
+                row = conn.execute("SELECT selling_price FROM products WHERE id = ?", (item["product_id"],)).fetchone()
+                product_prices[item["product_id"]] = _to_decimal(row["selling_price"])
 
         # 2. حساب المبالغ
         subtotal_local = Decimal("0")
@@ -189,16 +198,16 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
                         f"فاتورة مبيعات #{invoice_id}")
 
         # 6. خصم المخزون من جدول products
-        for item in items:
+        for product_id, total_qty in qty_by_product.items():
             conn.execute(
                 "UPDATE products SET quantity = quantity - ? WHERE id = ? AND quantity >= ?",
-                (item["quantity"], item["product_id"], item["quantity"])
+                (total_qty, product_id, total_qty)
             )
             if conn.total_changes == 0:
-                raise Exception(f"تعذر خصم المخزون للمنتج {item['product_id']} (تحديث متزامن)")
+                raise Exception(f"تعذر خصم المخزون للمنتج {product_id} (تحديث متزامن)")
             conn.execute(
                 "INSERT INTO stock_movements (product_id, type, quantity, date, reference) VALUES (?, 'out', ?, date('now'), ?)",
-                (item["product_id"], item["quantity"], f"فاتورة مبيعات #{invoice_id}")
+                (product_id, total_qty, f"فاتورة مبيعات #{invoice_id}")
             )
 
         # 7. إنشاء القيد المحاسبي (قبل commit)
