@@ -271,14 +271,13 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
                  "currency_code": currency_code, "exchange_rate": exchange_rate}
             ]
         else:
+            # ✅ مرتجع مشتريات: بدون سطر المخزون
             lines = [
                 {"account": party_name, "debit": total_return, "credit": 0,
                  "currency_code": currency_code, "exchange_rate": exchange_rate},
                 {"account": "مردودات المشتريات", "debit": 0, "credit": subtotal_return,
                  "currency_code": currency_code, "exchange_rate": exchange_rate},
                 {"account": "ضريبة القيمة المضافة المدخلة", "debit": 0, "credit": vat_amount,
-                 "currency_code": currency_code, "exchange_rate": exchange_rate},
-                {"account": "المخزون", "debit": 0, "credit": total_fifo_cost,
                  "currency_code": currency_code, "exchange_rate": exchange_rate}
             ]
         
