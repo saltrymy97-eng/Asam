@@ -1,4 +1,4 @@
-# services/accounting_service.py - منطق الحسابات وقيود اليومية (مع دعم الاتصال الخارجي)
+# services/accounting_service.py - منطق الحسابات وقيود اليومية (مع دعم الاتصال الخارجي – معدل)
 import sqlite3
 from datetime import date
 from services import cost_center_service
@@ -11,8 +11,8 @@ def get_conn():
     conn.row_factory = sqlite3.Row
     return conn
 
-def get_account_code(account_input):
-    """تحويل اسم الحساب إلى كود، أو إرجاع الكود إذا كان رقماً"""
+def get_account_code(account_input, conn=None):
+    """تحويل اسم الحساب إلى كود، أو إرجاع الكود إذا كان رقماً (يدعم اتصال خارجي)"""
     if not account_input or not account_input.strip():
         return None
     
@@ -21,12 +21,18 @@ def get_account_code(account_input):
     if account_input.isdigit():
         return account_input
     
-    conn = get_conn()
+    own_conn = False
+    if conn is None:
+        conn = get_conn()
+        own_conn = True
+    
     row = conn.execute(
         "SELECT code FROM accounts WHERE name = ? OR name LIKE ? OR code = ?",
         (account_input, f"%{account_input}%", account_input)
     ).fetchone()
-    conn.close()
+    
+    if own_conn:
+        conn.close()
     
     if row:
         return row["code"]
@@ -68,7 +74,8 @@ def save_journal_entry(description, lines, entry_date=None, cost_center_allocati
         for idx, line in enumerate(lines):
             account_name = line["account"]
             if not account_name.isdigit():
-                code = get_account_code(account_name)
+                # تمرير نفس الاتصال لتجنب فتح اتصال جديد
+                code = get_account_code(account_name, conn)
                 if code:
                     account_name = code
             
@@ -131,7 +138,7 @@ def update_journal_entry(entry_id, description, lines, entry_date=None, cost_cen
         for idx, line in enumerate(lines):
             account_name = line["account"]
             if not account_name.isdigit():
-                code = get_account_code(account_name)
+                code = get_account_code(account_name, conn)
                 if code:
                     account_name = code
             
