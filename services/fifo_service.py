@@ -36,18 +36,13 @@ def add_batch(product_id, quantity, unit_cost, batch_date, reference="", conn=No
         conn = get_connection()
         own_conn = True
     try:
-        if own_conn:
-            conn.execute("BEGIN")
+        # ملاحظة: لا نبدأ معاملة هنا، نتركها للمستدعي
         conn.execute(
             "INSERT INTO inventory_batches (product_id, quantity, unit_cost, batch_date, reference) VALUES (?,?,?,?,?)",
             (product_id, quantity, unit_cost, batch_date, reference)
         )
-        if own_conn:
-            conn.commit()
         return True, None
     except Exception as e:
-        if own_conn:
-            conn.rollback()
         return False, str(e)
     finally:
         if own_conn:
@@ -98,7 +93,7 @@ def get_consumed_batches(product_id, conn=None):
     return batches
 
 def get_fifo_cost(product_id, quantity, conn=None):
-    """حساب تكلفة الكمية المطلوبة حسب FIFO"""
+    """حساب تكلفة الكمية المطلوبة حسب FIFO (باستخدام الاتصال المعطى)"""
     batches = get_available_batches(product_id, conn)
     total_cost = 0.0
     remaining = quantity
@@ -113,16 +108,14 @@ def get_fifo_cost(product_id, quantity, conn=None):
     return total_cost
 
 def consume_fifo(product_id, quantity, conn=None, reference=""):
-    """استهلاك المخزون حسب FIFO"""
+    """استهلاك المخزون حسب FIFO (يعمل ضمن معاملة خارجية)"""
     own_conn = False
     if conn is None:
         conn = get_connection()
         own_conn = True
+        conn.execute("BEGIN")
 
     try:
-        if own_conn:
-            conn.execute("BEGIN")
-
         batches = get_available_batches(product_id, conn)
         total_cost = 0.0
         remaining_to_consume = quantity
@@ -159,30 +152,15 @@ def consume_fifo(product_id, quantity, conn=None, reference=""):
 
 def return_fifo_to_original_batch(product_id, quantity, sale_invoice_id, conn=None, reference=""):
     """
-    ✅ إصدار تجاري: إعادة بضاعة مرتجع المبيعات لنفس دفعة الشراء الأصلية.
-    
-    الطريقة:
-    1. نجلب سجلات استهلاك FIFO المرتبطة بفاتورة البيع الأصلية (sale_invoice_id)
-    2. نحذف سجلات الاستهلاك (نعيد الكمية للدفعة)
-    3. التكلفة = تكلفة الشراء الأصلية
-    
-    :param product_id: معرف المنتج
-    :param quantity: الكمية المرتجعة
-    :param sale_invoice_id: رقم فاتورة البيع الأصلية
-    :param conn: اتصال خارجي (اختياري)
-    :param reference: مرجع المرتجع
-    :return: (total_cost, error) - التكلفة الإجمالية المسترجعة أو None والخطأ
+    إعادة بضاعة مرتجع المبيعات لنفس دفعة الشراء الأصلية
     """
     own_conn = False
     if conn is None:
         conn = get_connection()
         own_conn = True
+        conn.execute("BEGIN")
 
     try:
-        if own_conn:
-            conn.execute("BEGIN")
-
-        # 1. جلب سجلات استهلاك FIFO المرتبطة بفاتورة البيع الأصلية
         sale_ref = f"فاتورة مبيعات #{sale_invoice_id}"
         consumptions = conn.execute("""
             SELECT c.id, c.batch_id, c.consumed_qty, b.unit_cost
@@ -197,10 +175,8 @@ def return_fifo_to_original_batch(product_id, quantity, sale_invoice_id, conn=No
                 conn.rollback()
             return None, f"لا توجد سجلات استهلاك FIFO للمنتج {product_id} في فاتورة البيع #{sale_invoice_id}"
 
-        # 2. حساب الكمية المتاحة للإرجاع من سجلات الاستهلاك
         total_consumed = sum(c["consumed_qty"] for c in consumptions)
         
-        # خصم أي مرتجعات سابقة
         return_ref = f"مرتجع مبيعات"
         already_returned = conn.execute("""
             SELECT COALESCE(SUM(fc2.consumed_qty), 0)
@@ -217,7 +193,6 @@ def return_fifo_to_original_batch(product_id, quantity, sale_invoice_id, conn=No
                 conn.rollback()
             return None, f"الكمية المطلوبة ({quantity}) أكبر من المتاح للإرجاع ({available_to_return})"
 
-        # 3. حذف سجلات الاستهلاك القديمة وإعادة الكمية للدفعات
         total_cost = 0.0
         remaining = quantity
 
@@ -229,12 +204,9 @@ def return_fifo_to_original_batch(product_id, quantity, sale_invoice_id, conn=No
             cost = take * cons["unit_cost"]
             total_cost += cost
 
-            # إنقاص الاستهلاك المسجل
             if take >= cons["consumed_qty"]:
-                # حذف السجل بالكامل إذا أخذنا كل الكمية
                 conn.execute("DELETE FROM fifo_consumptions WHERE id = ?", (cons["id"],))
             else:
-                # إنقاص الكمية المستهلكة
                 conn.execute(
                     "UPDATE fifo_consumptions SET consumed_qty = consumed_qty - ? WHERE id = ?",
                     (take, cons["id"])
@@ -260,9 +232,8 @@ def return_fifo(product_id, quantity, unit_cost, conn=None, reference=""):
     if conn is None:
         conn = get_connection()
         own_conn = True
+        conn.execute("BEGIN")
     try:
-        if own_conn:
-            conn.execute("BEGIN")
         conn.execute(
             "INSERT INTO inventory_batches (product_id, quantity, unit_cost, batch_date, reference) VALUES (?,?,?, date('now'), ?)",
             (product_id, quantity, unit_cost, reference)
@@ -284,9 +255,8 @@ def remove_last_batch(product_id, quantity, conn=None, reference=""):
     if conn is None:
         conn = get_connection()
         own_conn = True
+        conn.execute("BEGIN")
     try:
-        if own_conn:
-            conn.execute("BEGIN")
         batches = get_available_batches(product_id, conn)
         if not batches:
             if own_conn:
