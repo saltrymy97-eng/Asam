@@ -74,7 +74,6 @@ def init_db():
         FOREIGN KEY (party_id) REFERENCES customers(id)
     )''')
 
-    # أوامر ALTER للتوافق مع الإصدارات السابقة
     try:
         c.execute("ALTER TABLE invoices ADD COLUMN vat_rate REAL DEFAULT 0.15")
     except sqlite3.OperationalError:
@@ -225,7 +224,6 @@ def init_db():
         FOREIGN KEY (role_id) REFERENCES roles(id)
     )''')
 
-    # جداول مراكز التكلفة
     c.execute('''CREATE TABLE IF NOT EXISTS cost_centers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT UNIQUE NOT NULL,
@@ -259,7 +257,6 @@ def init_db():
         UNIQUE(cost_center_id, account_id, fiscal_year)
     )''')
 
-    # جداول العملات
     c.execute('''CREATE TABLE IF NOT EXISTS currencies (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT UNIQUE NOT NULL,
@@ -280,7 +277,6 @@ def init_db():
         UNIQUE(from_currency, to_currency, date)
     )''')
 
-    # جداول التعاملات البنكية
     c.execute('''CREATE TABLE IF NOT EXISTS bank_accounts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         bank_name TEXT NOT NULL,
@@ -321,7 +317,6 @@ def init_db():
         FOREIGN KEY (bank_account_id) REFERENCES bank_accounts(id)
     )''')
 
-    # جدول المرفقات
     c.execute('''CREATE TABLE IF NOT EXISTS attachments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         filename TEXT NOT NULL,
@@ -335,14 +330,12 @@ def init_db():
         uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
-    # 🧾 جدول إعدادات ضريبة القيمة المضافة
     c.execute('''CREATE TABLE IF NOT EXISTS vat_config (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         rate REAL NOT NULL DEFAULT 0.15,
         is_active BOOLEAN DEFAULT 1,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
-    # إدراج نسبة افتراضية إذا كان الجدول فارغاً
     c.execute("INSERT OR IGNORE INTO vat_config (id, rate, is_active) VALUES (1, 0.15, 1)")
 
     conn.commit()
@@ -353,9 +346,14 @@ def create_default_admin():
     conn = get_connection()
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM users")
-    if c.fetchone()[0] == 0:
-        hashed = bcrypt.hashpw("admin".encode(), bcrypt.gensalt())
-        c.execute("INSERT INTO users (username, password, full_name, role) VALUES (?, ?, ?, ?)",
-                  ("admin", hashed, "مدير النظام", "admin"))
-        conn.commit()
+    row = c.fetchone()
+    count = row[0] if row else 0
+    if count == 0:
+        try:
+            hashed = bcrypt.hashpw("admin".encode(), bcrypt.gensalt())
+            c.execute("INSERT INTO users (username, password, full_name, role) VALUES (?, ?, ?, ?)",
+                      ("admin", hashed, "مدير النظام", "admin"))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            pass  # المستخدم موجود مسبقاً
     conn.close()
