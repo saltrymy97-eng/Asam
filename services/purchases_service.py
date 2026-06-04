@@ -197,7 +197,7 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
             if not success:
                 raise Exception(f"فشل إضافة دفعة FIFO للمنتج {item['product_id']}: {error}")
 
-        # 6. إنشاء القيد المحاسبي (قبل commit)
+        # 6. إنشاء القيد المحاسبي (قبل commit) - مع تمرير الاتصال الحالي
         from services.accounting_service import save_journal_entry
 
         lines = [
@@ -233,10 +233,12 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
                 "exchange_rate": float(exchange_rate)
             })
 
+        # ✅ تمرير conn=conn هنا هو الإصلاح
         entry_id, entry_error = save_journal_entry(
             description=f"فاتورة مشتريات #{invoice_id} - {supplier_name}",
             lines=lines,
-            entry_date=date.today().strftime("%Y-%m-%d")
+            entry_date=date.today().strftime("%Y-%m-%d"),
+            conn=conn
         )
 
         if entry_error:
