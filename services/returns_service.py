@@ -1,4 +1,4 @@
-# services/returns_service.py – منطق أعمال المرتجعات (إصدار تجاري: FIFO دقيق + قيود + حماية)
+# services/returns_service.py – منطق أعمال المرتجعات (إصدار تجاري: FIFO دقيق + قيود + حماية + أعمدة احترافية)
 import sqlite3
 from datetime import date
 from database import get_connection
@@ -37,9 +37,9 @@ def get_sales_invoices():
     conn.row_factory = sqlite3.Row
     invoices = conn.execute("""
         SELECT i.id, i.invoice_date, c.name as customer, i.total, i.vat_rate, i.vat_amount,
-               i.currency_code, i.exchange_rate, i.party_id
+               i.currency_code, i.exchange_rate, i.customer_id
         FROM invoices i
-        JOIN customers c ON i.party_id = c.id
+        JOIN customers c ON i.customer_id = c.id
         WHERE i.type = 'sale' AND i.status = 'completed'
         ORDER BY i.id DESC
     """).fetchall()
@@ -52,9 +52,9 @@ def get_purchase_invoices():
     conn.row_factory = sqlite3.Row
     invoices = conn.execute("""
         SELECT i.id, i.invoice_date, s.name as supplier, i.total, i.vat_rate, i.vat_amount,
-               i.currency_code, i.exchange_rate, i.party_id
+               i.currency_code, i.exchange_rate, i.supplier_id
         FROM invoices i
-        JOIN suppliers s ON i.party_id = s.id
+        JOIN suppliers s ON i.supplier_id = s.id
         WHERE i.type = 'purchase' AND i.status = 'completed'
         ORDER BY i.id DESC
     """).fetchall()
@@ -116,14 +116,20 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
     
     try:
         # 1. جلب بيانات الفاتورة الأصلية
-        original_inv = conn.execute("""
-            SELECT i.*, 
-                   COALESCE(c.name, s.name) as party_name
-            FROM invoices i
-            LEFT JOIN customers c ON i.party_id = c.id AND i.type = 'sale'
-            LEFT JOIN suppliers s ON i.party_id = s.id AND i.type = 'purchase'
-            WHERE i.id = ?
-        """, (invoice_id,)).fetchone()
+        if invoice_type == "sale":
+            original_inv = conn.execute("""
+                SELECT i.*, c.name as party_name, i.customer_id as party_id
+                FROM invoices i
+                JOIN customers c ON i.customer_id = c.id
+                WHERE i.id = ?
+            """, (invoice_id,)).fetchone()
+        else:
+            original_inv = conn.execute("""
+                SELECT i.*, s.name as party_name, i.supplier_id as party_id
+                FROM invoices i
+                JOIN suppliers s ON i.supplier_id = s.id
+                WHERE i.id = ?
+            """, (invoice_id,)).fetchone()
         
         if not original_inv:
             return False, "الفاتورة الأصلية غير موجودة", 0
@@ -186,13 +192,21 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
         # 4. بدء المعاملة المحمية
         conn.execute("BEGIN")
         
-        # 5. إدراج فاتورة المرتجع
-        cursor = conn.execute("""
-            INSERT INTO invoices (type, party_id, invoice_date, total, status, vat_rate, vat_amount,
-                                 currency_code, exchange_rate, reason, reference)
-            VALUES (?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?)
-        """, (f'{invoice_type}_return', original_inv["party_id"], return_date, total_return,
-              vat_rate, vat_amount, currency_code, exchange_rate, reason, invoice_id))
+        # 5. إدراج فاتورة المرتجع (باستخدام العمود المناسب)
+        if invoice_type == "sale":
+            cursor = conn.execute("""
+                INSERT INTO invoices (type, customer_id, invoice_date, total, status, vat_rate, vat_amount,
+                                     currency_code, exchange_rate, reason, reference)
+                VALUES (?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?)
+            """, (f'sale_return', original_inv["party_id"], return_date, total_return,
+                  vat_rate, vat_amount, currency_code, exchange_rate, reason, invoice_id))
+        else:
+            cursor = conn.execute("""
+                INSERT INTO invoices (type, supplier_id, invoice_date, total, status, vat_rate, vat_amount,
+                                     currency_code, exchange_rate, reason, reference)
+                VALUES (?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?)
+            """, (f'purchase_return', original_inv["party_id"], return_date, total_return,
+                  vat_rate, vat_amount, currency_code, exchange_rate, reason, invoice_id))
         return_invoice_id = cursor.lastrowid
         
         # 6. إدراج البنود وتحديث المخزون وFIFO
@@ -205,7 +219,6 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
             """, (return_invoice_id, item["product_id"], item["quantity"], item["unit_price"]))
             
             if invoice_type == "sale":
-                # مرتجع مبيعات: نضيف للمخزون ونسجل حركة وارد
                 conn.execute("UPDATE products SET quantity = quantity + ? WHERE id = ?",
                            (item["quantity"], item["product_id"]))
                 conn.execute("""
@@ -214,7 +227,6 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
                 """, (item["product_id"], item["quantity"], return_date,
                      f"مرتجع مبيعات #{return_invoice_id}"))
                 
-                # ✅ FIFO تجاري: إعادة البضاعة لنفس دفعة الشراء الأصلية
                 cost, err = return_fifo_to_original_batch(
                     product_id=item["product_id"],
                     quantity=item["quantity"],
@@ -225,9 +237,7 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
                 if cost is None:
                     raise Exception(f"فشل إرجاع FIFO: {err}")
                 total_fifo_cost += cost
-                
             else:
-                # مرتجع مشتريات: نخصم من المخزون ونسجل حركة صادر
                 conn.execute("UPDATE products SET quantity = quantity - ? WHERE id = ?",
                            (item["quantity"], item["product_id"]))
                 conn.execute("""
@@ -236,7 +246,6 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
                 """, (item["product_id"], item["quantity"], return_date,
                      f"مرتجع مشتريات #{return_invoice_id}"))
                 
-                # FIFO: خصم أحدث دفعة
                 cost, err = remove_last_batch(
                     item["product_id"], item["quantity"],
                     conn=conn, reference=f"مرتجع مشتريات #{return_invoice_id}"
