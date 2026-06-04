@@ -1,4 +1,4 @@
-# ui/receipts_ui.py – واجهة سندات القبض والصرف (تصميم زجاجي فاخر)
+# ui/receipts_ui.py – واجهة سندات القبض والصرف (تصميم زجاجي فاخر - معدل)
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -59,9 +59,9 @@ def show():
             selected_inv_str = st.selectbox("ربط بفاتورة (اختياري)", list(invoice_options.keys()), key="receipt_inv")
             selected_inv = invoice_options[selected_inv_str]
             
-            # المبلغ
+            # المبلغ - تم تغيير min_value إلى 0.0 لتجنب الخطأ عند القيمة الافتراضية 0.0
             default_amount = selected_inv['remaining'] if selected_inv else 0.0
-            amount = st.number_input("المبلغ", min_value=0.01, value=float(default_amount), step=0.01, key="receipt_amount")
+            amount = st.number_input("المبلغ", min_value=0.0, value=float(default_amount), step=0.01, key="receipt_amount")
             
             col1, col2 = st.columns(2)
             with col1:
@@ -115,7 +115,7 @@ def show():
             selected_inv = invoice_options[selected_inv_str]
             
             default_amount = selected_inv['remaining'] if selected_inv else 0.0
-            amount = st.number_input("المبلغ", min_value=0.01, value=float(default_amount), step=0.01, key="payment_amount")
+            amount = st.number_input("المبلغ", min_value=0.0, value=float(default_amount), step=0.01, key="payment_amount")
             
             col1, col2 = st.columns(2)
             with col1:
@@ -150,7 +150,6 @@ def show():
         vouchers = get_vouchers()
         if vouchers:
             df = pd.DataFrame(vouchers)
-            # تحسين العرض
             df['type'] = df['type'].apply(lambda x: 'قبض' if x=='receipt' else 'صرف')
             df = df.rename(columns={
                 'id': 'الرقم',
@@ -164,12 +163,11 @@ def show():
             st.dataframe(df[['الرقم', 'النوع', 'التاريخ', 'الطرف', 'المبلغ', 'حساب النقدية', 'المرجع']],
                          use_container_width=True, hide_index=True)
             
-            # عرض تفاصيل سند محدد
             voucher_ids = [v['id'] for v in vouchers]
             selected_vid = st.selectbox("اختر سند لعرض التفاصيل", voucher_ids)
             if selected_vid:
                 details = get_voucher_details(selected_vid)
                 if details:
-                    st.json(details)  # عرض تفاصيل القيد
+                    st.json(details)
         else:
             st.info("لا توجد سندات بعد")
