@@ -1,6 +1,4 @@
-# services/sales_service.py – منطق أعمال المبيعات المُحسَّن
-# يدعم: التحقق من المخزون، FIFO، تعدد العملات، ضريبة القيمة المضافة، القيد المحاسبي التلقائي
-
+# services/sales_service.py – منطق أعمال المبيعات المُحسَّن (إصدار احترافي)
 import sqlite3
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
@@ -109,8 +107,8 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
 
         # 1. التحقق من المخزون وتجهيز بيانات FIFO
         product_prices = {}
-        total_cogs = Decimal("0")  # إجمالي تكلفة البضاعة المباعة
-        fifo_details = []  # تفاصيل استهلاك FIFO لكل منتج
+        total_cogs = Decimal("0")
+        fifo_details = []
 
         for item in items:
             row = conn.execute(
@@ -124,7 +122,6 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
             if available < item["quantity"]:
                 raise Exception(f"المخزون غير كافٍ للمنتج '{item['product_id']}'، المتاح: {available}")
 
-            # حساب تكلفة FIFO لهذا المنتج
             qty = item["quantity"]
             fifo_cost = get_fifo_cost(item["product_id"], qty)
             if fifo_cost is None:
@@ -166,10 +163,10 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
         vat_amount_base = _quantize(subtotal_base * vat_rate)
         total_base = _quantize(subtotal_base + vat_amount_base)
 
-        # 3. إدراج الفاتورة (بدون commit بعد)
+        # 3. إدراج الفاتورة (باستخدام customer_id)
         cur = conn.execute(
             """INSERT INTO invoices 
-               (type, party_id, invoice_date, total, total_base, status, vat_rate, vat_amount, currency_code, exchange_rate)
+               (type, customer_id, invoice_date, total, total_base, status, vat_rate, vat_amount, currency_code, exchange_rate)
                VALUES (?, ?, date('now'), ?, ?, 'completed', ?, ?, ?, ?)""",
             ("sale", customer_id, float(total_local), float(total_base), float(vat_rate),
              float(vat_amount_local), currency_code, float(exchange_rate))
@@ -188,7 +185,6 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
 
         # 5. استهلاك دفعات FIFO وتحديث المخزون
         for detail in fifo_details:
-            # استهلاك FIFO (ينشئ سجلات في fifo_consumptions ويحدث inventory_batches)
             consume_fifo(detail["product_id"], detail["quantity"], conn,
                         f"فاتورة مبيعات #{invoice_id}")
 
@@ -205,7 +201,7 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
                 (item["product_id"], item["quantity"], f"فاتورة مبيعات #{invoice_id}")
             )
 
-        # 7. إنشاء القيد المحاسبي (قبل commit - هنا النقطة الحرجة)
+        # 7. إنشاء القيد المحاسبي (قبل commit)
         customer_name = "غير معروف"
         try:
             row = conn.execute("SELECT name FROM customers WHERE id = ?", (customer_id,)).fetchone()
@@ -242,7 +238,6 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
                 "exchange_rate": float(exchange_rate)
             })
 
-        # إضافة سطر تكلفة البضاعة المباعة (COGS)
         if float(total_cogs) > 0:
             lines.extend([
                 {
@@ -270,10 +265,8 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
         if entry_error:
             raise Exception(f"فشل إنشاء القيد المحاسبي: {entry_error}")
 
-        # ✅ فقط بعد نجاح كل شيء: commit
         conn.commit()
 
-        # تسجيل التدقيق
         log_action(
             username=username, action="فاتورة مبيعات", table_name="invoices",
             record_id=invoice_id,
@@ -298,7 +291,7 @@ def get_sale_invoices():
         SELECT i.id, c.name AS customer, i.invoice_date, i.total, i.total_base,
                i.status, i.vat_rate, i.vat_amount, i.currency_code, i.exchange_rate
         FROM invoices i
-        LEFT JOIN customers c ON i.party_id = c.id
+        LEFT JOIN customers c ON i.customer_id = c.id
         WHERE i.type = 'sale' ORDER BY i.id DESC
     """).fetchall()
     conn.close()
