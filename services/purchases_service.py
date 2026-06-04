@@ -1,4 +1,4 @@
-# services/purchases_service.py – منطق أعمال المشتريات المُحسَّن (إصدار احترافي)
+# services/purchases_service.py – منطق أعمال المشتريات المُحسَّن (إصدار احترافي - معدل)
 import sqlite3
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
@@ -167,25 +167,21 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
             qty = item["quantity"]
             local_unit_price = _quantize(base_price / exchange_rate)
 
-            # بنود الفاتورة
             conn.execute(
                 "INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?)",
                 (invoice_id, item["product_id"], qty, float(local_unit_price))
             )
 
-            # تحديث المخزون
             conn.execute(
                 "UPDATE products SET quantity = quantity + ? WHERE id = ?",
                 (qty, item["product_id"])
             )
 
-            # حركة المخزون
             conn.execute(
                 "INSERT INTO stock_movements (product_id, type, quantity, date, reference) VALUES (?, 'in', ?, date('now'), ?)",
                 (item["product_id"], qty, f"فاتورة مشتريات #{invoice_id}")
             )
 
-            # ✅ إضافة دفعة FIFO (باستخدام نفس اتصال المعاملة)
             success, error = add_batch(
                 product_id=item["product_id"],
                 quantity=qty,
@@ -197,19 +193,12 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
             if not success:
                 raise Exception(f"فشل إضافة دفعة FIFO للمنتج {item['product_id']}: {error}")
 
-        # 6. إنشاء القيد المحاسبي (قبل commit) - مع تمرير الاتصال الحالي
+        # 6. إنشاء القيد المحاسبي (قبل commit) - بدون سطر المخزون المكرر
         from services.accounting_service import save_journal_entry
 
         lines = [
             {
                 "account": "المشتريات",
-                "debit": float(subtotal_local),
-                "credit": 0,
-                "currency_code": currency_code,
-                "exchange_rate": float(exchange_rate)
-            },
-            {
-                "account": "المخزون",
                 "debit": float(subtotal_local),
                 "credit": 0,
                 "currency_code": currency_code,
@@ -233,7 +222,6 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
                 "exchange_rate": float(exchange_rate)
             })
 
-        # ✅ تمرير conn=conn هنا هو الإصلاح
         entry_id, entry_error = save_journal_entry(
             description=f"فاتورة مشتريات #{invoice_id} - {supplier_name}",
             lines=lines,
@@ -244,7 +232,6 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
         if entry_error:
             raise Exception(f"فشل إنشاء القيد المحاسبي: {entry_error}")
 
-        # ✅ فقط بعد نجاح كل شيء: commit
         conn.commit()
 
         log_action(
