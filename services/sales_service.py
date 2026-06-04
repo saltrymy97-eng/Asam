@@ -127,7 +127,7 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
             if fifo_cost is None:
                 raise Exception(f"لا توجد دفعات FIFO كافية للمنتج {item['product_id']}")
             
-            total_cogs += fifo_cost
+            total_cogs += _to_decimal(fifo_cost)
             fifo_details.append({
                 "product_id": item["product_id"],
                 "quantity": qty,
@@ -259,7 +259,8 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
         entry_id, entry_error = save_journal_entry(
             description=f"فاتورة مبيعات #{invoice_id} - {customer_name}",
             lines=lines,
-            entry_date=date.today().strftime("%Y-%m-%d")
+            entry_date=date.today().strftime("%Y-%m-%d"),
+            conn=conn
         )
 
         if entry_error:
