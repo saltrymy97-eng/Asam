@@ -21,7 +21,7 @@ PR = "#8B5CF6"
 GLASS_BG = "rgba(255, 255, 255, 0.08)"
 GLASS_BORDER = "rgba(255, 255, 255, 0.15)"
 
-def glass_card(content, color=BL):
+def glass_card(content):
     """بطاقة زجاجية"""
     st.markdown(f"""
     <div style="background:{GLASS_BG}; backdrop-filter:blur(15px);
@@ -70,7 +70,6 @@ def show():
             with col_form:
                 st.markdown(f"<h3 style='color:{GR};'>تسجيل الجرد الفعلي</h3>", unsafe_allow_html=True)
                 
-                # عرض المنتجات في جدول قابل للاختيار
                 product_names = [f"{p['name']} (النظام: {p['quantity']})" for p in products]
                 selected_idx = st.selectbox("اختر المنتج", range(len(product_names)), 
                                            format_func=lambda i: product_names[i],
@@ -158,7 +157,7 @@ def show():
             
             with col_info:
                 st.markdown(f"<h4 style='color:{PR};'>📌 إرشادات</h4>", unsafe_allow_html=True)
-                glass_card("""
+                glass_card(f"""
                 <ul style="color:{S}; font-size:0.9rem; line-height:1.8;">
                     <li>أدخل الكمية <b style="color:{GR};">الفعلية</b> من الجرد الميداني</li>
                     <li>النظام يقارنها تلقائياً بالكمية المسجلة</li>
@@ -220,7 +219,6 @@ def show():
                 col_ch1, col_ch2 = st.columns(2)
                 
                 with col_ch1:
-                    # رسم بياني للفائض والعجز
                     df_chart = df.groupby('product_name')['total_cost'].sum().reset_index()
                     df_chart['type'] = df.groupby('product_name')['difference'].sum().apply(
                         lambda x: 'فائض' if x > 0 else 'عجز'
@@ -237,7 +235,6 @@ def show():
                     st.plotly_chart(fig, use_container_width=True)
                 
                 with col_ch2:
-                    # رسم بياني دائري لنسبة الفائض للعجز
                     pie_data = pd.DataFrame({
                         'النوع': ['فائض', 'عجز'],
                         'القيمة': [
