@@ -1,6 +1,4 @@
-# services/purchases_service.py – منطق أعمال المشتريات المُحسَّن
-# يدعم: تعدد العملات، FIFO، ضريبة القيمة المضافة، القيد المحاسبي التلقائي
-
+# services/purchases_service.py – منطق أعمال المشتريات المُحسَّن (إصدار احترافي)
 import sqlite3
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
@@ -153,10 +151,10 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
         vat_amount_base = _quantize(subtotal_base * vat_rate)
         total_base = _quantize(subtotal_base + vat_amount_base)
 
-        # 4. إدراج الفاتورة (بدون commit)
+        # 4. إدراج الفاتورة (باستخدام supplier_id)
         cur = conn.execute(
             """INSERT INTO invoices 
-               (type, party_id, invoice_date, total, total_base, status, vat_rate, vat_amount, currency_code, exchange_rate)
+               (type, supplier_id, invoice_date, total, total_base, status, vat_rate, vat_amount, currency_code, exchange_rate)
                VALUES (?, ?, date('now'), ?, ?, 'completed', ?, ?, ?, ?)""",
             ("purchase", supplier_id, float(total_local), float(total_base), float(vat_rate),
              float(vat_amount_local), currency_code, float(exchange_rate))
@@ -194,7 +192,7 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
                 unit_cost=float(base_price),
                 batch_date=date.today().strftime("%Y-%m-%d"),
                 reference=f"فاتورة مشتريات #{invoice_id}",
-                conn=conn  # تمرير الاتصال المفتوح
+                conn=conn
             )
             if not success:
                 raise Exception(f"فشل إضافة دفعة FIFO للمنتج {item['product_id']}: {error}")
@@ -271,7 +269,7 @@ def get_purchase_invoices():
         SELECT i.id, s.name AS supplier, i.invoice_date, i.total, i.total_base,
                i.status, i.vat_rate, i.vat_amount, i.currency_code, i.exchange_rate
         FROM invoices i
-        LEFT JOIN suppliers s ON i.party_id = s.id
+        LEFT JOIN suppliers s ON i.supplier_id = s.id
         WHERE i.type = 'purchase' ORDER BY i.id DESC
     """).fetchall()
     conn.close()
