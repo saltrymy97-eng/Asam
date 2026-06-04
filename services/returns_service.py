@@ -325,4 +325,5 @@ def get_return_history():
         LIMIT 50
     """).fetchall()
     conn.close()
-    return returns
+    # تحويل الصفوف إلى قواميس لتتوافق مع واجهة المستخدم
+    return [dict(r) for r in returns]
