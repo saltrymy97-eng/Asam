@@ -1,5 +1,6 @@
-# services/returns_service.py – منطق أعمال المرتجعات (إصدار تجاري: FIFO دقيق + قيود + حماية + أعمدة احترافية)
+# services/returns_service.py – منطق أعمال المرتجعات (إصدار تجاري: حماية معززة)
 import sqlite3
+from collections import defaultdict
 from datetime import date
 from database import get_connection
 from services.audit_service import log_action
@@ -103,9 +104,9 @@ def get_invoice_items(invoice_id):
 def process_return(invoice_type, invoice_id, items_to_return, return_date, reason=""):
     """
     تنفيذ عملية المرتجع كاملة (إصدار تجاري):
-    - فحص الكميات والرصيد
+    - تجميع الكميات وفحصها بدقة
     - تحديث المخزون
-    - FIFO دقيق: مرتجع المبيعات يعيد البضاعة لنفس دفعة الشراء الأصلية
+    - FIFO دقيق
     - القيد المحاسبي قبل commit
     """
     add_reason_column()
@@ -139,32 +140,37 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
         currency_code = original_inv["currency_code"] or "YER"
         exchange_rate = original_inv["exchange_rate"] or 1.0
         
-        # 2. التحقق من الكميات المتاحة للإرجاع
+        # ✅ تجميع الكميات المطلوبة لكل منتج
+        qty_by_product = defaultdict(int)
+        for product_name, qty in items_to_return:
+            qty_by_product[product_name] += qty
+
+        # 2. التحقق من الكميات المتاحة للإرجاع (مقابل الفاتورة الأصلية)
         available_items = get_invoice_items(invoice_id)
         available_dict = {item['name']: item for item in available_items}
         
-        for product_name, qty in items_to_return:
+        for product_name, total_qty in qty_by_product.items():
             if product_name not in available_dict:
                 return False, f"المنتج '{product_name}' غير موجود في الفاتورة الأصلية", 0
-            if qty > available_dict[product_name]['available_qty']:
-                return False, f"الكمية المطلوبة ({qty}) أكبر من المتاح للإرجاع ({available_dict[product_name]['available_qty']}) للمنتج '{product_name}'", 0
+            if total_qty > available_dict[product_name]['available_qty']:
+                return False, f"الكمية المطلوبة ({total_qty}) أكبر من المتاح للإرجاع ({available_dict[product_name]['available_qty']}) للمنتج '{product_name}'", 0
         
-        # حماية إضافية لمرتجع المشتريات
+        # حماية إضافية لمرتجع المشتريات: فحص الرصيد الحالي في المخزون
         if invoice_type == "purchase":
-            for product_name, qty in items_to_return:
+            for product_name, total_qty in qty_by_product.items():
                 current = conn.execute(
                     "SELECT quantity FROM products WHERE name = ?", (product_name,)
                 ).fetchone()
                 if not current:
                     return False, f"المنتج '{product_name}' غير موجود في المخزون", 0
-                if qty > current["quantity"]:
-                    return False, f"لا يمكن إرجاع {qty} وحدة من '{product_name}'. الرصيد الحالي: {current['quantity']} فقط", 0
+                if total_qty > current["quantity"]:
+                    return False, f"لا يمكن إرجاع {total_qty} وحدة من '{product_name}'. الرصيد الحالي: {current['quantity']} فقط", 0
         
         # 3. حساب المبالغ وتجهيز بيانات المنتجات
         subtotal_return = 0.0
         items_data = []
         
-        for product_name, qty in items_to_return:
+        for product_name, total_qty in qty_by_product.items():
             product = conn.execute(
                 "SELECT id, purchase_price, selling_price FROM products WHERE name = ?",
                 (product_name,)
@@ -173,12 +179,12 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
                 continue
             
             unit_price = product["selling_price"] if invoice_type == "sale" else product["purchase_price"]
-            line_total = qty * unit_price
+            line_total = total_qty * unit_price
             subtotal_return += line_total
             items_data.append({
                 "product_id": product["id"],
                 "product_name": product_name,
-                "quantity": qty,
+                "quantity": total_qty,
                 "unit_price": unit_price,
                 "line_total": line_total
             })
@@ -192,7 +198,7 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
         # 4. بدء المعاملة المحمية
         conn.execute("BEGIN")
         
-        # 5. إدراج فاتورة المرتجع (باستخدام العمود المناسب)
+        # 5. إدراج فاتورة المرتجع
         if invoice_type == "sale":
             cursor = conn.execute("""
                 INSERT INTO invoices (type, customer_id, invoice_date, total, status, vat_rate, vat_amount,
@@ -271,7 +277,7 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
                  "currency_code": currency_code, "exchange_rate": exchange_rate}
             ]
         else:
-            # ✅ مرتجع مشتريات: بدون سطر المخزون
+            # مرتجع مشتريات بدون سطر المخزون
             lines = [
                 {"account": party_name, "debit": total_return, "credit": 0,
                  "currency_code": currency_code, "exchange_rate": exchange_rate},
@@ -324,5 +330,4 @@ def get_return_history():
         LIMIT 50
     """).fetchall()
     conn.close()
-    # تحويل الصفوف إلى قواميس لتتوافق مع واجهة المستخدم
     return [dict(r) for r in returns]
