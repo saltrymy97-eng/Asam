@@ -6,7 +6,8 @@ DB_PATH = "erp.db"
 
 def get_connection():
     """إنشاء اتصال بقاعدة البيانات مع دعم الوصول القاموسي للصفوف"""
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=15)
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys = ON")
     conn.row_factory = sqlite3.Row
     return conn
@@ -16,7 +17,6 @@ def init_db():
     conn = get_connection()
     c = conn.cursor()
 
-    # ========== جداول المستخدمين والمنتجات ==========
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
@@ -46,7 +46,6 @@ def init_db():
         FOREIGN KEY (product_id) REFERENCES products(id)
     )''')
 
-    # ========== جداول العملاء والموردين ==========
     c.execute('''CREATE TABLE IF NOT EXISTS customers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -61,7 +60,6 @@ def init_db():
         address TEXT
     )''')
 
-    # ========== جدول الفواتير (إصدار احترافي) ==========
     c.execute('''CREATE TABLE IF NOT EXISTS invoices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
@@ -81,7 +79,6 @@ def init_db():
         FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
     )''')
 
-    # أوامر ALTER للتوافق مع الإصدارات السابقة (بعد تعديل الجدول لن تعمل هذه الأوامر على party_id لكن نحتفظ بها للحقول الأخرى)
     try:
         c.execute("ALTER TABLE invoices ADD COLUMN vat_rate REAL DEFAULT 0.15")
     except sqlite3.OperationalError:
@@ -129,7 +126,6 @@ def init_db():
         FOREIGN KEY (product_id) REFERENCES products(id)
     )''')
 
-    # ========== جداول القيود المحاسبية ==========
     c.execute('''CREATE TABLE IF NOT EXISTS journal_entries (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         date TEXT,
@@ -157,7 +153,6 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
-    # ========== جداول الموارد البشرية ==========
     c.execute('''CREATE TABLE IF NOT EXISTS employees (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -174,7 +169,6 @@ def init_db():
         FOREIGN KEY (employee_id) REFERENCES employees(id)
     )''')
 
-    # ========== شجرة الحسابات ==========
     c.execute('''CREATE TABLE IF NOT EXISTS accounts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT UNIQUE NOT NULL,
@@ -185,7 +179,6 @@ def init_db():
         FOREIGN KEY (parent_id) REFERENCES accounts(id)
     )''')
 
-    # ========== FIFO ==========
     c.execute('''CREATE TABLE IF NOT EXISTS inventory_batches (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         product_id INTEGER,
@@ -205,7 +198,6 @@ def init_db():
         FOREIGN KEY (batch_id) REFERENCES inventory_batches(id)
     )''')
 
-    # ========== رواتب ==========
     c.execute('''CREATE TABLE IF NOT EXISTS employee_salaries (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         employee_id INTEGER UNIQUE,
@@ -232,7 +224,6 @@ def init_db():
         FOREIGN KEY (employee_id) REFERENCES employees(id)
     )''')
 
-    # ========== إغلاق الفترات ==========
     c.execute('''CREATE TABLE IF NOT EXISTS closed_periods (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         period_type TEXT NOT NULL,
@@ -242,7 +233,6 @@ def init_db():
         UNIQUE(period_type, period_value)
     )''')
 
-    # ========== صلاحيات وأدوار ==========
     c.execute('''CREATE TABLE IF NOT EXISTS roles (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT UNIQUE NOT NULL
@@ -255,7 +245,6 @@ def init_db():
         FOREIGN KEY (role_id) REFERENCES roles(id)
     )''')
 
-    # ========== مراكز التكلفة ==========
     c.execute('''CREATE TABLE IF NOT EXISTS cost_centers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT UNIQUE NOT NULL,
@@ -289,7 +278,6 @@ def init_db():
         UNIQUE(cost_center_id, account_id, fiscal_year)
     )''')
 
-    # ========== العملات ==========
     c.execute('''CREATE TABLE IF NOT EXISTS currencies (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT UNIQUE NOT NULL,
@@ -310,7 +298,6 @@ def init_db():
         UNIQUE(from_currency, to_currency, date)
     )''')
 
-    # ========== البنوك ==========
     c.execute('''CREATE TABLE IF NOT EXISTS bank_accounts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         bank_name TEXT NOT NULL,
@@ -351,7 +338,6 @@ def init_db():
         FOREIGN KEY (bank_account_id) REFERENCES bank_accounts(id)
     )''')
 
-    # ========== المرفقات ==========
     c.execute('''CREATE TABLE IF NOT EXISTS attachments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         filename TEXT NOT NULL,
@@ -365,7 +351,6 @@ def init_db():
         uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
-    # ========== ضريبة ==========
     c.execute('''CREATE TABLE IF NOT EXISTS vat_config (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         rate REAL NOT NULL DEFAULT 0.15,
@@ -374,8 +359,6 @@ def init_db():
     )''')
     c.execute("INSERT OR IGNORE INTO vat_config (id, rate, is_active) VALUES (1, 0.15, 1)")
 
-    # ========== جداول الوحدات الجديدة (تُنشأ هنا لضمان توحيد المخطط) ==========
-    # سندات القبض والصرف
     c.execute('''CREATE TABLE IF NOT EXISTS vouchers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
@@ -392,7 +375,6 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
-    # المصروفات
     c.execute('''CREATE TABLE IF NOT EXISTS expenses (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         date TEXT NOT NULL,
@@ -409,7 +391,6 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
-    # التسويات المخزنية
     c.execute('''CREATE TABLE IF NOT EXISTS inventory_adjustments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         date TEXT NOT NULL,
@@ -427,7 +408,6 @@ def init_db():
         FOREIGN KEY (product_id) REFERENCES products(id)
     )''')
 
-    # الأرصدة الافتتاحية
     c.execute('''CREATE TABLE IF NOT EXISTS opening_balances (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         entry_date TEXT NOT NULL,
@@ -452,7 +432,6 @@ def init_db():
         FOREIGN KEY (product_id) REFERENCES products(id)
     )''')
 
-    # فروق أسعار الصرف
     c.execute('''CREATE TABLE IF NOT EXISTS currency_revaluations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         date TEXT NOT NULL,
