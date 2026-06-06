@@ -42,7 +42,7 @@ def glass(content):
     st.markdown(f"""<div style="background:rgba(255,255,255,0.12);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.25);border-radius:16px;padding:1.5rem;margin:1rem 0;box-shadow:0 8px 32px rgba(0,0,0,0.37);color:{T};font-size:1.1rem;">{content}</div>""", unsafe_allow_html=True)
 
 def show():
-    h1(" المساعد الذكي 🤖 AI")
+    h1("🤖 المساعد الذكي ")
     create_ai_tables()
 
     if "GROQ_API_KEY" not in st.secrets:
