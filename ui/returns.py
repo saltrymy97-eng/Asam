@@ -1,4 +1,4 @@
-# ui/returns.py - واجهة مرتجعات البضاعة (تصميم زجاجي فخم + عرض احترافي)
+# ui/returns.py - واجهة مرتجعات البضاعة (تصميم زجاجي فخم + عرض احترافي + حماية من التكرار)
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -53,7 +53,6 @@ def show():
                 
                 if items:
                     st.markdown("**بنود الفاتورة:**")
-                    # 🔧 عرض احترافي بأعمدة مسمّاة
                     display_items = []
                     for item in items:
                         display_items.append({
@@ -104,16 +103,25 @@ def show():
                         return_date = st.date_input("تاريخ المرتجع", value=date.today())
                         reason = st.text_area("سبب الإرجاع (اختياري)")
                         
-                        if st.button("✅ تأكيد مرتجع المبيعات", key="confirm_sale_return", type="primary"):
+                        # ✅ حماية من التكرار
+                        if "saving_sale_return" not in st.session_state:
+                            st.session_state.saving_sale_return = False
+                        
+                        if st.button("✅ تأكيد مرتجع المبيعات", key="confirm_sale_return", type="primary", disabled=st.session_state.saving_sale_return):
+                            st.session_state.saving_sale_return = True
+                            st.rerun()
+                        
+                        if st.session_state.saving_sale_return:
                             success, result, total = process_return(
                                 "sale", inv["id"], return_items,
                                 return_date.strftime("%Y-%m-%d"), reason
                             )
                             if success:
                                 glass(f"✅ تم تسجيل المرتجع رقم {result} - الإجمالي: {total:,.2f}")
-                                st.rerun()
                             else:
                                 st.error(f"فشل العملية: {result}")
+                            st.session_state.saving_sale_return = False
+                            st.rerun()
     
     # ---------- مرتجع مشتريات ----------
     with tab2:
@@ -132,7 +140,6 @@ def show():
                 
                 if items:
                     st.markdown("**بنود الفاتورة:**")
-                    # 🔧 عرض احترافي بأعمدة مسمّاة
                     display_items = []
                     for item in items:
                         display_items.append({
@@ -183,23 +190,31 @@ def show():
                         return_date = st.date_input("تاريخ المرتجع", value=date.today(), key="purchase_ret_date")
                         reason = st.text_area("سبب الإرجاع (اختياري)", key="purchase_ret_reason")
                         
-                        if st.button("✅ تأكيد مرتجع المشتريات", key="confirm_purchase_return", type="primary"):
+                        # ✅ حماية من التكرار
+                        if "saving_purchase_return" not in st.session_state:
+                            st.session_state.saving_purchase_return = False
+                        
+                        if st.button("✅ تأكيد مرتجع المشتريات", key="confirm_purchase_return", type="primary", disabled=st.session_state.saving_purchase_return):
+                            st.session_state.saving_purchase_return = True
+                            st.rerun()
+                        
+                        if st.session_state.saving_purchase_return:
                             success, result, total = process_return(
                                 "purchase", inv["id"], return_items,
                                 return_date.strftime("%Y-%m-%d"), reason
                             )
                             if success:
                                 glass(f"✅ تم تسجيل المرتجع رقم {result} - الإجمالي: {total:,.2f}")
-                                st.rerun()
                             else:
                                 st.error(f"فشل العملية: {result}")
+                            st.session_state.saving_purchase_return = False
+                            st.rerun()
     
     # ---------- سجل المرتجعات ----------
     with tab3:
         h3("سجل عمليات المرتجعات", PR)
         returns = get_return_history()
         if returns:
-            # 🔧 عرض احترافي بأعمدة مسمّاة
             display_returns = []
             for r in returns:
                 type_name = "مرتجع مبيعات" if r['type'] == 'sale_return' else "مرتجع مشتريات"
