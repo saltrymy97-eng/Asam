@@ -1,4 +1,4 @@
-# ui/opening_balances_ui.py – واجهة الأرصدة الافتتاحية (فخمة ومتكاملة)
+# ui/opening_balances_ui.py – واجهة الأرصدة الافتتاحية (فخمة ومتكاملة + حماية من التكرار)
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -32,7 +32,6 @@ def show():
         if not accounts:
             st.warning("لا توجد حسابات في شجرة الحسابات. أضف حسابات أولاً.")
         else:
-            # بناء جدول قابل للتعديل
             df = pd.DataFrame(accounts)
             df['الرصيد مدين'] = 0.0
             df['الرصيد دائن'] = 0.0
@@ -51,7 +50,6 @@ def show():
                 num_rows="fixed"
             )
             
-            # تحويل البيانات المعدلة إلى قائمة قواميس
             account_balances = []
             for _, row in edited_df.iterrows():
                 account_balances.append({
@@ -103,7 +101,15 @@ def show():
     st.markdown("---")
     entry_date = st.date_input("تاريخ الافتتاح", value=date.today())
     
-    if st.button("💾 حفظ الأرصدة الافتتاحية", type="primary", use_container_width=True):
+    # ✅ حماية من التكرار
+    if "saving_opening" not in st.session_state:
+        st.session_state.saving_opening = False
+    
+    if st.button("💾 حفظ الأرصدة الافتتاحية", type="primary", use_container_width=True, disabled=st.session_state.saving_opening):
+        st.session_state.saving_opening = True
+        st.rerun()
+    
+    if st.session_state.saving_opening:
         account_balances = st.session_state.get('account_balances', [])
         inventory_items = st.session_state.get('inventory_items', [])
         
@@ -121,3 +127,5 @@ def show():
             else:
                 st.success(f"تم تسجيل الأرصدة الافتتاحية بقيد رقم {entry_id}")
                 st.balloons()
+        st.session_state.saving_opening = False
+        st.rerun()
