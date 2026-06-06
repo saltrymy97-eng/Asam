@@ -1,4 +1,4 @@
-# ui/assets_ui.py – واجهة الأصول الثابتة والإهلاكات (تصميم زجاجي فخم)
+# ui/assets_ui.py – واجهة الأصول الثابتة والإهلاكات (تصميم زجاجي فخم + حماية من التكرار)
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime
@@ -95,26 +95,44 @@ def show():
         assets = get_all_assets()
         active_assets = [a for a in assets if a['status'] == 'نشط' and a['monthly_depreciation'] > 0]
 
+        # ✅ حماية من التكرار - تشغيل الكل
+        if "saving_all_dep" not in st.session_state:
+            st.session_state.saving_all_dep = False
+        
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("🚀 تشغيل إهلاك جميع الأصول النشطة", type="primary"):
+            if st.button("🚀 تشغيل إهلاك جميع الأصول النشطة", type="primary", disabled=st.session_state.saving_all_dep):
+                st.session_state.saving_all_dep = True
+                st.rerun()
+            
+            if st.session_state.saving_all_dep:
                 results = run_all_depreciations()
                 success_count = sum(1 for r in results if r[1])
                 st.success(f"تم تشغيل الإهلاك لـ {success_count} أصل")
+                st.session_state.saving_all_dep = False
                 st.rerun()
 
+        # ✅ حماية من التكرار - تشغيل فردي
+        if "saving_single_dep" not in st.session_state:
+            st.session_state.saving_single_dep = False
+        
         with col2:
             if active_assets:
                 asset_names = [f"{a['name']} (إهلاك شهري: {a['monthly_depreciation']:,.2f})" for a in active_assets]
                 selected = st.selectbox("اختر أصلاً للتشغيل الفردي", asset_names)
-                if st.button("📉 تشغيل إهلاك هذا الأصل"):
+                if st.button("📉 تشغيل إهلاك هذا الأصل", disabled=st.session_state.saving_single_dep):
+                    st.session_state.saving_single_dep = True
+                    st.rerun()
+                
+                if st.session_state.saving_single_dep:
                     idx = asset_names.index(selected)
                     success, msg = run_depreciation(active_assets[idx]['id'])
                     if success:
                         st.success(msg)
-                        st.rerun()
                     else:
                         st.error(msg)
+                    st.session_state.saving_single_dep = False
+                    st.rerun()
 
     # ---------- تبويب لوحة التحكم ----------
     with tab4:
