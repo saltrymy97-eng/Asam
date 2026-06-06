@@ -55,53 +55,57 @@ from ui.backup import show as backup_show
 from ui.pdf_reports import show as pdf_show
 from ui.ai_ui import show as ai_show
 
-st.set_page_config(page_title="XD ERP", layout="wide")
+st.set_page_config(page_title="حوكمة ERP", layout="wide")
 
 # ========== تصميم القائمة الجانبية الفاخرة ==========
 st.markdown("""
 <style>
+    /* استيراد خط 29LT Bukra Bold للشعار وخط Cairo للواجهة */
+    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap');
+    
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, rgba(20,20,40,0.95) 0%, rgba(10,10,30,0.98) 100%);
+        background: linear-gradient(180deg, #0F172A 0%, #020617 100%);
         backdrop-filter: blur(20px);
-        border-right: 1px solid rgba(255,255,255,0.1);
+        border-right: 1px solid rgba(6, 182, 212, 0.15);
     }
     .menu-section {
         margin: 15px 10px 5px 10px;
         padding: 8px 12px;
         border-radius: 12px;
-        background: rgba(255,255,255,0.03);
+        background: rgba(6, 182, 212, 0.05);
         font-size: 0.75rem;
         font-weight: 700;
         letter-spacing: 2px;
-        color: #a78bfa;
+        color: #06B6D4;
         text-transform: uppercase;
     }
     .stButton > button {
         width: 100%;
-        background: rgba(255,255,255,0.05);
-        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(255,255,255,0.03);
+        border: 1px solid rgba(255,255,255,0.06);
         border-radius: 12px;
-        color: #ddd;
+        color: #CBD5E1;
         text-align: right;
         padding: 10px 15px;
         font-size: 0.95rem;
+        font-family: 'Cairo', sans-serif;
         transition: all 0.3s ease;
         margin-bottom: 3px;
     }
     .stButton > button:hover {
-        background: rgba(139, 92, 246, 0.25);
-        border-color: #a78bfa;
-        color: white;
+        background: rgba(6, 182, 212, 0.15);
+        border-color: rgba(6, 182, 212, 0.3);
+        color: #FFFFFF;
         transform: translateX(-5px);
     }
     .logout-btn > button {
-        background: rgba(239, 68, 68, 0.2);
-        border-color: rgba(239, 68, 68, 0.4);
-        color: #fca5a5;
+        background: rgba(239, 68, 68, 0.15);
+        border-color: rgba(239, 68, 68, 0.3);
+        color: #FCA5A5;
         margin-top: 20px;
     }
     .logout-btn > button:hover {
-        background: rgba(239, 68, 68, 0.4);
+        background: rgba(239, 68, 68, 0.3);
         color: white;
     }
     .permission-denied {
@@ -112,6 +116,7 @@ st.markdown("""
         text-align: center;
         color: #FCA5A5;
         margin-top: 2rem;
+        font-family: 'Cairo', sans-serif;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -139,16 +144,47 @@ else:
         return module in allowed_modules if allowed_modules else False
 
     with st.sidebar:
-        # شعار النظام
+        # شعار النظام - هوية حوكمة ERP الجديدة
         st.markdown("""
-        <div style="text-align:center; padding:20px 0 10px 0;">
-            <span style="font-size:2.5rem;">🏢</span>
-            <h2 style="color:white; margin:5px 0; font-weight:700;">XD ERP</h2>
-            <p style="color:#a78bfa; font-size:0.8rem; letter-spacing:3px;">ENTERPRISE</p>
+        <div style="text-align:center; padding:25px 0 15px 0;">
+            <div style="
+                background: linear-gradient(135deg, rgba(6, 182, 212, 0.15) 0%, rgba(15, 23, 42, 0.8) 100%);
+                backdrop-filter: blur(20px);
+                -webkit-backdrop-filter: blur(20px);
+                border: 1px solid rgba(6, 182, 212, 0.25);
+                border-top: 1px solid rgba(6, 182, 212, 0.4);
+                border-radius: 24px;
+                padding: 20px 15px;
+                margin-bottom: 10px;
+                box-shadow: 0 20px 40px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.05);
+            ">
+                <span style="font-size:2.2rem; filter: drop-shadow(0 0 15px rgba(6, 182, 212, 0.5));">🏛️</span>
+                <h1 style="
+                    color: #FFFFFF;
+                    font-family: 'Cairo', sans-serif;
+                    font-size: 1.8rem;
+                    font-weight: 800;
+                    margin: 8px 0 2px 0;
+                    letter-spacing: 1px;
+                    background: linear-gradient(135deg, #FFFFFF 0%, #06B6D4 100%);
+                    -webkit-background-clip: text;
+                    -webkit-text-fill-color: transparent;
+                    text-shadow: none;
+                ">حوكمة ERP</h1>
+                <p style="
+                    color: #06B6D4;
+                    font-family: 'Cairo', sans-serif;
+                    font-size: 0.7rem;
+                    letter-spacing: 3px;
+                    font-weight: 600;
+                    margin: 0;
+                    text-transform: uppercase;
+                ">إدارة ذكية • قرارات واثقة</p>
+            </div>
         </div>
         """, unsafe_allow_html=True)
         
-        st.markdown(f"<p style='text-align:center; color:#ccc;'>أهلاً، {st.session_state.user.get('full_name', '')}</p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='text-align:center; color:#94A3B8; font-family: Cairo, sans-serif;'>أهلاً، {st.session_state.user.get('full_name', '')}</p>", unsafe_allow_html=True)
         st.divider()
 
         # المجموعة 1: الرئيسية
