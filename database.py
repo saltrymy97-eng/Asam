@@ -1,4 +1,4 @@
-# database.py - قاعدة بيانات نظام ERP كاملة (SQLite) – إصدار احترافي مع الحوكمة
+# database.py - قاعدة بيانات نظام حوكمة ERP (SQLite) – إصدار احترافي نهائي
 import sqlite3
 import bcrypt
 
@@ -252,7 +252,7 @@ def init_db():
         FOREIGN KEY (role_id) REFERENCES roles(id)
     )''')
 
-    # ========== 2. سجل التدقيق (جديد) ==========
+    # ========== سجل التدقيق (جديد) ==========
     c.execute('''CREATE TABLE IF NOT EXISTS audit_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT,
@@ -479,9 +479,12 @@ def create_default_admin():
     count = row[0] if row else 0
     if count == 0:
         try:
+            # 1. تأكد من وجود دور المدير في جدول roles
+            c.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (1, 'مدير')")
+            # 2. أنشئ المستخدم الافتراضي مع role_id=1
             hashed = bcrypt.hashpw("admin".encode(), bcrypt.gensalt())
-            c.execute("INSERT INTO users (username, password, full_name, role) VALUES (?, ?, ?, ?)",
-                      ("admin", hashed, "مدير النظام", "admin"))
+            c.execute("INSERT INTO users (username, password, full_name, role_id, role) VALUES (?, ?, ?, ?, ?)",
+                      ("admin", hashed, "مدير النظام", 1, "admin"))
             conn.commit()
         except sqlite3.IntegrityError:
             pass
