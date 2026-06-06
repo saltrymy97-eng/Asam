@@ -1,4 +1,4 @@
-# ui/payroll_ui.py – واجهة كشف الرواتب (تصميم زجاجي فخم)
+# ui/payroll_ui.py – واجهة كشف الرواتب (تصميم زجاجي فخم + حماية من التكرار)
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -97,7 +97,15 @@ def show():
             col3.metric("الخصومات", f"{conf['deductions']:,.2f}")
             st.metric("الصافي", f"{net:,.2f}")
             
-            if st.button("🚀 تشغيل الكشف وإنشاء القيد"):
+            # ✅ حماية من التكرار
+            if "saving_payroll" not in st.session_state:
+                st.session_state.saving_payroll = False
+            
+            if st.button("🚀 تشغيل الكشف وإنشاء القيد", disabled=st.session_state.saving_payroll):
+                st.session_state.saving_payroll = True
+                st.rerun()
+            
+            if st.session_state.saving_payroll:
                 net_amount, error = run_payroll(emp_id, month)
                 if error:
                     st.error(error)
@@ -109,7 +117,8 @@ def show():
                         new_value=f"الموظف: {selected}, الشهر: {month}, الصافي: {net_amount:,.2f}"
                     )
                     st.success(f"تم تشغيل كشف راتب {month} للموظف {selected}، صافي الراتب: {net_amount:,.2f} وتم إنشاء القيد المحاسبي.")
-                    st.rerun()
+                st.session_state.saving_payroll = False
+                st.rerun()
         else:
             st.warning("يرجى إعداد الراتب من التبويب الأول أولاً.")
     
