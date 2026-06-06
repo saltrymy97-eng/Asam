@@ -142,7 +142,6 @@ def render_premium_header(is_change_password=False):
     if not is_change_password:
         st.markdown(f"""
         <div style="text-align:center; margin-bottom: 3rem; margin-top: 0.5rem;">
-            <!-- حاضنة شعار XD الفاخرة -->
             <div class="executive-logo-box" style="
                 width: 140px; height: 140px; margin: 0 auto 2rem auto;
                 background: linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%);
@@ -185,7 +184,6 @@ def render_premium_header(is_change_password=False):
 def login_form():
     render_premium_header(is_change_password=False)
     
-    # شبكة محاذية متناظرة ومستقرة تماماً وعالية الاستجابة
     spacer_left, main_col, spacer_right = st.columns([1, 2.2, 1])
     
     with main_col:
@@ -196,12 +194,11 @@ def login_form():
             password = st.text_input("🔒 رمز المرور السري", type="password", placeholder="••••••••", key="login_pass")
             st.markdown("<div style='margin-bottom: 40px;'></div>", unsafe_allow_html=True)
             
-            # محاذاة أزرار التحكم التنفيذية
             col1, col2 = st.columns([1.6, 1])
             with col1:
                 login_btn = st.button("🚀 مصادقة والدخول", use_container_width=True, type="primary")
             with col2:
-                if st.button("🔑 استعادة الحساب", use_container_width=True):
+                if st.button("🔑 تغيير كلمة المرور", use_container_width=True):
                     st.session_state.show_password_change = True
                     st.rerun()
             
@@ -229,7 +226,7 @@ def password_change_form():
     
     with main_col:
         with st.container():
-            username = st.text_input("👤 الحساب المستهدف", value="admin", disabled=True, key="change_user")
+            username = st.text_input("👤 اسم المستخدم", placeholder="أدخل اسم المستخدم الخاص بك", key="change_user")
             st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
             
             old_password = st.text_input("🔓 رمز المرور السري الحالي", type="password", placeholder="الرمز الحالي", key="change_old")
@@ -244,8 +241,8 @@ def password_change_form():
             col1, col2 = st.columns([1.6, 1])
             with col1:
                 if st.button("💾 حفظ البيانات وتحديث", use_container_width=True, type="primary"):
-                    if not old_password or not new_password:
-                        st.warning("⚠️ الحقول الإلزامية فارغة.")
+                    if not username or not old_password or not new_password:
+                        st.warning("⚠️ جميع الحقول مطلوبة.")
                     elif new_password != confirm_password:
                         st.error("❌ عدم تطابق في تأكيد رمز المرور الجديد.")
                     elif len(new_password) < 4:
@@ -270,7 +267,6 @@ def show():
     if 'show_password_change' not in st.session_state:
         st.session_state.show_password_change = False
     
-    # استدعاء وبناء طبقة الواجهة فائقة الاحترافية
     apply_ultra_premium_css()
     
     if st.session_state.show_password_change:
