@@ -9,7 +9,7 @@ def create_admin_if_needed():
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM users")
     if c.fetchone()[0] == 0:
-        hashed = bcrypt.hashpw("admin5000".encode(), bcrypt.gensalt())
+        hashed = bcrypt.hashpw("admin".encode(), bcrypt.gensalt())
         c.execute(
             "INSERT INTO users (username, password, full_name, role) VALUES (?, ?, ?, ?)",
             ("admin", hashed.decode(), "مدير النظام", "admin")
@@ -57,6 +57,22 @@ def change_password(username, old_password, new_password):
     conn.commit()
     conn.close()
     return True, "تم تغيير كلمة المرور بنجاح"
+
+def create_user(username, password, full_name, role_id=None):
+    """إنشاء مستخدم جديد"""
+    conn = get_connection()
+    try:
+        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
+        conn.execute(
+            "INSERT INTO users (username, password, full_name, role_id) VALUES (?, ?, ?, ?)",
+            (username, hashed.decode(), full_name, role_id)
+        )
+        conn.commit()
+        return True, "تم إنشاء المستخدم بنجاح"
+    except sqlite3.IntegrityError:
+        return False, "اسم المستخدم موجود مسبقاً"
+    finally:
+        conn.close()
 
 def logout_session():
     """مسح جلسة المستخدم"""
