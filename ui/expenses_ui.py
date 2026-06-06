@@ -1,4 +1,4 @@
-# ui/expenses_ui.py – واجهة المصروفات التشغيلية (زجاجية فاخرة)
+# ui/expenses_ui.py – واجهة المصروفات التشغيلية (زجاجية فاخرة + حماية من التكرار)
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -65,14 +65,22 @@ def show():
         invoice_ref = st.text_input("رقم فاتورة المورد (اختياري)")
         notes = st.text_area("ملاحظات")
         
-        if st.button("💾 حفظ المصروف", type="primary"):
+        # ✅ حماية من التكرار
+        if "saving_expense" not in st.session_state:
+            st.session_state.saving_expense = False
+        
+        if st.button("💾 حفظ المصروف", type="primary", disabled=st.session_state.saving_expense):
+            st.session_state.saving_expense = True
+            st.rerun()
+        
+        if st.session_state.saving_expense:
             if amount <= 0:
                 st.error("المبلغ يجب أن يكون أكبر من صفر")
             else:
                 if payment_method == "نقدي (كاش)":
                     account_code = selected_cash.split(" - ")[0]
                 else:
-                    account_code = ""  # لا يستخدم في الآجل
+                    account_code = ""
                 
                 eid, err = create_expense(
                     expense_date.strftime("%Y-%m-%d"),
@@ -90,7 +98,8 @@ def show():
                     st.error(f"فشل: {err}")
                 else:
                     st.success(f"تم تسجيل المصروف رقم {eid}")
-                    st.rerun()
+            st.session_state.saving_expense = False
+            st.rerun()
 
     # ---------- سجل المصروفات ----------
     with tab2:
