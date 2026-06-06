@@ -1,4 +1,4 @@
-# ui/sales_ui.py – واجهة المبيعات (تصميم زجاجي فخم + دعم العملات)
+# ui/sales_ui.py – واجهة المبيعات (تصميم زجاجي فخم + دعم العملات + حماية من التكرار)
 import streamlit as st
 import pandas as pd
 from services.sales_service import (
@@ -94,22 +94,31 @@ def show():
             total_invoice = sum(item["total"] for item in st.session_state.invoice_items)
             st.markdown(f"### الإجمالي: {total_invoice:,.2f} {currency_code}")
 
-            if st.button("💾 حفظ الفاتورة", type="primary"):
-                if customer_id is None:
-                    st.error("يجب اختيار عميل")
+            # ✅ حماية من التكرار: تعطيل الزر فور الضغط
+            if "saving_sale" not in st.session_state:
+                st.session_state.saving_sale = False
+
+            save_disabled = st.session_state.saving_sale or customer_id is None
+
+            if st.button("💾 حفظ الفاتورة", type="primary", disabled=save_disabled):
+                st.session_state.saving_sale = True
+                st.rerun()
+
+            # تنفيذ الحفظ بعد إعادة التحميل
+            if st.session_state.saving_sale and not save_disabled:
+                invoice_id, total, error = create_sale_invoice(
+                    customer_id=customer_id,
+                    items=st.session_state.invoice_items,
+                    username=st.session_state.user.get('username', 'admin'),
+                    currency_code=currency_code
+                )
+                if error:
+                    st.error(f"فشل في حفظ الفاتورة: {error}")
                 else:
-                    invoice_id, total, error = create_sale_invoice(
-                        customer_id=customer_id,
-                        items=st.session_state.invoice_items,
-                        username=st.session_state.user.get('username', 'admin'),
-                        currency_code=currency_code
-                    )
-                    if error:
-                        st.error(f"فشل في حفظ الفاتورة: {error}")
-                    else:
-                        st.success(f"تم حفظ الفاتورة رقم {invoice_id} بنجاح")
-                        st.session_state.invoice_items = []
-                        st.rerun()
+                    st.success(f"تم حفظ الفاتورة رقم {invoice_id} بنجاح")
+                    st.session_state.invoice_items = []
+                st.session_state.saving_sale = False
+                st.rerun()
 
             if st.button("🗑️ مسح جميع البنود"):
                 st.session_state.invoice_items = []
