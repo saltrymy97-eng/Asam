@@ -159,10 +159,11 @@ def render_premium_header(is_change_password=False):
                     letter-spacing: 2px; display: inline-block;
                 ">حوكمة</span>
             </div>
-            <h1 style="color:{T}; font-size: 3rem; margin: 0; font-weight: 900; letter-spacing: 4px;">حوكمة ERP</h1>
-            <p style="color:#a78bfa; margin-top: 0.9rem; font-size: 1rem; letter-spacing: 2px; font-weight: 600;">
-                إدارة ذكية • قرارات واثقة
+            <!-- الشعار الفرعي الجذاب بتصميم مميز -->
+            <p style="color:{S}; margin-top: 0.9rem; font-size: 1.2rem; letter-spacing: 2px; font-weight: 600;">
+                إدارة <span style="color:#A78BFA; font-weight:700;">ذكية</span> .. قرارات <span style="color:#60A5FA; font-weight:700;">واثقة</span>
             </p>
+            <div style="width: 220px; height: 1px; background: linear-gradient(90deg, transparent, #A78BFA, transparent); margin: 0.6rem auto 0 auto;"></div>
         </div>
         """, unsafe_allow_html=True)
     else:
