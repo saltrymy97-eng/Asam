@@ -99,11 +99,9 @@ def get_chat_sessions():
 
 # ===================== ذاكرة المحادثة (Memory Compression) =====================
 def compress_chat_memory(session_id, model="llama-3.3-70b-versatile"):
-    """تلخيص آخر محادثة إلى جملة سياقية واحدة لتوفير الذاكرة"""
     history = get_chat_history(session_id, limit=10)
     if not history:
         return ""
-    # ترتيب تصاعدي حسب الزمن لتكوين حوار مفهوم
     history_sorted = sorted(history, key=lambda x: x['timestamp'])
     dialogue = "\n".join([f"{h['role']}: {h['content']}" for h in history_sorted])
     prompt = f"""لخص الحوار التالي في جملة واحدة بالعربية تصف الموضوع الرئيسي والنتيجة:
@@ -116,7 +114,6 @@ def compress_chat_memory(session_id, model="llama-3.3-70b-versatile"):
 
 # ===================== التحقق من صحة البيانات (Validation) =====================
 def validate_financial_snapshot(snap):
-    """التحقق من القيم المالية وإرجاع رسائل تحذير إن وجدت"""
     warnings = []
     if snap['revenue'] < 0:
         warnings.append("الإيرادات سالبة – تحقق من ترحيل حسابات الإيرادات.")
@@ -193,13 +190,13 @@ def get_business_snapshot():
     conn = get_conn()
     top_customers = [dict(r) for r in conn.execute("""
         SELECT c.name, COUNT(i.id) as invoice_count, SUM(i.total) as total
-        FROM invoices i JOIN customers c ON i.party_id = c.id
+        FROM invoices i JOIN customers c ON i.customer_id = c.id
         WHERE i.type='sale' AND i.status='completed'
         GROUP BY c.id ORDER BY total DESC LIMIT 5
     """).fetchall()]
     top_suppliers = [dict(r) for r in conn.execute("""
         SELECT s.name, COUNT(i.id) as invoice_count, SUM(i.total) as total
-        FROM invoices i JOIN suppliers s ON i.party_id = s.id
+        FROM invoices i JOIN suppliers s ON i.supplier_id = s.id
         WHERE i.type='purchase' AND i.status='completed'
         GROUP BY s.id ORDER BY total DESC LIMIT 5
     """).fetchall()]
@@ -268,7 +265,6 @@ def get_cost_center_snapshot():
     return summary
 
 def build_ai_context(include_cost_centers=True):
-    """تجميع جميع الملخصات في كائن واحد (مع تحديث اختياري لذاكرة المحادثة)"""
     ctx = {
         "financial": get_financial_snapshot(),
         "inventory": get_inventory_snapshot(),
@@ -326,7 +322,7 @@ def get_top_customers(limit=5):
     conn = get_conn()
     customers = conn.execute("""
         SELECT c.name, COUNT(i.id) as invoice_count, SUM(i.total) as total
-        FROM invoices i JOIN customers c ON i.party_id = c.id
+        FROM invoices i JOIN customers c ON i.customer_id = c.id
         WHERE i.type='sale' AND i.status='completed'
         GROUP BY c.id ORDER BY total DESC LIMIT ?
     """, (limit,)).fetchall()
@@ -337,7 +333,7 @@ def get_top_suppliers(limit=5):
     conn = get_conn()
     suppliers = conn.execute("""
         SELECT s.name, COUNT(i.id) as invoice_count, SUM(i.total) as total
-        FROM invoices i JOIN suppliers s ON i.party_id = s.id
+        FROM invoices i JOIN suppliers s ON i.supplier_id = s.id
         WHERE i.type='purchase' AND i.status='completed'
         GROUP BY s.id ORDER BY total DESC LIMIT ?
     """, (limit,)).fetchall()
