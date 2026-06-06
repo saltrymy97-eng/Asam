@@ -13,6 +13,16 @@ create_default_currencies()
 from ui.auth_ui import show as auth_show
 from services.auth_service import logout_session
 
+# استيراد وحدات الصلاحيات
+from services.roles_service import (
+    seed_default_roles,
+    check_permission,
+    get_allowed_modules
+)
+
+# تهيئة الأدوار والصلاحيات الافتراضية
+seed_default_roles()
+
 # استيراد جميع الوحدات
 from ui.dashboard_ui import show as dashboard_show
 from ui.inventory_ui import show as inventory_show
@@ -23,7 +33,7 @@ from ui.returns import show as returns_show
 from ui.receipts_ui import show as receipts_show
 from ui.expenses_ui import show as expenses_show
 from ui.opening_balances_ui import show as opening_show
-from ui.currency_revaluation_ui import show as revaluation_show  # 🆕 فروق أسعار الصرف
+from ui.currency_revaluation_ui import show as revaluation_show
 from ui.accounting_ui import show as accounting_show
 from ui.chart_ui import show as chart_show
 from ui.financial_ui import show as financial_show
@@ -94,6 +104,15 @@ st.markdown("""
         background: rgba(239, 68, 68, 0.4);
         color: white;
     }
+    .permission-denied {
+        background: rgba(239, 68, 68, 0.1);
+        border: 1px solid #EF4444;
+        border-radius: 16px;
+        padding: 2rem;
+        text-align: center;
+        color: #FCA5A5;
+        margin-top: 2rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -107,6 +126,18 @@ if 'current_page' not in st.session_state:
 if not st.session_state.logged_in:
     auth_show()
 else:
+    username = st.session_state.user.get('username', '')
+    # المدير يرى كل شيء
+    if username == 'admin':
+        allowed_modules = None  # None يعني كل الوحدات
+    else:
+        allowed_modules = get_allowed_modules(username)
+
+    def can_access(module):
+        if username == 'admin':
+            return True
+        return module in allowed_modules if allowed_modules else False
+
     with st.sidebar:
         # شعار النظام
         st.markdown("""
@@ -129,57 +160,57 @@ else:
         st.markdown('<div class="menu-section">📦 العمليات</div>', unsafe_allow_html=True)
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("🛒 مبيعات", key="sales"): st.session_state.current_page = "المبيعات"
-            if st.button("📋 مشتريات", key="purchases"): st.session_state.current_page = "المشتريات"
-            if st.button("🔄 مرتجعات", key="returns"): st.session_state.current_page = "مرتجعات البضاعة"
-            if st.button("💵 سندات قبض/صرف", key="receipts"): st.session_state.current_page = "سندات القبض والصرف"
+            if can_access("المبيعات") and st.button("🛒 مبيعات", key="sales"): st.session_state.current_page = "المبيعات"
+            if can_access("المشتريات") and st.button("📋 مشتريات", key="purchases"): st.session_state.current_page = "المشتريات"
+            if can_access("مرتجعات البضاعة") and st.button("🔄 مرتجعات", key="returns"): st.session_state.current_page = "مرتجعات البضاعة"
+            if can_access("سندات القبض والصرف") and st.button("💵 سندات قبض/صرف", key="receipts"): st.session_state.current_page = "سندات القبض والصرف"
         with col2:
-            if st.button("📦 مخزون", key="inventory"): st.session_state.current_page = "المخزون"
-            if st.button("📦 تسويات مخزنية", key="adjustments"): st.session_state.current_page = "التسويات المخزنية"
-            if st.button("🧾 مصروفات", key="expenses"): st.session_state.current_page = "المصروفات"
-            if st.button("👥 CRM", key="crm"): st.session_state.current_page = "إدارة العملاء"
+            if can_access("المخزون") and st.button("📦 مخزون", key="inventory"): st.session_state.current_page = "المخزون"
+            if can_access("التسويات المخزنية") and st.button("📦 تسويات مخزنية", key="adjustments"): st.session_state.current_page = "التسويات المخزنية"
+            if can_access("المصروفات") and st.button("🧾 مصروفات", key="expenses"): st.session_state.current_page = "المصروفات"
+            if can_access("إدارة العملاء") and st.button("👥 CRM", key="crm"): st.session_state.current_page = "إدارة العملاء"
 
         # المجموعة 3: المحاسبة والمالية
         st.markdown('<div class="menu-section">💰 المحاسبة والمالية</div>', unsafe_allow_html=True)
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("🧾 حسابات", key="accounting"): st.session_state.current_page = "الحسابات"
-            if st.button("🌳 شجرة الحسابات", key="chart"): st.session_state.current_page = "شجرة الحسابات"
-            if st.button("📈 قوائم مالية", key="financial"): st.session_state.current_page = "القوائم المالية"
-            if st.button("🏢 مراكز تكلفة", key="cost_center"): st.session_state.current_page = "مراكز التكلفة"
-            if st.button("💱 عملات", key="currency"): st.session_state.current_page = "العملات"
-            if st.button("📋 أرصدة افتتاحية", key="opening"): st.session_state.current_page = "الأرصدة الافتتاحية"
+            if can_access("الحسابات") and st.button("🧾 حسابات", key="accounting"): st.session_state.current_page = "الحسابات"
+            if can_access("شجرة الحسابات") and st.button("🌳 شجرة الحسابات", key="chart"): st.session_state.current_page = "شجرة الحسابات"
+            if can_access("القوائم المالية") and st.button("📈 قوائم مالية", key="financial"): st.session_state.current_page = "القوائم المالية"
+            if can_access("مراكز التكلفة") and st.button("🏢 مراكز تكلفة", key="cost_center"): st.session_state.current_page = "مراكز التكلفة"
+            if can_access("العملات") and st.button("💱 عملات", key="currency"): st.session_state.current_page = "العملات"
+            if can_access("الأرصدة الافتتاحية") and st.button("📋 أرصدة افتتاحية", key="opening"): st.session_state.current_page = "الأرصدة الافتتاحية"
         with col2:
-            if st.button("🏦 بنوك", key="bank"): st.session_state.current_page = "التعاملات البنكية"
-            if st.button("🧾 ضريبة", key="vat"): st.session_state.current_page = "الضريبة"
-            if st.button("🔒 إغلاق حسابات", key="closing"): st.session_state.current_page = "إغلاق الحسابات"
-            if st.button("📅 إغلاق فترات", key="period"): st.session_state.current_page = "إغلاق الفترات"
-            if st.button("📊 FIFO", key="fifo"): st.session_state.current_page = "FIFO المخزون"
-            if st.button("💱 تقييم عملات", key="revaluation"): st.session_state.current_page = "تقييم العملات"  # 🆕
+            if can_access("التعاملات البنكية") and st.button("🏦 بنوك", key="bank"): st.session_state.current_page = "التعاملات البنكية"
+            if can_access("الضريبة") and st.button("🧾 ضريبة", key="vat"): st.session_state.current_page = "الضريبة"
+            if can_access("إغلاق الحسابات") and st.button("🔒 إغلاق حسابات", key="closing"): st.session_state.current_page = "إغلاق الحسابات"
+            if can_access("إغلاق الفترات") and st.button("📅 إغلاق فترات", key="period"): st.session_state.current_page = "إغلاق الفترات"
+            if can_access("FIFO المخزون") and st.button("📊 FIFO", key="fifo"): st.session_state.current_page = "FIFO المخزون"
+            if can_access("تقييم العملات") and st.button("💱 تقييم عملات", key="revaluation"): st.session_state.current_page = "تقييم العملات"
 
         # المجموعة 4: إدارة الأعمال
         st.markdown('<div class="menu-section">👥 إدارة الأعمال</div>', unsafe_allow_html=True)
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("👔 موارد بشرية", key="hr"): st.session_state.current_page = "الموارد البشرية"
-            if st.button("💰 رواتب", key="payroll"): st.session_state.current_page = "كشف الرواتب"
+            if can_access("الموارد البشرية") and st.button("👔 موارد بشرية", key="hr"): st.session_state.current_page = "الموارد البشرية"
+            if can_access("كشف الرواتب") and st.button("💰 رواتب", key="payroll"): st.session_state.current_page = "كشف الرواتب"
         with col2:
-            if st.button("🏗️ أصول ثابتة", key="assets"): st.session_state.current_page = "الأصول الثابتة"
-            if st.button("📎 مرفقات", key="attachments"): st.session_state.current_page = "المرفقات"
+            if can_access("الأصول الثابتة") and st.button("🏗️ أصول ثابتة", key="assets"): st.session_state.current_page = "الأصول الثابتة"
+            if can_access("المرفقات") and st.button("📎 مرفقات", key="attachments"): st.session_state.current_page = "المرفقات"
 
         # المجموعة 5: النظام والأمان
         st.markdown('<div class="menu-section">⚙️ النظام والأمان</div>', unsafe_allow_html=True)
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("🛡️ صلاحيات", key="roles"): st.session_state.current_page = "الصلاحيات"
-            if st.button("📋 سجل تدقيق", key="audit"): st.session_state.current_page = "سجل التدقيق"
+            if can_access("الصلاحيات") and st.button("🛡️ صلاحيات", key="roles"): st.session_state.current_page = "الصلاحيات"
+            if can_access("سجل التدقيق") and st.button("📋 سجل تدقيق", key="audit"): st.session_state.current_page = "سجل التدقيق"
         with col2:
-            if st.button("💾 نسخ احتياطي", key="backup"): st.session_state.current_page = "نسخ احتياطي"
-            if st.button("📄 تقارير HTML", key="pdf"): st.session_state.current_page = "تقارير HTML"
+            if can_access("نسخ احتياطي") and st.button("💾 نسخ احتياطي", key="backup"): st.session_state.current_page = "نسخ احتياطي"
+            if can_access("تقارير HTML") and st.button("📄 تقارير HTML", key="pdf"): st.session_state.current_page = "تقارير HTML"
 
         # المجموعة 6: الذكاء الاصطناعي
         st.markdown('<div class="menu-section">🤖 الذكاء الاصطناعي</div>', unsafe_allow_html=True)
-        if st.button("🧠 المساعد الذكي", key="ai"):
+        if can_access("المساعد الذكي") and st.button("🧠 المساعد الذكي", key="ai"):
             st.session_state.current_page = "المساعد الذكي"
 
         st.divider()
@@ -187,35 +218,48 @@ else:
         if st.button("🚪 تسجيل الخروج", key="logout", help="تسجيل الخروج من النظام"):
             logout_session()
 
-    # ========== توجيه الصفحات ==========
+    # ========== توجيه الصفحات مع التحقق من الصلاحية ==========
     page = st.session_state.current_page
+
+    # دوال عرض مخصصة مع التحقق
+    def show_if_permitted(module, show_func):
+        if can_access(module):
+            show_func()
+        else:
+            st.markdown(f"""
+            <div class="permission-denied">
+                <h2>⛔ غير مصرح</h2>
+                <p>ليس لديك صلاحية للوصول إلى وحدة "{module}".</p>
+            </div>
+            """, unsafe_allow_html=True)
+
     if page == "لوحة المعلومات": dashboard_show()
-    elif page == "المخزون": inventory_show()
-    elif page == "التسويات المخزنية": inventory_adjustment_show()
-    elif page == "المبيعات": sales_show()
-    elif page == "المشتريات": purchases_show()
-    elif page == "مرتجعات البضاعة": returns_show()
-    elif page == "سندات القبض والصرف": receipts_show()
-    elif page == "المصروفات": expenses_show()
-    elif page == "الأرصدة الافتتاحية": opening_show()
-    elif page == "تقييم العملات": revaluation_show()  # 🆕
-    elif page == "الحسابات": accounting_show()
-    elif page == "الموارد البشرية": hr_show()
-    elif page == "إدارة العملاء": crm_show()
-    elif page == "الأصول الثابتة": assets_show()
-    elif page == "شجرة الحسابات": chart_show()
-    elif page == "القوائم المالية": financial_show()
-    elif page == "العملات": currency_show()
-    elif page == "التعاملات البنكية": bank_show()
-    elif page == "مراكز التكلفة": cost_center_show()
-    elif page == "المرفقات": attachment_show()
-    elif page == "الصلاحيات": roles_show()
-    elif page == "إغلاق الفترات": period_show()
-    elif page == "إغلاق الحسابات": closing_show()
-    elif page == "FIFO المخزون": fifo_show()
-    elif page == "كشف الرواتب": payroll_show()
-    elif page == "الضريبة": vat_show()
-    elif page == "المساعد الذكي": ai_show()
-    elif page == "سجل التدقيق": audit_show()
-    elif page == "نسخ احتياطي": backup_show()
-    elif page == "تقارير HTML": pdf_show()
+    elif page == "المخزون": show_if_permitted("المخزون", inventory_show)
+    elif page == "التسويات المخزنية": show_if_permitted("التسويات المخزنية", inventory_adjustment_show)
+    elif page == "المبيعات": show_if_permitted("المبيعات", sales_show)
+    elif page == "المشتريات": show_if_permitted("المشتريات", purchases_show)
+    elif page == "مرتجعات البضاعة": show_if_permitted("مرتجعات البضاعة", returns_show)
+    elif page == "سندات القبض والصرف": show_if_permitted("سندات القبض والصرف", receipts_show)
+    elif page == "المصروفات": show_if_permitted("المصروفات", expenses_show)
+    elif page == "الأرصدة الافتتاحية": show_if_permitted("الأرصدة الافتتاحية", opening_show)
+    elif page == "تقييم العملات": show_if_permitted("تقييم العملات", revaluation_show)
+    elif page == "الحسابات": show_if_permitted("الحسابات", accounting_show)
+    elif page == "الموارد البشرية": show_if_permitted("الموارد البشرية", hr_show)
+    elif page == "إدارة العملاء": show_if_permitted("إدارة العملاء", crm_show)
+    elif page == "الأصول الثابتة": show_if_permitted("الأصول الثابتة", assets_show)
+    elif page == "شجرة الحسابات": show_if_permitted("شجرة الحسابات", chart_show)
+    elif page == "القوائم المالية": show_if_permitted("القوائم المالية", financial_show)
+    elif page == "العملات": show_if_permitted("العملات", currency_show)
+    elif page == "التعاملات البنكية": show_if_permitted("التعاملات البنكية", bank_show)
+    elif page == "مراكز التكلفة": show_if_permitted("مراكز التكلفة", cost_center_show)
+    elif page == "المرفقات": show_if_permitted("المرفقات", attachment_show)
+    elif page == "الصلاحيات": show_if_permitted("الصلاحيات", roles_show)
+    elif page == "إغلاق الفترات": show_if_permitted("إغلاق الفترات", period_show)
+    elif page == "إغلاق الحسابات": show_if_permitted("إغلاق الحسابات", closing_show)
+    elif page == "FIFO المخزون": show_if_permitted("FIFO المخزون", fifo_show)
+    elif page == "كشف الرواتب": show_if_permitted("كشف الرواتب", payroll_show)
+    elif page == "الضريبة": show_if_permitted("الضريبة", vat_show)
+    elif page == "المساعد الذكي": show_if_permitted("المساعد الذكي", ai_show)
+    elif page == "سجل التدقيق": show_if_permitted("سجل التدقيق", audit_show)
+    elif page == "نسخ احتياطي": show_if_permitted("نسخ احتياطي", backup_show)
+    elif page == "تقارير HTML": show_if_permitted("تقارير HTML", pdf_show)
