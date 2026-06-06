@@ -1,4 +1,4 @@
-# ui/inventory_adjustment_ui.py – واجهة التسويات المخزنية والجرد (تصميم زجاجي فخم)
+# ui/inventory_adjustment_ui.py – واجهة التسويات المخزنية والجرد (تصميم زجاجي فخم + حماية من التكرار)
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -91,7 +91,6 @@ def show():
                 
                 difference = actual_qty - product['quantity']
                 
-                # عرض الفرق بشكل واضح
                 if difference > 0:
                     st.markdown(f"""
                     <div style="background:rgba(16,185,129,0.1); border:1px solid {GR}; 
@@ -135,7 +134,15 @@ def show():
                     </div>
                     """, unsafe_allow_html=True)
                     
-                    if st.button("💾 حفظ التسوية", type="primary", use_container_width=True, key="save_adj"):
+                    # ✅ حماية من التكرار
+                    if "saving_adjustment" not in st.session_state:
+                        st.session_state.saving_adjustment = False
+                    
+                    if st.button("💾 حفظ التسوية", type="primary", use_container_width=True, key="save_adj", disabled=st.session_state.saving_adjustment):
+                        st.session_state.saving_adjustment = True
+                        st.rerun()
+                    
+                    if st.session_state.saving_adjustment:
                         unit_cost = unit_cost_input if unit_cost_input > 0 else None
                         adj_id, err = create_adjustment(
                             product_id=product['id'],
@@ -151,7 +158,8 @@ def show():
                             st.error(f"فشل: {err}")
                         else:
                             st.success(f"تم تسجيل التسوية رقم {adj_id}")
-                            st.rerun()
+                        st.session_state.saving_adjustment = False
+                        st.rerun()
                 else:
                     st.info("الكمية الفعلية تطابق المتوقعة، لا حاجة لتسوية")
             
@@ -195,7 +203,6 @@ def show():
                              'الإجمالي': st.column_config.NumberColumn(format='%.2f')
                          })
             
-            # مؤشرات إحصائية
             total_faed = df[df['difference'] > 0]['total_cost'].sum()
             total_ajz = df[abs(df['difference']) > 0][df['difference'] < 0]['total_cost'].sum()
             
