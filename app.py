@@ -1,269 +1,275 @@
-# app.py - نقطة الدخول الرئيسية لنظام حوكمة ERP
+# ui/auth_ui.py - بوابة الدخول الفاخرة لنظام حوكمة ERP
 import streamlit as st
-import database
-
-# تهيئة قاعدة البيانات
-database.init_db()
-database.create_default_admin()
-
-# 🆕 تهيئة العملات الافتراضية (يجب أن تكون قبل استيراد الوحدات التي تستخدمها)
-from services.currency_service import create_default_currencies
-create_default_currencies()
-
-# استيراد وحدات المصادقة
-from ui.auth_ui import show as auth_show
-from services.auth_service import logout_session
-
-# استيراد وحدات الصلاحيات
-from services.roles_service import (
-    seed_default_roles,
-    check_permission,
-    get_allowed_modules
+from database import init_db
+from services.auth_service import (
+    create_admin_if_needed,
+    verify_user,
+    change_password,
+    logout_session
 )
 
-# تهيئة الأدوار والصلاحيات الافتراضية
-seed_default_roles()
+# ========== لوحة ألوان النخبة والفخامة المطلقة (النسخة السماوية الزجاجية) ==========
+T = "#F8FAFC"        # أبيض بلاتيني ناصع للنصوص القيادية
+S = "#94A3B8"        # رمادي فضي خافت للنصوص الثانوية
+PR = "#00d2ff"       # سماوي نيون (Neon Cyan)
+BL = "#0052d4"       # أزرق محيطي (Ocean Blue)
+BG_CORE = "#020617"  # أسود بركاني عميق للخلفية الأساسية
 
-# استيراد جميع الوحدات
-from ui.dashboard_ui import show as dashboard_show
-from ui.inventory_ui import show as inventory_show
-from ui.inventory_adjustment_ui import show as inventory_adjustment_show
-from ui.sales_ui import show as sales_show
-from ui.purchases_ui import show as purchases_show
-from ui.returns import show as returns_show
-from ui.receipts_ui import show as receipts_show
-from ui.expenses_ui import show as expenses_show
-from ui.opening_balances_ui import show as opening_show
-from ui.currency_revaluation_ui import show as revaluation_show
-from ui.accounting_ui import show as accounting_show
-from ui.chart_ui import show as chart_show
-from ui.financial_ui import show as financial_show
-from ui.cost_center_ui import show as cost_center_show
-from ui.currency_ui import show as currency_show
-from ui.bank_ui import show as bank_show
-from ui.vat_ui import show as vat_show
-from ui.closing_ui import show as closing_show
-from ui.period_ui import show as period_show
-from ui.fifo_ui import show as fifo_show
-from ui.crm_ui import show as crm_show
-from ui.hr_ui import show as hr_show
-from ui.assets_ui import show as assets_show
-from ui.attachment_ui import show as attachment_show
-from ui.payroll_ui import show as payroll_show
-from ui.roles_ui import show as roles_show
-from ui.audit_log import show as audit_show
-from ui.backup import show as backup_show
-from ui.pdf_reports import show as pdf_show
-from ui.ai_ui import show as ai_show
+def apply_ultra_premium_css():
+    """حقن نظام التصميم السيادي والـ Cyan Glassmorphism لصفحة الدخول"""
+    st.markdown(f"""
+    <style>
+        /* 1. خلفية كونية متحركة بنعومة متناهية دون تشتيت */
+        @keyframes subtleOrbit {{
+            0% {{ background-position: 0% 50%; }}
+            50% {{ background-position: 100% 50%; }}
+            100% {{ background-position: 0% 50%; }}
+        }}
+        .stApp {{
+            background: radial-gradient(circle at top right, #081229 0%, #030814 60%, {BG_CORE} 100%) !important;
+            background-size: 200% 200% !important;
+            animation: subtleOrbit 25s ease infinite !important;
+            background-attachment: fixed !important;
+        }}
 
-# تغيير اسم النظام في المتصفح
-st.set_page_config(page_title="حوكمة ERP", layout="wide")
+        /* 🧹 تطهير تام للواجهة لمنع قفزات العناصر أو الفراغات الهيكلية */
+        div[data-testid="stVerticalBlock"] > div:empty,
+        div[data-testid="stHorizontalBlock"] > div:empty,
+        div[data-testid="element-container"]:empty,
+        div[data-testid="stMarkdownContainer"]:empty {{
+            display: none !important;
+            height: 0px !important;
+            margin: 0px !important;
+            padding: 0px !important;
+        }}
 
-# ========== تصميم القائمة الجانبية الفاخرة (اللون السماوي الزجاجي) ==========
-st.markdown("""
-<style>
-    [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, rgba(15, 23, 42, 0.95) 0%, rgba(8, 14, 25, 0.98) 100%);
-        backdrop-filter: blur(20px);
-        border-right: 1px solid rgba(0, 210, 255, 0.15);
-    }
-    .menu-section {
-        margin: 15px 10px 5px 10px;
-        padding: 8px 12px;
-        border-radius: 12px;
-        background: rgba(255,255,255,0.03);
-        font-size: 0.75rem;
-        font-weight: 700;
-        letter-spacing: 2px;
-        color: #00d2ff; /* لون سماوي نيون */
-        text-transform: uppercase;
-    }
-    .stButton > button {
-        width: 100%;
-        background: rgba(255,255,255,0.05);
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 12px;
-        color: #ddd;
-        text-align: right;
-        padding: 10px 15px;
-        font-size: 0.95rem;
-        transition: all 0.3s ease;
-        margin-bottom: 3px;
-    }
-    .stButton > button:hover {
-        background: rgba(0, 210, 255, 0.15); /* خلفية سماوية شفافة عند اللمس */
-        border-color: #00d2ff; /* إطار سماوي */
-        color: white;
-        box-shadow: 0 0 10px rgba(0, 210, 255, 0.2); /* توهج زجاجي سماوي */
-        transform: translateX(-5px);
-    }
-    .logout-btn > button {
-        background: rgba(239, 68, 68, 0.2);
-        border-color: rgba(239, 68, 68, 0.4);
-        color: #fca5a5;
-        margin-top: 20px;
-    }
-    .logout-btn > button:hover {
-        background: rgba(239, 68, 68, 0.4);
-        color: white;
-        box-shadow: 0 0 10px rgba(239, 68, 68, 0.2);
-    }
-    .permission-denied {
-        background: rgba(239, 68, 68, 0.1);
-        border: 1px solid #EF4444;
-        border-radius: 16px;
-        padding: 2rem;
-        text-align: center;
-        color: #FCA5A5;
-        margin-top: 2rem;
-    }
-</style>
-""", unsafe_allow_html=True)
+        /* 2. حاوية الزجاج البركاني (Obsidian Luxury Card) */
+        div[data-testid="stVerticalBlock"] > div > div > div[data-testid="stVerticalBlock"] {{
+            background: linear-gradient(145deg, rgba(15, 23, 42, 0.55) 0%, rgba(8, 13, 24, 0.75) 100%) !important;
+            backdrop-filter: blur(50px) saturate(160%) !important;
+            -webkit-backdrop-filter: blur(50px) saturate(160%) !important;
+            border: 1px solid rgba(0, 210, 255, 0.08) !important;
+            border-top: 1px solid rgba(0, 210, 255, 0.20) !important;
+            border-radius: 40px !important;
+            padding: 4rem 3.5rem !important;
+            box-shadow: 0 50px 100px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(0, 210, 255, 0.05) !important;
+        }}
 
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
-if 'user' not in st.session_state:
-    st.session_state.user = None
-if 'current_page' not in st.session_state:
-    st.session_state.current_page = "لوحة المعلومات"
+        /* 3. حقول الإدخال الأنيقة والذكية */
+        div[data-baseweb="input"] {{
+            background: rgba(3, 7, 18, 0.5) !important;
+            border: 1px solid rgba(255, 255, 255, 0.06) !important;
+            border-radius: 20px !important;
+            padding: 10px 18px !important;
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1) !important;
+        }}
+        div[data-baseweb="input"]:focus-within {{
+            background: rgba(0, 0, 0, 0.7) !important;
+            border-color: rgba(0, 210, 255, 0.6) !important;
+            box-shadow: 0 0 0 1px rgba(0, 210, 255, 0.6), 0 20px 40px rgba(0,0,0,0.5) !important;
+            transform: translateY(-2px);
+        }}
+        div[data-baseweb="input"] input {{
+            background: transparent !important;
+            color: {T} !important;
+            font-size: 1.15rem !important;
+            font-weight: 500 !important;
+        }}
+        div[data-baseweb="input"] input::placeholder {{
+            color: rgba(255, 255, 255, 0.15) !important;
+        }}
 
-if not st.session_state.logged_in:
-    auth_show()
-else:
-    username = st.session_state.user.get('username', '')
-    # المدير يرى كل شيء
-    if username == 'admin':
-        allowed_modules = None  # None يعني كل الوحدات
-    else:
-        allowed_modules = get_allowed_modules(username)
+        /* عناوين الحقول السلوكية */
+        .stTextInput label p {{
+            color: {S} !important;
+            font-size: 0.92rem !important;
+            font-weight: 700 !important;
+            letter-spacing: 0.5px !important;
+            margin-bottom: 12px !important;
+            text-transform: uppercase;
+        }}
 
-    def can_access(module):
-        if username == 'admin':
-            return True
-        return module in allowed_modules if allowed_modules else False
+        /* 4. زر الدخول التنفيذي المتدرج (Executive Call-to-Action) */
+        button[kind="primary"] {{
+            background: linear-gradient(135deg, {PR} 0%, {BL} 100%) !important;
+            border: none !important;
+            font-weight: 800 !important;
+            font-size: 1.15rem !important;
+            letter-spacing: 0.5px !important;
+            padding: 22px 28px !important;
+            border-radius: 20px !important;
+            color: white !important;
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1) !important;
+            box-shadow: 0 15px 30px -5px rgba(0, 210, 255, 0.4), inset 0 -3px 0 rgba(0,0,0,0.15) !important;
+        }}
+        button[kind="primary"]:hover {{
+            transform: translateY(-4px) !important;
+            box-shadow: 0 25px 50px -10px rgba(0, 210, 255, 0.6), inset 0 -3px 0 rgba(0,0,0,0.15) !important;
+            filter: brightness(1.1) !important;
+        }}
 
-    with st.sidebar:
-        # شعار النظام الجديد
-        st.markdown("""
-        <div style="text-align:center; padding:20px 0 10px 0;">
-            <span style="font-size:2.5rem;">🏢</span>
-            <h2 style="color:white; margin:5px 0; font-weight:700;">حوكمة ERP</h2>
-            <p style="color:#00d2ff; font-size:0.8rem; letter-spacing:3px;">ENTERPRISE</p>
+        /* 5. الزر الثانوي المحيد والمعزز */
+        button[kind="secondary"] {{
+            background: rgba(255, 255, 255, 0.02) !important;
+            border: 1px solid rgba(255, 255, 255, 0.05) !important;
+            color: {S} !important;
+            font-weight: 700 !important;
+            font-size: 1rem !important;
+            border-radius: 20px !important;
+            padding: 22px 28px !important;
+            transition: all 0.4s ease !important;
+        }}
+        button[kind="secondary"]:hover {{
+            background: rgba(255, 255, 255, 0.06) !important;
+            color: {T} !important;
+            border-color: rgba(0, 210, 255, 0.3) !important;
+            transform: translateY(-2px);
+        }}
+
+        /* 6. تأثير النبض الضوئي المستقر للشعار */
+        @keyframes executiveGlow {{
+            0%, 100% {{ filter: drop-shadow(0 0 30px rgba(0, 210, 255, 0.3)); transform: translateY(0); }}
+            50% {{ filter: drop-shadow(0 0 50px rgba(0, 82, 212, 0.45)); transform: translateY(-4px); }}
+        }}
+        .executive-logo-box {{
+            animation: executiveGlow 6s ease-in-out infinite;
+        }}
+    </style>
+    """, unsafe_allow_html=True)
+
+def render_premium_header(is_change_password=False):
+    """توليد الهيدر التنفيذي الفاخر وتثبيت شعار حوكمة ERP الأيقوني"""
+    if not is_change_password:
+        st.markdown(f"""
+        <div style="text-align:center; margin-bottom: 3rem; margin-top: 0.5rem;">
+            <div class="executive-logo-box" style="
+                width: 140px; height: 140px; margin: 0 auto 2rem auto;
+                background: linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%);
+                backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px);
+                border: 1px solid rgba(0, 210, 255, 0.15); 
+                border-top: 1px solid rgba(0, 210, 255, 0.4);
+                border-radius: 38px;
+                display: flex; align-items: center; justify-content: center;
+                box-shadow: inset 0 0 25px rgba(0, 210, 255, 0.15);
+            ">
+                <span style="font-size: 3.2rem; font-weight: 950; 
+                    background: linear-gradient(135deg, #FFFFFF 20%, #00d2ff 70%, #0052d4 100%);
+                    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+                    letter-spacing: -1px; display: inline-block; padding-right: 2px;
+                ">ERP</span>
+            </div>
+            <h1 style="color:{T}; font-size: 3rem; margin: 0; font-weight: 900; letter-spacing: 2px;">نظام حوكمة</h1>
+            <p style="color:{S}; margin-top: 0.9rem; font-size: 1.05rem; letter-spacing: 3px; font-weight: 500; text-transform: uppercase;">
+                بوابة الوصول الآمن والموثوق
+            </p>
         </div>
         """, unsafe_allow_html=True)
-        
-        st.markdown(f"<p style='text-align:center; color:#ccc;'>أهلاً، {st.session_state.user.get('full_name', '')}</p>", unsafe_allow_html=True)
-        st.divider()
-
-        # المجموعة 1: الرئيسية
-        st.markdown('<div class="menu-section">🏠 الرئيسية</div>', unsafe_allow_html=True)
-        if st.button("📊 لوحة المعلومات", key="dashboard"):
-            st.session_state.current_page = "لوحة المعلومات"
-
-        # المجموعة 2: العمليات
-        st.markdown('<div class="menu-section">📦 العمليات</div>', unsafe_allow_html=True)
-        col1, col2 = st.columns(2)
-        with col1:
-            if can_access("المبيعات") and st.button("🛒 مبيعات", key="sales"): st.session_state.current_page = "المبيعات"
-            if can_access("المشتريات") and st.button("📋 مشتريات", key="purchases"): st.session_state.current_page = "المشتريات"
-            if can_access("مرتجعات البضاعة") and st.button("🔄 مرتجعات", key="returns"): st.session_state.current_page = "مرتجعات البضاعة"
-            if can_access("سندات القبض والصرف") and st.button("💵 سندات قبض/صرف", key="receipts"): st.session_state.current_page = "سندات القبض والصرف"
-        with col2:
-            if can_access("المخزون") and st.button("📦 مخزون", key="inventory"): st.session_state.current_page = "المخزون"
-            if can_access("التسويات المخزنية") and st.button("📦 تسويات مخزنية", key="adjustments"): st.session_state.current_page = "التسويات المخزنية"
-            if can_access("المصروفات") and st.button("🧾 مصروفات", key="expenses"): st.session_state.current_page = "المصروفات"
-            if can_access("إدارة العملاء") and st.button("👥 CRM", key="crm"): st.session_state.current_page = "إدارة العملاء"
-
-        # المجموعة 3: المحاسبة والمالية
-        st.markdown('<div class="menu-section">💰 المحاسبة والمالية</div>', unsafe_allow_html=True)
-        col1, col2 = st.columns(2)
-        with col1:
-            if can_access("الحسابات") and st.button("🧾 حسابات", key="accounting"): st.session_state.current_page = "الحسابات"
-            if can_access("شجرة الحسابات") and st.button("🌳 شجرة الحسابات", key="chart"): st.session_state.current_page = "شجرة الحسابات"
-            if can_access("القوائم المالية") and st.button("📈 قوائم مالية", key="financial"): st.session_state.current_page = "القوائم المالية"
-            if can_access("مراكز التكلفة") and st.button("🏢 مراكز تكلفة", key="cost_center"): st.session_state.current_page = "مراكز التكلفة"
-            if can_access("العملات") and st.button("💱 عملات", key="currency"): st.session_state.current_page = "العملات"
-            if can_access("الأرصدة الافتتاحية") and st.button("📋 أرصدة افتتاحية", key="opening"): st.session_state.current_page = "الأرصدة الافتتاحية"
-        with col2:
-            if can_access("التعاملات البنكية") and st.button("🏦 بنوك", key="bank"): st.session_state.current_page = "التعاملات البنكية"
-            if can_access("الضريبة") and st.button("🧾 ضريبة", key="vat"): st.session_state.current_page = "الضريبة"
-            if can_access("إغلاق الحسابات") and st.button("🔒 إغلاق حسابات", key="closing"): st.session_state.current_page = "إغلاق الحسابات"
-            if can_access("إغلاق الفترات") and st.button("📅 إغلاق فترات", key="period"): st.session_state.current_page = "إغلاق الفترات"
-            if can_access("FIFO المخزون") and st.button("📊 FIFO", key="fifo"): st.session_state.current_page = "FIFO المخزون"
-            if can_access("تقييم العملات") and st.button("💱 تقييم عملات", key="revaluation"): st.session_state.current_page = "تقييم العملات"
-
-        # المجموعة 4: إدارة الأعمال
-        st.markdown('<div class="menu-section">👥 إدارة الأعمال</div>', unsafe_allow_html=True)
-        col1, col2 = st.columns(2)
-        with col1:
-            if can_access("الموارد البشرية") and st.button("👔 موارد بشرية", key="hr"): st.session_state.current_page = "الموارد البشرية"
-            if can_access("كشف الرواتب") and st.button("💰 رواتب", key="payroll"): st.session_state.current_page = "كشف الرواتب"
-        with col2:
-            if can_access("الأصول الثابتة") and st.button("🏗️ أصول ثابتة", key="assets"): st.session_state.current_page = "الأصول الثابتة"
-            if can_access("المرفقات") and st.button("📎 مرفقات", key="attachments"): st.session_state.current_page = "المرفقات"
-
-        # المجموعة 5: النظام والأمان
-        st.markdown('<div class="menu-section">⚙️ النظام والأمان</div>', unsafe_allow_html=True)
-        col1, col2 = st.columns(2)
-        with col1:
-            if can_access("الصلاحيات") and st.button("🛡️ صلاحيات", key="roles"): st.session_state.current_page = "الصلاحيات"
-            if can_access("سجل التدقيق") and st.button("📋 سجل تدقيق", key="audit"): st.session_state.current_page = "سجل التدقيق"
-        with col2:
-            if can_access("نسخ احتياطي") and st.button("💾 نسخ احتياطي", key="backup"): st.session_state.current_page = "نسخ احتياطي"
-            if can_access("تقارير HTML") and st.button("📄 تقارير HTML", key="pdf"): st.session_state.current_page = "تقارير HTML"
-
-        # المجموعة 6: الذكاء الاصطناعي
-        st.markdown('<div class="menu-section">🤖 الذكاء الاصطناعي</div>', unsafe_allow_html=True)
-        if can_access("المساعد الذكي") and st.button("🧠 المساعد الذكي", key="ai"):
-            st.session_state.current_page = "المساعد الذكي"
-
-        st.divider()
-        # زر الخروج
-        if st.button("🚪 تسجيل الخروج", key="logout", help="تسجيل الخروج من النظام"):
-            logout_session()
-
-    # ========== توجيه الصفحات مع التحقق من الصلاحية ==========
-    page = st.session_state.current_page
-
-    # دوال عرض مخصصة مع التحقق
-    def show_if_permitted(module, show_func):
-        if can_access(module):
-            show_func()
-        else:
-            st.markdown(f"""
-            <div class="permission-denied">
-                <h2>⛔ غير مصرح</h2>
-                <p>ليس لديك صلاحية للوصول إلى وحدة "{module}".</p>
+    else:
+        st.markdown(f"""
+        <div style="text-align:center; margin-bottom: 3rem; margin-top: 0.5rem;">
+            <div class="executive-logo-box" style="
+                width: 110px; height: 110px; margin: 0 auto 1.8rem auto;
+                background: rgba(0, 210, 255, 0.05);
+                border: 1px solid rgba(0, 210, 255, 0.2);
+                border-radius: 32px;
+                display: flex; align-items: center; justify-content: center;
+            ">
+                <span style="font-size: 3.5rem;">🛡️</span>
             </div>
-            """, unsafe_allow_html=True)
+            <h2 style="color:{T}; margin:0; font-weight:900; font-size:2.4rem; letter-spacing: 1px;">تأمين الهوية الرقمية</h2>
+            <p style="color:{S}; margin-top:0.8rem; font-size:1.05rem; letter-spacing: 0.5px;">يرجى تحديث رمز الحماية الخاص بك للمتابعة</p>
+        </div>
+        """, unsafe_allow_html=True)
 
-    if page == "لوحة المعلومات": dashboard_show()
-    elif page == "المخزون": show_if_permitted("المخزون", inventory_show)
-    elif page == "التسويات المخزنية": show_if_permitted("التسويات المخزنية", inventory_adjustment_show)
-    elif page == "المبيعات": show_if_permitted("المبيعات", sales_show)
-    elif page == "المشتريات": show_if_permitted("المشتريات", purchases_show)
-    elif page == "مرتجعات البضاعة": show_if_permitted("مرتجعات البضاعة", returns_show)
-    elif page == "سندات القبض والصرف": show_if_permitted("سندات القبض والصرف", receipts_show)
-    elif page == "المصروفات": show_if_permitted("المصروفات", expenses_show)
-    elif page == "الأرصدة الافتتاحية": show_if_permitted("الأرصدة الافتتاحية", opening_show)
-    elif page == "تقييم العملات": show_if_permitted("تقييم العملات", revaluation_show)
-    elif page == "الحسابات": show_if_permitted("الحسابات", accounting_show)
-    elif page == "الموارد البشرية": show_if_permitted("الموارد البشرية", hr_show)
-    elif page == "إدارة العملاء": show_if_permitted("إدارة العملاء", crm_show)
-    elif page == "الأصول الثابتة": show_if_permitted("الأصول الثابتة", assets_show)
-    elif page == "شجرة الحسابات": show_if_permitted("شجرة الحسابات", chart_show)
-    elif page == "القوائم المالية": show_if_permitted("القوائم المالية", financial_show)
-    elif page == "العملات": show_if_permitted("العملات", currency_show)
-    elif page == "التعاملات البنكية": show_if_permitted("التعاملات البنكية", bank_show)
-    elif page == "مراكز التكلفة": show_if_permitted("مراكز التكلفة", cost_center_show)
-    elif page == "المرفقات": show_if_permitted("المرفقات", attachment_show)
-    elif page == "الصلاحيات": show_if_permitted("الصلاحيات", roles_show)
-    elif page == "إغلاق الفترات": show_if_permitted("إغلاق الفترات", period_show)
-    elif page == "إغلاق الحسابات": show_if_permitted("إغلاق الحسابات", closing_show)
-    elif page == "FIFO المخزون": show_if_permitted("FIFO المخزون", fifo_show)
-    elif page == "كشف الرواتب": show_if_permitted("كشف الرواتب", payroll_show)
-    elif page == "الضريبة": show_if_permitted("الضريبة", vat_show)
-    elif page == "المساعد الذكي": show_if_permitted("المساعد الذكي", ai_show)
-    elif page == "سجل التدقيق": show_if_permitted("سجل التدقيق", audit_show)
-    elif page == "نسخ احتياطي": show_if_permitted("نسخ احتياطي", backup_show)
-    elif page == "تقارير HTML": show_if_permitted("تقارير HTML", pdf_show)
+def login_form():
+    render_premium_header(is_change_password=False)
+    
+    spacer_left, main_col, spacer_right = st.columns([1, 2.2, 1])
+    
+    with main_col:
+        with st.container():
+            username = st.text_input("👤 معرف المستخدم (ID)", placeholder="أدخل اسم المستخدم", key="login_user")
+            st.markdown("<div style='margin-bottom: 16px;'></div>", unsafe_allow_html=True) 
+            
+            password = st.text_input("🔒 رمز المرور السري", type="password", placeholder="••••••••", key="login_pass")
+            st.markdown("<div style='margin-bottom: 40px;'></div>", unsafe_allow_html=True)
+            
+            col1, col2 = st.columns([1.6, 1])
+            with col1:
+                login_btn = st.button("🚀 مصادقة والدخول", use_container_width=True, type="primary")
+            with col2:
+                if st.button("🔑 تغيير كلمة المرور", use_container_width=True):
+                    st.session_state.show_password_change = True
+                    st.rerun()
+            
+            if login_btn:
+                user = verify_user(username, password)
+                if user:
+                    st.session_state.logged_in = True
+                    st.session_state.user = user
+                    st.rerun()
+                else:
+                    st.error("❌ فشلت المصادقة المباشرة. يرجى مراجعة البيانات المدخلة.")
+    
+    st.markdown(f"""
+    <div style="text-align:center; margin-top: 5rem; margin-bottom: 1rem;">
+        <p style="color: rgba(255,255,255,0.15); font-size: 0.82rem; letter-spacing: 2px; font-weight: 400;">
+            POWERED BY HAWKAMA SYSTEMS HUB • SECURE LAYER © 2026
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+def password_change_form():
+    render_premium_header(is_change_password=True)
+    
+    spacer_left, main_col, spacer_right = st.columns([1, 2.2, 1])
+    
+    with main_col:
+        with st.container():
+            username = st.text_input("👤 اسم المستخدم", placeholder="أدخل اسم المستخدم الخاص بك", key="change_user")
+            st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
+            
+            old_password = st.text_input("🔓 رمز المرور السري الحالي", type="password", placeholder="الرمز الحالي", key="change_old")
+            st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
+            
+            new_password = st.text_input("✨ رمز المرور السري الجديد", type="password", placeholder="الرمز الجديد القوي", key="change_new")
+            st.markdown("<div style='margin-bottom: 12px;'></div>", unsafe_allow_html=True)
+            
+            confirm_password = st.text_input("✅ تأكيد الرمز الجديد", type="password", placeholder="إعادة كتابة الرمز", key="change_confirm")
+            st.markdown("<div style='margin-bottom: 35px;'></div>", unsafe_allow_html=True)
+            
+            col1, col2 = st.columns([1.6, 1])
+            with col1:
+                if st.button("💾 حفظ البيانات وتحديث", use_container_width=True, type="primary"):
+                    if not username or not old_password or not new_password:
+                        st.warning("⚠️ جميع الحقول مطلوبة.")
+                    elif new_password != confirm_password:
+                        st.error("❌ عدم تطابق في تأكيد رمز المرور الجديد.")
+                    elif len(new_password) < 4:
+                        st.error("⚠️ رمز المرور ضعيف (يجب ألا يقل عن 4 خانات).")
+                    else:
+                        success, message = change_password(username, old_password, new_password)
+                        if success:
+                            st.success(f"✨ {message}")
+                            st.session_state.show_password_change = False
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {message}")
+            with col2:
+                if st.button("↩️ إلغاء العملية", use_container_width=True):
+                    st.session_state.show_password_change = False
+                    st.rerun()
+
+def show():
+    init_db()
+    create_admin_if_needed()
+    
+    if 'show_password_change' not in st.session_state:
+        st.session_state.show_password_change = False
+    
+    apply_ultra_premium_css()
+    
+    if st.session_state.show_password_change:
+        password_change_form()
+    else:
+        login_form()
