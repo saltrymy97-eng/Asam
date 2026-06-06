@@ -42,7 +42,7 @@ def glass(content):
     st.markdown(f"""<div style="background:rgba(255,255,255,0.12);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.25);border-radius:16px;padding:1.5rem;margin:1rem 0;box-shadow:0 8px 32px rgba(0,0,0,0.37);color:{T};font-size:1.1rem;">{content}</div>""", unsafe_allow_html=True)
 
 def show():
-    h1("🤖 المساعد الذكي")
+    h1("🤖 المساعد الذكي AI")
     create_ai_tables()
 
     if "GROQ_API_KEY" not in st.secrets:
@@ -147,20 +147,63 @@ def show():
         txt = st.text_area("اكتب العملية:", key="etxt")
         if st.button("📝 توليد القيد") and txt:
             accs = get_all_accounts()
-            alist = "\n".join([f"{a['code']} - {a['name']}" for a in accs]) if accs else "لا حسابات"
-            prompt = f"""أنت محاسب محترف. حول العملية التالية إلى قيد محاسبي.
-الحسابات المتاحة:
+            if accs:
+                alist = "\n".join([f"{a['code']} - {a['name']}" for a in accs])
+            else:
+                alist = "لا توجد حسابات مسجلة"
+            
+            # ✅ تم تحسين التعليمة بشكل كبير لضمان التوازن والدقة
+            prompt = f"""أنت محاسب محترف ومدقق حسابات. مهمتك تحويل العملية التالية إلى قيد محاسبي صحيح ومتوازن 100%.
+
+الحسابات المتاحة في النظام:
 {alist}
 
-أعد القيد بالصيغة التالية (كل سطر يمثل قيداً):
+**قواعد صارمة يجب الالتزام بها:**
+1. **مجموع المدين يجب أن يساوي مجموع الدائن تماماً.**
+2. استخدم فقط الحسابات المتاحة أعلاه. إذا لم تجد الحساب المناسب، استخدم اسم حساب دقيقاً.
+3. **عند بيع بضاعة:** يجب أن تشمل القيد:
+   - مدين: النقدية أو العميل (بقيمة البيع)
+   - دائن: المبيعات (بقيمة البيع)
+   - مدين: تكلفة البضاعة المباعة (بتكلفة الشراء)
+   - دائن: المخزون (بتكلفة الشراء)
+4. أعد القيد بالسطر التالي بالضبط (لا تخرج عن هذا التنسيق):
 مدين | اسم الحساب | المبلغ
 دائن | اسم الحساب | المبلغ
 
-تأكد من توازن القيد (مجموع المدين = مجموع الدائن).
-العملية: {txt}"""
-            with st.spinner("📝..."):
-                ans = query_groq(prompt, txt, model=model)
+**مثال لقيد شراء أصل ثابت:**
+مدين | الأصول الثابتة | 100,000
+دائن | النقدية | 100,000
+
+**العملية المراد تحويلها:**
+{txt}"""
+            with st.spinner("📝 جاري توليد قيد متوازن..."):
+                ans = query_groq(prompt, txt, model=model, max_tokens=1500)
+            
+            # ✅ إضافة تحقق سريع من التوازن وعرض تحذير إن وجد
             st.code(ans)
+            
+            # محاولة حساب التوازن بشكل مبدئي
+            total_debit = 0
+            total_credit = 0
+            for line in ans.split('\n'):
+                line = line.strip()
+                if line.startswith('مدين') or line.startswith('دائن'):
+                    parts = line.split('|')
+                    if len(parts) >= 3:
+                        try:
+                            amount = float(parts[2].strip().replace(',', ''))
+                            if line.startswith('مدين'):
+                                total_debit += amount
+                            else:
+                                total_credit += amount
+                        except:
+                            pass
+            
+            if total_debit > 0 and total_credit > 0:
+                if abs(total_debit - total_credit) < 0.01:
+                    st.success(f"✅ القيد متوازن: مدين {total_debit:,.2f} = دائن {total_credit:,.2f}")
+                else:
+                    st.error(f"⚠️ القيد غير متوازن: مدين {total_debit:,.2f} ≠ دائن {total_credit:,.2f}. حاول إعادة الصياغة أو استخدم حسابات أوضح.")
 
     with t6:
         h3("تدقيق وكشف الاحتيال", RD)
