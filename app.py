@@ -142,16 +142,20 @@ else:
         return module in allowed_modules if allowed_modules else False
 
     with st.sidebar:
-        # شعار النظام - حوكمة ERP
+        # شعار النظام - حوكمة ERP بتدرج لوني فاخر
         st.markdown("""
-        <div style="text-align:center; padding:20px 0 10px 0;">
+        <div style="text-align:center; padding:20px 0 5px 0;">
             <span style="font-size:2.5rem;">🏢</span>
-            <h2 style="color:white; margin:5px 0; font-weight:700;">حوكمة ERP</h2>
-            <p style="color:#a78bfa; font-size:0.8rem; letter-spacing:3px;">إدارة ذكية • قرارات واثقة</p>
+            <h2 style="margin:5px 0; font-weight:800; font-size:1.8rem;
+                background: linear-gradient(135deg, #FFFFFF 20%, #A78BFA 100%);
+                -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            ">حوكمة ERP</h2>
+            <p style="color:#A78BFA; font-size:0.85rem; letter-spacing:1px; margin:0;">
+                إدارة ذكية .. قرارات واثقة
+            </p>
         </div>
         """, unsafe_allow_html=True)
-        
-        st.markdown(f"<p style='text-align:center; color:#ccc;'>أهلاً، {st.session_state.user.get('full_name', '')}</p>", unsafe_allow_html=True)
+
         st.divider()
 
         # المجموعة 1: الرئيسية
