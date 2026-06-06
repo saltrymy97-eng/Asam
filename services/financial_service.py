@@ -1,4 +1,4 @@
-# services/financial_service.py - القوائم المالية (مع مراكز التكلفة والعملات)
+# services/financial_service.py - القوائم المالية (مع مراكز التكلفة والعملات) - نسخة مصححة
 import sqlite3
 
 DB_PATH = "erp.db"
@@ -64,7 +64,14 @@ def get_accounts_by_prefix(prefix, cost_center_id=None):
     for acc in accounts:
         code = acc["code"]
         name_row = conn.execute("SELECT name FROM accounts WHERE code=?", (code,)).fetchone()
-        name = name_row["name"] if name_row else code
+        if name_row:
+            name = name_row["name"]
+        else:
+            # إذا لم يكن رمزًا رقميًا (مثل اسم عميل أو مورد)، نستخدم النص كما هو
+            if code.isdigit():
+                name = code  # حساب بدون اسم مسجل
+            else:
+                name = code
         result.append({"code": code, "name": name})
     conn.close()
     return result
@@ -136,14 +143,9 @@ def get_balance_sheet(cost_center_id=None):
 
     # صافي الدخل
     if cost_center_id is None:
-        # صافي الدخل العام من الإيرادات والمصروفات
-        rev_accounts = get_accounts_by_prefix("4")
-        exp_accounts = get_accounts_by_prefix("5")
-        rev_debit = sum(get_account_balance(acc["code"])[0] for acc in rev_accounts)
-        rev_credit = sum(get_account_balance(acc["code"])[1] for acc in rev_accounts)
-        exp_debit = sum(get_account_balance(acc["code"])[0] for acc in exp_accounts)
-        exp_credit = sum(get_account_balance(acc["code"])[1] for acc in exp_accounts)
-        net_income = (rev_credit - rev_debit) - (exp_debit - exp_credit)
+        # صافي الدخل العام من قائمة الدخل
+        income_stmt = get_income_statement()
+        net_income = income_stmt['net_income']
         total_equity += net_income
         equity_list.append({"code": "", "name": "صافي الدخل (أرباح محتجزة)", "amount": net_income})
     else:
