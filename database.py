@@ -1,4 +1,4 @@
-# database.py - قاعدة بيانات نظام ERP كاملة (SQLite) – إصدار احترافي
+# database.py - قاعدة بيانات نظام ERP كاملة (SQLite) – إصدار احترافي مع الحوكمة
 import sqlite3
 import bcrypt
 
@@ -17,22 +17,26 @@ def init_db():
     conn = get_connection()
     c = conn.cursor()
 
+    # ========== 1. المستخدمين (مربوط بالأدوار) ==========
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
         full_name TEXT,
-        role TEXT DEFAULT 'staff'
+        role_id INTEGER,
+        role TEXT DEFAULT 'staff',
+        FOREIGN KEY (role_id) REFERENCES roles(id)
     )''')
 
+    # ========== 2. المنتجات (أسعار وكميات غير سالبة) ==========
     c.execute('''CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         barcode TEXT UNIQUE,
         category TEXT,
-        purchase_price REAL,
-        selling_price REAL,
-        quantity INTEGER DEFAULT 0,
+        purchase_price REAL CHECK(purchase_price >= 0),
+        selling_price REAL CHECK(selling_price >= 0),
+        quantity INTEGER DEFAULT 0 CHECK(quantity >= 0),
         reorder_level INTEGER DEFAULT 10
     )''')
 
@@ -60,6 +64,7 @@ def init_db():
         address TEXT
     )''')
 
+    # ========== 3. الفواتير (reference نصي دائماً) ==========
     c.execute('''CREATE TABLE IF NOT EXISTS invoices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
@@ -79,6 +84,7 @@ def init_db():
         FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
     )''')
 
+    # ALTER للفواتير (متوافق مع النسخ القديمة)
     try:
         c.execute("ALTER TABLE invoices ADD COLUMN vat_rate REAL DEFAULT 0.15")
     except sqlite3.OperationalError:
@@ -104,7 +110,7 @@ def init_db():
     except sqlite3.OperationalError:
         pass
     try:
-        c.execute("ALTER TABLE invoices ADD COLUMN reference INTEGER")
+        c.execute("ALTER TABLE invoices ADD COLUMN reference TEXT")
     except sqlite3.OperationalError:
         pass
     try:
@@ -126,11 +132,12 @@ def init_db():
         FOREIGN KEY (product_id) REFERENCES products(id)
     )''')
 
+    # ========== 4. القيود (حماية من التكرار) ==========
     c.execute('''CREATE TABLE IF NOT EXISTS journal_entries (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         date TEXT,
         description TEXT,
-        reference TEXT
+        reference TEXT UNIQUE
     )''')
 
     c.execute('''CREATE TABLE IF NOT EXISTS journal_lines (
@@ -243,6 +250,18 @@ def init_db():
         role_id INTEGER,
         module TEXT NOT NULL,
         FOREIGN KEY (role_id) REFERENCES roles(id)
+    )''')
+
+    # ========== 2. سجل التدقيق (جديد) ==========
+    c.execute('''CREATE TABLE IF NOT EXISTS audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT,
+        action TEXT,
+        table_name TEXT,
+        record_id INTEGER,
+        old_value TEXT,
+        new_value TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     )''')
 
     c.execute('''CREATE TABLE IF NOT EXISTS cost_centers (
