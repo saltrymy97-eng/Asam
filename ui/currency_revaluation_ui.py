@@ -1,4 +1,4 @@
-# ui/currency_revaluation_ui.py – واجهة فروق أسعار الصرف (زجاجية فاخرة)
+# ui/currency_revaluation_ui.py – واجهة فروق أسعار الصرف (زجاجية فاخرة + حماية من التكرار)
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -35,15 +35,12 @@ def show():
         if not accounts:
             st.info("لا توجد حسابات لديها معاملات بعملات أجنبية")
         else:
-            # اختيار الحساب
             account_names = [a['account_name'] for a in accounts]
             selected_account = st.selectbox("اختر الحساب", account_names)
             
-            # العملة المرتبطة
             account_data = next(a for a in accounts if a['account_name'] == selected_account)
             currency = account_data['currency_code']
             
-            # جلب الرصيد بالعملة الأجنبية
             foreign_bal, current_local = get_foreign_balance(selected_account, currency)
             
             st.markdown(f"""
@@ -56,7 +53,6 @@ def show():
             if abs(foreign_bal) < 0.001:
                 st.warning("الرصيد صفر، لا حاجة لإعادة التقييم")
             else:
-                # إدخال السعر الجديد
                 new_rate = st.number_input("سعر الصرف الجديد", min_value=0.01, value=1.0, step=0.01)
                 
                 if new_rate > 0:
@@ -76,7 +72,15 @@ def show():
                         
                         rev_date = st.date_input("تاريخ إعادة التقييم", value=date.today())
                         
-                        if st.button("💾 تنفيذ إعادة التقييم", type="primary"):
+                        # ✅ حماية من التكرار
+                        if "saving_revaluation" not in st.session_state:
+                            st.session_state.saving_revaluation = False
+                        
+                        if st.button("💾 تنفيذ إعادة التقييم", type="primary", disabled=st.session_state.saving_revaluation):
+                            st.session_state.saving_revaluation = True
+                            st.rerun()
+                        
+                        if st.session_state.saving_revaluation:
                             entry_id, err = perform_revaluation(
                                 selected_account, currency, new_rate,
                                 rev_date.strftime("%Y-%m-%d"),
@@ -86,7 +90,8 @@ def show():
                                 st.error(f"فشل: {err}")
                             else:
                                 st.success(f"تم إنشاء قيد إعادة التقييم رقم {entry_id}")
-                                st.rerun()
+                            st.session_state.saving_revaluation = False
+                            st.rerun()
 
     with tab2:
         st.markdown(f"<h3 style='color:{PR};'>سجل عمليات إعادة التقييم</h3>", unsafe_allow_html=True)
