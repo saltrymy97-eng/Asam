@@ -1,4 +1,4 @@
-# ui/ai_ui.py – واجهة المساعد الذكي المطورة (تحليلات عميقة + مراكز التكلفة + تقرير تحليلي شامل)
+# ui/ai_ui.py – واجهة المساعد الذكي المطورة (حوكمة ERP)
 import streamlit as st
 import pandas as pd
 import json
@@ -42,7 +42,7 @@ def glass(content):
     st.markdown(f"""<div style="background:rgba(255,255,255,0.12);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.25);border-radius:16px;padding:1.5rem;margin:1rem 0;box-shadow:0 8px 32px rgba(0,0,0,0.37);color:{T};font-size:1.1rem;">{content}</div>""", unsafe_allow_html=True)
 
 def show():
-    h1("🤖 المساعد الذكي XD")
+    h1("🤖 المساعد الذكي حوكمة ERP")
     create_ai_tables()
 
     if "GROQ_API_KEY" not in st.secrets:
@@ -57,13 +57,11 @@ def show():
     if "active_session" not in st.session_state:
         st.session_state.active_session = f"s_{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
-    # 9 تبويبات
     t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
         "🧠 مساعد", "📊 محلل", "📦 مخزون", "💬 موظفين", "📝 قيود", "🔍 احتيال", "🔮 تنبؤات", "📈 تحليل",
         "🎯 مراكز تكلفة"
     ])
 
-    # 1. مساعد محاسبي (محادثة عميقة)
     with t1:
         h3("اسأل عن أي شيء في نظامك", BL)
         q = st.chat_input("اكتب سؤالك هنا...")
@@ -81,7 +79,6 @@ def show():
             save_chat_history(st.session_state.active_session, "user", q, model, "مساعد")
             save_chat_history(st.session_state.active_session, "assistant", ans, model, "مساعد")
 
-    # 2. محلل مالي (تحليل شامل)
     with t2:
         h3("تحليل مالي شامل وتوصيات", GR)
         if st.button("📈 تحليل شامل"):
@@ -108,7 +105,6 @@ def show():
                 ans = query_groq(prompt, "قدم تحليلاً شاملاً", model=model, max_tokens=3000)
             glass(ans)
 
-    # 3. توقع المخزون (تحليل عميق)
     with t3:
         h3("تحليل المخزون وتوقع النفاد", OR)
         low, allp = get_inventory_data()
@@ -130,7 +126,6 @@ def show():
             st.warning("⚠️ منتجات تحت الحد الأدنى:")
             st.dataframe(pd.DataFrame(low))
 
-    # 4. شات الموظفين
     with t4:
         h3("استفسارات الموظفين", PR)
         nm = st.text_input("اسمك:", key="ename")
@@ -147,7 +142,6 @@ def show():
             else:
                 st.error("غير موجود")
 
-    # 5. قيود تلقائية (ذكية)
     with t5:
         h3("توليد قيود محاسبية ذكية", RD)
         txt = st.text_area("اكتب العملية:", key="etxt")
@@ -168,7 +162,6 @@ def show():
                 ans = query_groq(prompt, txt, model=model)
             st.code(ans)
 
-    # 6. كشف احتيال (تدقيق عميق)
     with t6:
         h3("تدقيق وكشف الاحتيال", RD)
         if st.button("🕵️ تدقيق شامل"):
@@ -188,7 +181,6 @@ def show():
             else:
                 st.info("لا قيود")
 
-    # 7. تنبؤات (تخطيط استراتيجي)
     with t7:
         h3("🔮 تنبؤات وتخطيط مالي", CY)
         period = st.selectbox("فترة التخطيط", ["الشهر القادم", "الربع القادم", "السنة القادمة"], key="fp")
@@ -209,12 +201,10 @@ def show():
                 ans = query_groq(prompt, "خطط", model=model, max_tokens=3000)
             glass(ans)
 
-    # 8. تحليل عميق (تقرير تحليلي شامل بالذكاء الاصطناعي)
     with t8:
         h3("📈 تحليل مالي وتشغيلي متقدم", PR)
         st.caption("تقرير احترافي يولده الذكاء الاصطناعي بناءً على جميع بيانات النظام")
         
-        # اختيار جوانب التحليل
         analysis_scope = st.multiselect(
             "اختر جوانب التحليل",
             ["الأداء المالي", "تحليل النسب", "اتجاهات المبيعات", "تحليل العملاء والموردين",
@@ -223,17 +213,13 @@ def show():
         )
         
         if st.button("🚀 توليد تقرير تحليلي شامل", use_container_width=True):
-            # جمع كل البيانات اللازمة
             data = get_comprehensive_data()
             ratios = get_financial_ratios()
             trends = get_trend_analysis()
             top_cust = get_top_customers()
             top_supp = get_top_suppliers()
-            
-            # جمع بيانات مراكز التكلفة
             cc_data = get_cost_centers_summary_for_ai()
             
-            # بناء النص التمهيدي حسب الاختيارات
             data_parts = []
             if "الأداء المالي" in analysis_scope:
                 data_parts.append(f"""الأداء المالي:
@@ -286,7 +272,6 @@ def show():
                 ans = query_groq(prompt, "قدم تحليلاً شاملاً", model=model, max_tokens=3000)
             glass(ans)
 
-    # 9. تبويب مراكز التكلفة الجديد
     with t9:
         h3("🎯 تحليل مراكز التكلفة بالذكاء الاصطناعي", CY)
         
