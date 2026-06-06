@@ -1,4 +1,4 @@
-# ui/roles_ui.py – واجهة الصلاحيات والأدوار (تصميم زجاجي فخم)
+# ui/roles_ui.py – واجهة الصلاحيات والأدوار (تصميم زجاجي فخم + إدارة المستخدمين)
 import streamlit as st
 import pandas as pd
 from services.roles_service import (
@@ -9,6 +9,7 @@ from services.roles_service import (
     get_all_users_with_roles,
     assign_role_to_user
 )
+from services.auth_service import create_user
 
 # ========== ألوان التصميم ==========
 GLASS_BG = "rgba(255, 255, 255, 0.12)"
@@ -33,7 +34,7 @@ def show():
     create_roles_tables()
     seed_default_roles()
 
-    tab1, tab2, tab3 = st.tabs(["🔑 الأدوار والصلاحيات", "👥 المستخدمين", "⚙️ تعيين دور"])
+    tab1, tab2, tab3, tab4 = st.tabs(["🔑 الأدوار والصلاحيات", "👥 المستخدمين", "⚙️ تعيين دور", "➕ إضافة مستخدم"])
 
     with tab1:
         st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>الأدوار والصلاحيات</h3>", unsafe_allow_html=True)
@@ -85,3 +86,31 @@ def show():
                 st.rerun()
         else:
             st.info("لا يوجد مستخدمون أو أدوار كافية")
+
+    with tab4:
+        st.markdown(f"<h3 style='color:{ACCENT_PURPLE};'>➕ إضافة مستخدم جديد</h3>", unsafe_allow_html=True)
+        roles = get_all_roles()
+        
+        if not roles:
+            st.warning("يجب إنشاء الأدوار أولاً من تبويب الأدوار والصلاحيات")
+        else:
+            with st.form("add_user_form"):
+                new_username = st.text_input("اسم المستخدم")
+                new_password = st.text_input("كلمة المرور", type="password")
+                new_fullname = st.text_input("الاسم الكامل")
+                
+                role_options = {r['name']: r['id'] for r in roles}
+                selected_role_name = st.selectbox("الدور", list(role_options.keys()))
+                
+                submitted = st.form_submit_button("💾 إنشاء المستخدم")
+                
+                if submitted:
+                    if not new_username or not new_password:
+                        st.error("اسم المستخدم وكلمة المرور مطلوبان")
+                    else:
+                        role_id = role_options[selected_role_name]
+                        success, message = create_user(new_username, new_password, new_fullname, role_id)
+                        if success:
+                            st.success(message)
+                        else:
+                            st.error(message)
