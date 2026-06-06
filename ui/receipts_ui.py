@@ -1,4 +1,4 @@
-# ui/receipts_ui.py – واجهة سندات القبض والصرف (تصميم زجاجي فاخر - معدل)
+# ui/receipts_ui.py – واجهة سندات القبض والصرف (تصميم زجاجي فاخر - معدل + حماية من التكرار)
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -49,7 +49,6 @@ def show():
             selected_cust_str = st.selectbox("اختر العميل", list(customer_options.keys()), key="receipt_cust")
             selected_cust = customer_options[selected_cust_str]
             
-            # فواتير العميل المعلقة
             invoices = get_invoices_for_party('customer', selected_cust['id'])
             invoice_options = {"بدون فاتورة (دفعة عامة)": None}
             for inv in invoices:
@@ -59,7 +58,6 @@ def show():
             selected_inv_str = st.selectbox("ربط بفاتورة (اختياري)", list(invoice_options.keys()), key="receipt_inv")
             selected_inv = invoice_options[selected_inv_str]
             
-            # المبلغ - تم تغيير min_value إلى 0.0 لتجنب الخطأ عند القيمة الافتراضية 0.0
             default_amount = selected_inv['remaining'] if selected_inv else 0.0
             amount = st.number_input("المبلغ", min_value=0.0, value=float(default_amount), step=0.01, key="receipt_amount")
             
@@ -72,7 +70,15 @@ def show():
             reference = st.text_input("المرجع (اختياري)", key="receipt_ref")
             notes = st.text_area("ملاحظات", key="receipt_notes")
             
-            if st.button("💾 حفظ سند القبض", type="primary", key="save_receipt"):
+            # ✅ حماية من التكرار
+            if "saving_receipt" not in st.session_state:
+                st.session_state.saving_receipt = False
+            
+            if st.button("💾 حفظ سند القبض", type="primary", key="save_receipt", disabled=st.session_state.saving_receipt):
+                st.session_state.saving_receipt = True
+                st.rerun()
+            
+            if st.session_state.saving_receipt:
                 if amount <= 0:
                     st.error("المبلغ يجب أن يكون أكبر من صفر")
                 else:
@@ -88,7 +94,8 @@ def show():
                         st.error(f"فشل: {err}")
                     else:
                         st.success(f"تم إنشاء سند القبض رقم {vid}")
-                        st.rerun()
+                st.session_state.saving_receipt = False
+                st.rerun()
 
     # ---------- تبويب سند صرف ----------
     with tab2:
@@ -126,7 +133,15 @@ def show():
             reference = st.text_input("المرجع (اختياري)", key="payment_ref")
             notes = st.text_area("ملاحظات", key="payment_notes")
             
-            if st.button("💾 حفظ سند الصرف", type="primary", key="save_payment"):
+            # ✅ حماية من التكرار
+            if "saving_payment" not in st.session_state:
+                st.session_state.saving_payment = False
+            
+            if st.button("💾 حفظ سند الصرف", type="primary", key="save_payment", disabled=st.session_state.saving_payment):
+                st.session_state.saving_payment = True
+                st.rerun()
+            
+            if st.session_state.saving_payment:
                 if amount <= 0:
                     st.error("المبلغ يجب أن يكون أكبر من صفر")
                 else:
@@ -142,7 +157,8 @@ def show():
                         st.error(f"فشل: {err}")
                     else:
                         st.success(f"تم إنشاء سند الصرف رقم {vid}")
-                        st.rerun()
+                st.session_state.saving_payment = False
+                st.rerun()
 
     # ---------- سجل السندات ----------
     with tab3:
