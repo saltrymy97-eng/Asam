@@ -1,4 +1,4 @@
-# ui/purchases_ui.py – واجهة المشتريات (تصميم زجاجي فخم + دعم العملات)
+# ui/purchases_ui.py – واجهة المشتريات (تصميم زجاجي فخم + دعم العملات + حماية من التكرار)
 import streamlit as st
 import pandas as pd
 from services.purchases_service import (
@@ -47,7 +47,6 @@ def show():
             selected_supplier = st.selectbox("اختر المورد", supplier_names)
             supplier_id = next(s['id'] for s in suppliers if s['name'] == selected_supplier)
 
-        # 🆕 اختيار العملة
         currencies = get_all_currencies()
         base_currency = get_base_currency()
         currency_options = {f"{c['code']} - {c['name']}": c['code'] for c in currencies}
@@ -94,22 +93,30 @@ def show():
             total_purchase = sum(item["total"] for item in st.session_state.purchase_items)
             st.markdown(f"### الإجمالي: {total_purchase:,.2f} {currency_code}")
 
-            if st.button("💾 حفظ فاتورة المشتريات", type="primary"):
-                if supplier_id is None:
-                    st.error("يجب اختيار مورد")
+            # ✅ حماية من التكرار
+            if "saving_purchase" not in st.session_state:
+                st.session_state.saving_purchase = False
+
+            save_disabled = st.session_state.saving_purchase or supplier_id is None
+
+            if st.button("💾 حفظ فاتورة المشتريات", type="primary", disabled=save_disabled):
+                st.session_state.saving_purchase = True
+                st.rerun()
+
+            if st.session_state.saving_purchase:
+                invoice_id, total, error = create_purchase_invoice(
+                    supplier_id=supplier_id,
+                    items=st.session_state.purchase_items,
+                    username=st.session_state.user.get('username', 'admin'),
+                    currency_code=currency_code
+                )
+                if error:
+                    st.error(f"فشل في حفظ الفاتورة: {error}")
                 else:
-                    invoice_id, total, error = create_purchase_invoice(
-                        supplier_id=supplier_id,
-                        items=st.session_state.purchase_items,
-                        username=st.session_state.user.get('username', 'admin'),
-                        currency_code=currency_code
-                    )
-                    if error:
-                        st.error(f"فشل في حفظ الفاتورة: {error}")
-                    else:
-                        st.success(f"تم حفظ فاتورة المشتريات رقم {invoice_id} بنجاح")
-                        st.session_state.purchase_items = []
-                        st.rerun()
+                    st.success(f"تم حفظ فاتورة المشتريات رقم {invoice_id} بنجاح")
+                    st.session_state.purchase_items = []
+                st.session_state.saving_purchase = False
+                st.rerun()
 
             if st.button("🗑️ مسح بنود المشتريات"):
                 st.session_state.purchase_items = []
