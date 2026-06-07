@@ -26,7 +26,7 @@ CY = "#06B6D4"
 
 AVAILABLE_MODELS = {
     "Llama 3.3 70B (الأسرع)": "llama-3.3-70b-versatile",
-    "Mixtral 8x7B (متوازن)": "mixtral-8x7b-32768",
+    "Gemma 2 9B (متوازن)": "gemma2-9b-it",  # ✅ تم استبدال النموذج الملغى
 }
 
 def h1(title, color=PR):
