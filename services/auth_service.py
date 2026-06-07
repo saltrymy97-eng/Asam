@@ -1,28 +1,14 @@
-# services/auth_service.py - منطق المصادقة وتغيير كلمة المرور (SQLite)
+# services/auth_service.py - منطق المصادقة وتغيير كلمة المرور (حوكمة ERP)
 import sqlite3
 import bcrypt
 from database import get_connection
-
-def create_admin_if_needed():
-    """إنشاء مستخدم مدير افتراضي إذا كانت قاعدة البيانات فارغة"""
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM users")
-    if c.fetchone()[0] == 0:
-        hashed = bcrypt.hashpw("admin".encode(), bcrypt.gensalt())
-        c.execute(
-            "INSERT INTO users (username, password, full_name, role) VALUES (?, ?, ?, ?)",
-            ("admin", hashed.decode(), "مدير النظام", "admin")
-        )
-        conn.commit()
-    conn.close()
 
 def verify_user(username, password):
     """التحقق من صحة بيانات المستخدم"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
-    c.execute("SELECT password, full_name, role FROM users WHERE username=?", (username,))
+    c.execute("SELECT password, full_name, role_id FROM users WHERE username=?", (username,))
     row = c.fetchone()
     conn.close()
     if row:
@@ -30,7 +16,7 @@ def verify_user(username, password):
         if isinstance(stored_password, str):
             stored_password = stored_password.encode()
         if bcrypt.checkpw(password.encode(), stored_password):
-            return {"username": username, "full_name": row["full_name"], "role": row["role"]}
+            return {"username": username, "full_name": row["full_name"], "role_id": row["role_id"]}
     return None
 
 def change_password(username, old_password, new_password):
@@ -62,10 +48,10 @@ def create_user(username, password, full_name, role_id=None):
     """إنشاء مستخدم جديد"""
     conn = get_connection()
     try:
-        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
+        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
         conn.execute(
             "INSERT INTO users (username, password, full_name, role_id) VALUES (?, ?, ?, ?)",
-            (username, hashed.decode(), full_name, role_id)
+            (username, hashed, full_name, role_id)
         )
         conn.commit()
         return True, "تم إنشاء المستخدم بنجاح"
