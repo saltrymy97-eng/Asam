@@ -74,7 +74,7 @@ def show():
 
 أجب عن السؤال التالي بالعربية بشكل مفصل وعميق. قدم أرقاماً محددة، وحلل الاتجاهات، وقدم توصيات قابلة للتنفيذ. إذا كانت البيانات غير كافية، اشرح ما هي البيانات الإضافية المطلوبة. لا تختلق معلومات غير موجودة."""
             with st.spinner("🧠 تحليل عميق..."):
-                ans = query_groq(prompt, q, model=model, max_tokens=2500)
+                ans = query_groq(prompt, q, model=model, max_tokens=1500)
             st.chat_message("assistant").write(ans)
             save_chat_history(st.session_state.active_session, "user", q, model, "مساعد")
             save_chat_history(st.session_state.active_session, "assistant", ans, model, "مساعد")
@@ -85,7 +85,7 @@ def show():
             data = get_comprehensive_data()
             ratios = get_financial_ratios()
             trends = get_trend_analysis()
-            prompt = f"""أنت محلل مالي أول. قم بتحليل البيانات المالية التالية وقدم تقريراً شاملاً:
+            prompt = f"""أنت محلل مالي أول. الأرقام المالية موجودة في السطور التالية. لا تقل "لا توجد بيانات". استخدم هذه الأرقام حصراً لتحليل الأداء:
 - الإيرادات: {data.get('revenue',0):,.2f}
 - المصروفات: {data.get('expenses',0):,.2f}
 - صافي الدخل: {data.get('net_income',0):,.2f}
@@ -96,13 +96,13 @@ def show():
 - اتجاهات المبيعات: {json.dumps(trends, ensure_ascii=False, default=str)}
 
 قدم تقريراً بالعربية يشمل:
-1. تقييم الأداء المالي العام
+1. تقييم الأداء المالي العام (مع ذكر الأرقام)
 2. تحليل النسب المالية ومقارنتها بالمعايير
 3. تحليل الاتجاهات الشهرية
 4. تحديد نقاط القوة والضعف
 5. توصيات استراتيجية محددة"""
             with st.spinner("📊 تحليل شامل..."):
-                ans = query_groq(prompt, "قدم تحليلاً شاملاً", model=model, max_tokens=3000)
+                ans = query_groq(prompt, "قدم تحليلاً شاملاً", model=model, max_tokens=1500)
             glass(ans)
 
     with t3:
@@ -120,7 +120,7 @@ def show():
 3. تقدير التكلفة الإجمالية للطلبيات المقترحة
 4. نصائح لتحسين إدارة المخزون"""
                 with st.spinner("📦 تحليل المخزون..."):
-                    ans = query_groq(prompt, "حلل المخزون", model=model)
+                    ans = query_groq(prompt, "حلل المخزون", model=model, max_tokens=1500)
                 glass(ans)
         if low:
             st.warning("⚠️ منتجات تحت الحد الأدنى:")
@@ -219,7 +219,7 @@ def show():
 2. أنماط غير طبيعية
 3. توصيات للتحقيق الإضافي"""
                 with st.spinner("🔍 تدقيق..."):
-                    ans = query_groq(prompt, "افحص", model=model)
+                    ans = query_groq(prompt, "افحص", model=model, max_tokens=1500)
                 glass(ans)
             else:
                 st.info("لا قيود")
@@ -241,7 +241,7 @@ def show():
 4. المخاطر والفرص
 5. توصيات استراتيجية"""
             with st.spinner("🔮 تخطيط..."):
-                ans = query_groq(prompt, "خطط", model=model, max_tokens=3000)
+                ans = query_groq(prompt, "خطط", model=model, max_tokens=1500)
             glass(ans)
 
     with t8:
@@ -312,7 +312,7 @@ def show():
 
 اجعل الرد باللغة العربية، منظماً ومفصلاً."""
             with st.spinner("🧠 تحليل عميق..."):
-                ans = query_groq(prompt, "قدم تحليلاً شاملاً", model=model, max_tokens=3000)
+                ans = query_groq(prompt, "قدم تحليلاً شاملاً", model=model, max_tokens=1500)
             glass(ans)
 
     with t9:
