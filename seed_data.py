@@ -15,7 +15,7 @@ from services.returns_service import process_return
 from services.receipts_service import create_voucher
 from services.expenses_service import create_expense
 from services.inventory_adjustment_service import create_adjustment
-from services.accounting_service import get_trial_balance
+from services.accounting_service import get_trial_balance, save_journal_entry
 
 # ===================== إعدادات =====================
 TOTAL_OPERATIONS = 10000
@@ -144,6 +144,7 @@ for i in range(200):
 
 # ===================== 3. شراء مخزون افتتاحي =====================
 print("شراء مخزون افتتاحي...")
+total_opening_stock_value = 0  # ✅ لتتبع قيمة المخزون الافتتاحي
 purchase_errors = 0
 for pid in product_ids:
     sid = random.choice(supplier_ids)
@@ -151,13 +152,34 @@ for pid in product_ids:
     qty = random.randint(50, 200)
     items = [{"product_id": pid, "quantity": qty, "unit_price_base": cost}]
     try:
-        inv_id, _, err = create_purchase_invoice(sid, items, currency_code="YER")
+        inv_id, total, err = create_purchase_invoice(sid, items, currency_code="YER")
         if err:
             purchase_errors += 1
+        else:
+            total_opening_stock_value += qty * cost  # ✅ تجميع القيمة
     except Exception as e:
         purchase_errors += 1
 
 print(f"  اكتمل. أخطاء الشراء الافتتاحي: {purchase_errors}")
+
+# ✅ قيد الأرصدة الافتتاحية: تسجيل المخزون مقابل رأس المال
+if total_opening_stock_value > 0:
+    print(f"تسجيل قيد الأرصدة الافتتاحية (المخزون: {total_opening_stock_value:,.2f})...")
+    try:
+        entry_id, err = save_journal_entry(
+            description="قيد الأرصدة الافتتاحية - المخزون ورأس المال",
+            lines=[
+                {"account": "11", "debit": total_opening_stock_value, "credit": 0},  # المخزون
+                {"account": "31", "debit": 0, "credit": total_opening_stock_value}   # رأس المال
+            ],
+            entry_date=date.today().strftime("%Y-%m-%d")
+        )
+        if err:
+            print(f"  ⚠️ فشل قيد الافتتاح: {err}")
+        else:
+            print(f"  ✅ تم قيد الافتتاح")
+    except Exception as e:
+        print(f"  ⚠️ استثناء في قيد الافتتاح: {e}")
 
 # ===================== 4. العمليات المالية =====================
 print("بدء توليد 10,000 عملية...")
