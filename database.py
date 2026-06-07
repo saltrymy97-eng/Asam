@@ -1,7 +1,6 @@
 # database.py - قاعدة بيانات نظام حوكمة ERP (SQLite) – إصدار إنتاجي نهائي
 import sqlite3
 import bcrypt
-import secrets
 
 DB_PATH = "erp.db"
 
@@ -207,7 +206,6 @@ def init_db():
         name TEXT UNIQUE NOT NULL
     )''')
 
-    # تم تحويل role_permissions إلى نموذج تفصيلي
     c.execute('''CREATE TABLE IF NOT EXISTS role_permissions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         role_id INTEGER NOT NULL,
@@ -463,7 +461,7 @@ def init_db():
     conn.close()
 
 def create_default_admin():
-    """إنشاء مستخدم مسؤول افتراضي بكلمة مرور آمنة"""
+    """إنشاء مستخدم مسؤول افتراضي بكلمة مرور ثابتة"""
     conn = get_connection()
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM users")
@@ -473,14 +471,11 @@ def create_default_admin():
         try:
             # 1. تأكد من وجود دور المدير
             c.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (1, 'مدير')")
-            # 2. كلمة مرور عشوائية آمنة
-            temp_password = secrets.token_urlsafe(12)
-            hashed = bcrypt.hashpw(temp_password.encode(), bcrypt.gensalt()).decode()
+            # 2. كلمة مرور ثابتة
+            hashed = bcrypt.hashpw("admin".encode(), bcrypt.gensalt()).decode()
             c.execute("INSERT INTO users (username, password, full_name, role_id) VALUES (?, ?, ?, ?)",
                       ("admin", hashed, "مدير النظام", 1))
             conn.commit()
-            # طباعة كلمة المرور في السجل لأول تشغيل
-            print(f"[حوكمة ERP] تم إنشاء المدير الافتراضي - كلمة المرور: {temp_password}")
         except sqlite3.IntegrityError:
             pass
     conn.close()
