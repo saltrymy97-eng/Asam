@@ -1,4 +1,4 @@
-# ui/sales_ui.py – واجهة المبيعات (تصميم زجاجي فخم + دعم العملات + حماية من التكرار)
+# ui/sales_ui.py – واجهة المبيعات (تصميم زجاجي فخم + حماية احترافية)
 import streamlit as st
 import pandas as pd
 from services.sales_service import (
@@ -41,90 +41,77 @@ def show():
         customers = get_customers()
         if not customers:
             st.warning("لا يوجد عملاء. أضف عميلاً من تبويب 'العملاء' أولاً.")
-            customer_id = None
         else:
             customer_names = [c['name'] for c in customers]
             selected_customer = st.selectbox("اختر العميل", customer_names)
             customer_id = next(c['id'] for c in customers if c['name'] == selected_customer)
 
-        currencies = get_all_currencies()
-        base_currency = get_base_currency()
-        currency_options = {f"{c['code']} - {c['name']}": c['code'] for c in currencies}
-        default_currency = base_currency['code'] if base_currency else 'YER'
-        default_label = next((k for k, v in currency_options.items() if v == default_currency), list(currency_options.keys())[0])
-        selected_currency_label = st.selectbox("💱 العملة", list(currency_options.keys()), index=list(currency_options.keys()).index(default_label))
-        currency_code = currency_options[selected_currency_label]
+            currencies = get_all_currencies()
+            base_currency = get_base_currency()
+            currency_options = {f"{c['code']} - {c['name']}": c['code'] for c in currencies}
+            default_currency = base_currency['code'] if base_currency else 'YER'
+            default_label = next((k for k, v in currency_options.items() if v == default_currency), list(currency_options.keys())[0])
+            selected_currency_label = st.selectbox("💱 العملة", list(currency_options.keys()), index=list(currency_options.keys()).index(default_label))
+            currency_code = currency_options[selected_currency_label]
 
-        products = get_products_for_sale()
-        if not products:
-            st.warning("لا توجد منتجات متاحة للبيع.")
-            return
+            products = get_products_for_sale()
+            if not products:
+                st.warning("لا توجد منتجات متاحة للبيع.")
+            else:
+                if 'invoice_items' not in st.session_state:
+                    st.session_state.invoice_items = []
 
-        if 'invoice_items' not in st.session_state:
-            st.session_state.invoice_items = []
+                # ✅ نموذج إضافة منتج (يمنع التكرار تلقائياً)
+                with st.form("add_item_form", clear_on_submit=True):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        selected_product = st.selectbox("اختر المنتج", [p['name'] for p in products], key="prod_sel")
+                    with col2:
+                        qty = st.number_input("الكمية", min_value=1, step=1, key="qty_sel")
+                    
+                    if st.form_submit_button("➕ أضف إلى الفاتورة", use_container_width=True):
+                        product = next(p for p in products if p['name'] == selected_product)
+                        if qty > product['quantity']:
+                            st.error(f"المخزون غير كافٍ. المتاح: {product['quantity']}")
+                        else:
+                            item = {
+                                "product_id": product['id'],
+                                "name": product['name'],
+                                "quantity": qty,
+                                "unit_price": product['selling_price'],
+                                "total": qty * product['selling_price']
+                            }
+                            st.session_state.invoice_items.append(item)
+                            st.success(f"تمت إضافة {selected_product}")
+                            st.rerun()
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            selected_product = st.selectbox("اختر المنتج", [p['name'] for p in products], key="prod_sel")
-        with col2:
-            qty = st.number_input("الكمية", min_value=1, step=1, key="qty_sel")
-        with col3:
-            if st.button("➕ أضف إلى الفاتورة", use_container_width=True):
-                product = next(p for p in products if p['name'] == selected_product)
-                if qty > product['quantity']:
-                    st.error(f"المخزون غير كافٍ. المتاح: {product['quantity']}")
-                else:
-                    item = {
-                        "product_id": product['id'],
-                        "name": product['name'],
-                        "quantity": qty,
-                        "unit_price": product['selling_price'],
-                        "total": qty * product['selling_price']
-                    }
-                    st.session_state.invoice_items.append(item)
-                    st.success(f"تمت إضافة {selected_product}")
-                    st.rerun()
+                if st.session_state.invoice_items:
+                    st.markdown("---")
+                    st.subheader("بنود الفاتورة")
+                    items_df = pd.DataFrame(st.session_state.invoice_items)
+                    st.dataframe(items_df[["name", "quantity", "unit_price", "total"]], use_container_width=True)
+                    total_invoice = sum(item["total"] for item in st.session_state.invoice_items)
+                    st.markdown(f"### الإجمالي: {total_invoice:,.2f} {currency_code}")
 
-        if st.session_state.invoice_items:
-            st.markdown("---")
-            st.subheader("بنود الفاتورة")
-            items_df = pd.DataFrame(st.session_state.invoice_items)
-            st.dataframe(items_df[["name", "quantity", "unit_price", "total"]], use_container_width=True)
-            total_invoice = sum(item["total"] for item in st.session_state.invoice_items)
-            st.markdown(f"### الإجمالي: {total_invoice:,.2f} {currency_code}")
+                    # ✅ نموذج حفظ الفاتورة (يمنع التكرار تلقائياً)
+                    with st.form("save_invoice_form"):
+                        if st.form_submit_button("💾 حفظ الفاتورة", type="primary", use_container_width=True):
+                            invoice_id, total, error = create_sale_invoice(
+                                customer_id=customer_id,
+                                items=st.session_state.invoice_items,
+                                username=st.session_state.user.get('username', 'admin'),
+                                currency_code=currency_code
+                            )
+                            if error:
+                                st.error(f"فشل في حفظ الفاتورة: {error}")
+                            else:
+                                st.success(f"تم حفظ الفاتورة رقم {invoice_id} بنجاح")
+                                st.session_state.invoice_items = []
+                                st.rerun()
 
-            # ✅ حماية من التكرار مع ضمان إعادة التعيين
-            if "saving_sale" not in st.session_state:
-                st.session_state.saving_sale = False
-
-            save_disabled = st.session_state.saving_sale or customer_id is None
-
-            if st.button("💾 حفظ الفاتورة", type="primary", disabled=save_disabled):
-                st.session_state.saving_sale = True
-                st.rerun()
-
-            # تنفيذ الحفظ بعد إعادة التحميل
-            if st.session_state.saving_sale:
-                try:
-                    invoice_id, total, error = create_sale_invoice(
-                        customer_id=customer_id,
-                        items=st.session_state.invoice_items,
-                        username=st.session_state.user.get('username', 'admin'),
-                        currency_code=currency_code
-                    )
-                    if error:
-                        st.error(f"فشل في حفظ الفاتورة: {error}")
-                    else:
-                        st.success(f"تم حفظ الفاتورة رقم {invoice_id} بنجاح")
+                    if st.button("🗑️ مسح جميع البنود"):
                         st.session_state.invoice_items = []
-                finally:
-                    # ✅ إعادة تعيين دائمة حتى لو حصل خطأ غير متوقع
-                    st.session_state.saving_sale = False
-                    st.rerun()
-
-            if st.button("🗑️ مسح جميع البنود"):
-                st.session_state.invoice_items = []
-                st.rerun()
+                        st.rerun()
 
     # ---------- التبويب 2: فواتير المبيعات ----------
     with tab2:
