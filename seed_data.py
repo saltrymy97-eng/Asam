@@ -1,3 +1,6 @@
+import database
+database.init_db()
+
 import random
 import sys
 from datetime import date, timedelta
@@ -47,7 +50,7 @@ for i in range(200):
     cost = random.randint(10, 500)
     price = cost + random.randint(5, 300)
     add_product(f"منتج-{i+1}", None, "عام", cost, price, 0, 10)
-    product_ids.append(i+1)  # بافتراض أن IDs تبدأ من 1 وتتسلسل
+    product_ids.append(i+1)
 
 # ===================== 3. شراء مخزون افتتاحي =====================
 print("شراء مخزون افتتاحي...")
@@ -87,7 +90,6 @@ for op_num in range(TOTAL_OPERATIONS):
             pid = random.choice(product_ids)
             qty = random.randint(1, 5)
             price = random.randint(100, 1000)
-            # ✅ الإصلاح: إرسال unit_price_base وليس unit_price
             items = [{"product_id": pid, "quantity": qty, "unit_price_base": price}]
             create_sale_invoice(cid, items, currency_code="YER")
 
