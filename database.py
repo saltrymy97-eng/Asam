@@ -64,7 +64,7 @@ def init_db():
         address TEXT
     )''')
 
-    # ========== 3. الفواتير (reference نصي دائماً) ==========
+    # ========== 3. الفواتير ==========
     c.execute('''CREATE TABLE IF NOT EXISTS invoices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
@@ -83,44 +83,6 @@ def init_db():
         FOREIGN KEY (customer_id) REFERENCES customers(id),
         FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
     )''')
-
-    # ALTER للفواتير (متوافق مع النسخ القديمة)
-    try:
-        c.execute("ALTER TABLE invoices ADD COLUMN vat_rate REAL DEFAULT 0.15")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        c.execute("ALTER TABLE invoices ADD COLUMN vat_amount REAL DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        c.execute("ALTER TABLE invoices ADD COLUMN currency_code TEXT DEFAULT 'YER'")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        c.execute("ALTER TABLE invoices ADD COLUMN exchange_rate REAL DEFAULT 1.0")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        c.execute("ALTER TABLE invoices ADD COLUMN total_base REAL DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        c.execute("ALTER TABLE invoices ADD COLUMN reason TEXT")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        c.execute("ALTER TABLE invoices ADD COLUMN reference TEXT")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        c.execute("ALTER TABLE invoices ADD COLUMN customer_id INTEGER REFERENCES customers(id)")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        c.execute("ALTER TABLE invoices ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)")
-    except sqlite3.OperationalError:
-        pass
 
     c.execute('''CREATE TABLE IF NOT EXISTS invoice_items (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,15 +112,6 @@ def init_db():
         exchange_rate REAL DEFAULT 1.0,
         FOREIGN KEY (entry_id) REFERENCES journal_entries(id)
     )''')
-
-    try:
-        c.execute("ALTER TABLE journal_lines ADD COLUMN currency_code TEXT DEFAULT 'YER'")
-    except sqlite3.OperationalError:
-        pass
-    try:
-        c.execute("ALTER TABLE journal_lines ADD COLUMN exchange_rate REAL DEFAULT 1.0")
-    except sqlite3.OperationalError:
-        pass
 
     c.execute('''CREATE TABLE IF NOT EXISTS employees (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -249,10 +202,11 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         role_id INTEGER,
         module TEXT NOT NULL,
-        FOREIGN KEY (role_id) REFERENCES roles(id)
+        FOREIGN KEY (role_id) REFERENCES roles(id),
+        UNIQUE(role_id, module)
     )''')
 
-    # ========== سجل التدقيق (جديد) ==========
+    # ========== سجل التدقيق ==========
     c.execute('''CREATE TABLE IF NOT EXISTS audit_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT,
