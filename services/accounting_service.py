@@ -1,5 +1,6 @@
-# services/accounting_service.py - منطق الحسابات وقيود اليومية (مع دعم الاتصال الخارجي – معدل)
+# services/accounting_service.py - منطق الحسابات وقيود اليومية (مع دعم الاتصال الخارجي – إصدار احترافي)
 import sqlite3
+import uuid
 from datetime import date
 from services import cost_center_service
 from services.currency_service import get_base_currency, get_exchange_rate
@@ -64,9 +65,12 @@ def save_journal_entry(description, lines, entry_date=None, cost_center_allocati
         if own_conn:
             conn.execute("BEGIN")
         
+        # ✅ مرجع فريد احترافي لكل قيد
+        reference = f"ENT-{entry_date}-{uuid.uuid4().hex[:8]}"
+        
         cur = conn.execute(
             "INSERT INTO journal_entries (date, description, reference) VALUES (?, ?, ?)",
-            (entry_date, description, "")
+            (entry_date, description, reference)
         )
         entry_id = cur.lastrowid
         
