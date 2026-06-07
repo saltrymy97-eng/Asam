@@ -41,6 +41,57 @@ def get_account_balance(account_code, cost_center_id=None):
     conn.close()
     return debit, credit
 
+def get_all_active_accounts(cost_center_id=None):
+    """
+    جلب جميع الحسابات المستخدمة في القيود مع تصنيفها.
+    يعيد قائمة بجميع الحسابات مع أرصدتها وطبيعة الحساب إن وجدت.
+    """
+    conn = get_conn()
+    accounts = []
+    
+    if cost_center_id:
+        query = """
+            SELECT DISTINCT jl.account_name as code
+            FROM journal_lines jl
+            JOIN cost_center_allocations cca ON jl.id = cca.journal_line_id
+            WHERE cca.cost_center_id = ?
+            ORDER BY jl.account_name
+        """
+        rows = conn.execute(query, (cost_center_id,)).fetchall()
+    else:
+        query = """
+            SELECT DISTINCT account_name as code
+            FROM journal_lines
+            ORDER BY account_name
+        """
+        rows = conn.execute(query).fetchall()
+    
+    for row in rows:
+        code = row["code"]
+        # جلب اسم وتصنيف الحساب من شجرة الحسابات
+        tree = conn.execute("SELECT name, is_debit, account_type FROM accounts WHERE code=?", (code,)).fetchone()
+        if tree:
+            accounts.append({
+                "code": code,
+                "name": tree["name"],
+                "is_debit": tree["is_debit"] == "debit",
+                "account_type": tree["account_type"]
+            })
+        else:
+            # حساب بدون تصنيف، نعتمد على الرصيد لتحديد الطبيعة
+            debit, credit = get_account_balance(code, cost_center_id)
+            balance = debit - credit
+            is_asset = balance > 0  # إذا كان مديناً نعتبره أصل
+            accounts.append({
+                "code": code,
+                "name": code,
+                "is_debit": is_asset,
+                "account_type": None
+            })
+    
+    conn.close()
+    return accounts
+
 def get_accounts_by_prefix(prefix, cost_center_id=None):
     """
     جلب الحسابات المستخدمة في القيود (أو في توزيعات مركز معين)
@@ -51,7 +102,6 @@ def get_accounts_by_prefix(prefix, cost_center_id=None):
     
     # جلب الحسابات من شجرة الحسابات التي تبدأ بالبادئة
     if cost_center_id:
-        # في حالة مراكز التكلفة: نعتمد على القيود الموزعة
         tree_accounts = conn.execute("""
             SELECT DISTINCT a.code, a.name
             FROM accounts a
@@ -93,7 +143,7 @@ def get_accounts_by_prefix(prefix, cost_center_id=None):
     for e in extra:
         code = e["code"]
         if code not in existing_codes:
-            name = code  # بدون اسم، استخدم الكود
+            name = code
             accounts.append({"code": code, "name": name})
     
     conn.close()
@@ -101,7 +151,6 @@ def get_accounts_by_prefix(prefix, cost_center_id=None):
 
 def get_income_statement(cost_center_id=None):
     """قائمة الدخل (بالعملة الأساسية، مع فلترة اختيارية حسب مركز التكلفة)"""
-    # الإيرادات: حسابات تبدأ بـ "4" (أو 4%)
     rev_accounts = get_accounts_by_prefix("4", cost_center_id)
     revenue_list = []
     total_revenue = 0
@@ -112,7 +161,6 @@ def get_income_statement(cost_center_id=None):
             total_revenue += amount
             revenue_list.append({"code": acc["code"], "name": acc["name"], "amount": amount})
 
-    # المصروفات: حسابات تبدأ بـ "5"
     exp_accounts = get_accounts_by_prefix("5", cost_center_id)
     expense_list = []
     total_expenses = 0
@@ -132,28 +180,56 @@ def get_income_statement(cost_center_id=None):
     }
 
 def get_balance_sheet(cost_center_id=None):
-    """الميزانية العمومية (بالعملة الأساسية) - باستخدام شجرة الحسابات لتصنيف دقيق"""
+    """الميزانية العمومية (بالعملة الأساسية) - تصنيف ذكي للحسابات"""
     # الأصول (1)
     asset_accounts = get_accounts_by_prefix("1", cost_center_id)
     asset_list = []
     total_assets = 0
+    
+    # جلب جميع الحسابات لتصنيف الحسابات غير الموجودة في الشجرة
+    all_accounts = get_all_active_accounts(cost_center_id)
+    tree_codes = {a["code"] for a in asset_accounts}
+    
+    # معالجة الحسابات المصنفة كأصول في الشجرة
     for acc in asset_accounts:
         debit, credit = get_account_balance(acc["code"], cost_center_id)
         amount = debit - credit
         if amount != 0:
             total_assets += amount
             asset_list.append({"code": acc["code"], "name": acc["name"], "amount": amount})
+    
+    # إضافة حسابات غير مصنفة أرصدتها مدينة كأصول
+    for acc in all_accounts:
+        if acc["code"] not in tree_codes and acc["is_debit"]:
+            debit, credit = get_account_balance(acc["code"], cost_center_id)
+            amount = debit - credit
+            if amount > 0:
+                total_assets += amount
+                asset_list.append({"code": acc["code"], "name": acc["name"], "amount": amount})
+                tree_codes.add(acc["code"])
 
     # الخصوم (2)
     liab_accounts = get_accounts_by_prefix("2", cost_center_id)
     liability_list = []
     total_liabilities = 0
+    
     for acc in liab_accounts:
         debit, credit = get_account_balance(acc["code"], cost_center_id)
         amount = credit - debit  # الخصوم دائنة
         if amount != 0:
             total_liabilities += amount
             liability_list.append({"code": acc["code"], "name": acc["name"], "amount": amount})
+            tree_codes.add(acc["code"])
+    
+    # إضافة حسابات غير مصنفة أرصدتها دائنة كخصوم
+    for acc in all_accounts:
+        if acc["code"] not in tree_codes and not acc["is_debit"]:
+            debit, credit = get_account_balance(acc["code"], cost_center_id)
+            amount = credit - debit
+            if amount > 0:
+                total_liabilities += amount
+                liability_list.append({"code": acc["code"], "name": acc["name"], "amount": amount})
+                tree_codes.add(acc["code"])
 
     # حقوق الملكية (3)
     eq_accounts = get_accounts_by_prefix("3", cost_center_id)
