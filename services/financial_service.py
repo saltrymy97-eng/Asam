@@ -42,10 +42,39 @@ def get_account_balance(account_code, cost_center_id=None):
     return debit, credit
 
 def get_accounts_by_prefix(prefix, cost_center_id=None):
-    """جلب الحسابات المستخدمة في القيود (أو في توزيعات مركز معين)"""
+    """
+    جلب الحسابات المستخدمة في القيود (أو في توزيعات مركز معين)
+    مع إعطاء الأولوية لشجرة الحسابات لضمان تصنيف دقيق.
+    """
     conn = get_conn()
+    accounts = []
+    
+    # جلب الحسابات من شجرة الحسابات التي تبدأ بالبادئة
     if cost_center_id:
-        accounts = conn.execute("""
+        # في حالة مراكز التكلفة: نعتمد على القيود الموزعة
+        tree_accounts = conn.execute("""
+            SELECT DISTINCT a.code, a.name
+            FROM accounts a
+            JOIN journal_lines jl ON a.code = jl.account_name
+            JOIN cost_center_allocations cca ON jl.id = cca.journal_line_id
+            WHERE a.code LIKE ? AND cca.cost_center_id = ?
+            ORDER BY a.code
+        """, (prefix + "%", cost_center_id)).fetchall()
+    else:
+        tree_accounts = conn.execute("""
+            SELECT DISTINCT a.code, a.name
+            FROM accounts a
+            JOIN journal_lines jl ON a.code = jl.account_name
+            WHERE a.code LIKE ?
+            ORDER BY a.code
+        """, (prefix + "%",)).fetchall()
+    
+    for acc in tree_accounts:
+        accounts.append({"code": acc["code"], "name": acc["name"]})
+    
+    # جلب الحسابات غير المرتبطة بشجرة الحسابات ولكنها مستخدمة في القيود (للتوافق)
+    if cost_center_id:
+        extra = conn.execute("""
             SELECT DISTINCT jl.account_name as code
             FROM journal_lines jl
             JOIN cost_center_allocations cca ON jl.id = cca.journal_line_id
@@ -53,31 +82,26 @@ def get_accounts_by_prefix(prefix, cost_center_id=None):
             ORDER BY jl.account_name
         """, (prefix + "%", cost_center_id)).fetchall()
     else:
-        accounts = conn.execute("""
+        extra = conn.execute("""
             SELECT DISTINCT jl.account_name as code
             FROM journal_lines jl
             WHERE jl.account_name LIKE ?
             ORDER BY jl.account_name
         """, (prefix + "%",)).fetchall()
-
-    result = []
-    for acc in accounts:
-        code = acc["code"]
-        name_row = conn.execute("SELECT name FROM accounts WHERE code=?", (code,)).fetchone()
-        if name_row:
-            name = name_row["name"]
-        else:
-            # إذا لم يكن رمزًا رقميًا (مثل اسم عميل أو مورد)، نستخدم النص كما هو
-            if code.isdigit():
-                name = code  # حساب بدون اسم مسجل
-            else:
-                name = code
-        result.append({"code": code, "name": name})
+    
+    existing_codes = {a["code"] for a in accounts}
+    for e in extra:
+        code = e["code"]
+        if code not in existing_codes:
+            name = code  # بدون اسم، استخدم الكود
+            accounts.append({"code": code, "name": name})
+    
     conn.close()
-    return result
+    return accounts
 
 def get_income_statement(cost_center_id=None):
     """قائمة الدخل (بالعملة الأساسية، مع فلترة اختيارية حسب مركز التكلفة)"""
+    # الإيرادات: حسابات تبدأ بـ "4" (أو 4%)
     rev_accounts = get_accounts_by_prefix("4", cost_center_id)
     revenue_list = []
     total_revenue = 0
@@ -88,6 +112,7 @@ def get_income_statement(cost_center_id=None):
             total_revenue += amount
             revenue_list.append({"code": acc["code"], "name": acc["name"], "amount": amount})
 
+    # المصروفات: حسابات تبدأ بـ "5"
     exp_accounts = get_accounts_by_prefix("5", cost_center_id)
     expense_list = []
     total_expenses = 0
@@ -107,7 +132,7 @@ def get_income_statement(cost_center_id=None):
     }
 
 def get_balance_sheet(cost_center_id=None):
-    """الميزانية العمومية (بالعملة الأساسية)"""
+    """الميزانية العمومية (بالعملة الأساسية) - باستخدام شجرة الحسابات لتصنيف دقيق"""
     # الأصول (1)
     asset_accounts = get_accounts_by_prefix("1", cost_center_id)
     asset_list = []
@@ -143,13 +168,11 @@ def get_balance_sheet(cost_center_id=None):
 
     # صافي الدخل
     if cost_center_id is None:
-        # صافي الدخل العام من قائمة الدخل
         income_stmt = get_income_statement()
         net_income = income_stmt['net_income']
         total_equity += net_income
         equity_list.append({"code": "", "name": "صافي الدخل (أرباح محتجزة)", "amount": net_income})
     else:
-        # صافي دخل المركز
         inc = get_income_statement(cost_center_id)
         net_income_center = inc['net_income']
         total_equity += net_income_center
