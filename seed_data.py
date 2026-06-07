@@ -121,7 +121,10 @@ for op_num in range(TOTAL_OPERATIONS):
             print(f"  تم تنفيذ {op_num} عملية...")
 
     except Exception as e:
-        errors.append(f"عملية {op_num} ({op_type}): {str(e)[:100]}")
+        err_msg = f"عملية {op_num} ({op_type}): {str(e)[:200]}"
+        errors.append(err_msg)
+        # طباعة فورية للأخطاء لمراقبتها
+        print(f"❌ {err_msg}")
 
 # ===================== 5. النتائج =====================
 print("\n" + "="*60)
