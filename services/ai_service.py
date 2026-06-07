@@ -71,11 +71,10 @@ def query_groq(system_prompt, user_query, model="llama-3.3-70b-versatile", max_t
                 {"role": "user", "content": user_query}
             ],
             temperature=temperature,
-            max_tokens=min(max_tokens, 1500)  # ضمان عدم تجاوز الحد
+            max_tokens=min(max_tokens, 1500)
         )
         return response.choices[0].message.content
     except BadRequestError as e:
-        # إرجاع رسالة خطأ واضحة للمستخدم
         return f"⚠️ خطأ في طلب الذكاء الاصطناعي: {str(e)}. حاول تقليل طول النص أو استخدام نموذج آخر."
     except Exception as e:
         return f"❌ فشل الاتصال بالمساعد الذكي: {str(e)}"
@@ -145,6 +144,18 @@ def get_financial_snapshot():
     assets = conn.execute("SELECT COALESCE(SUM(debit)-SUM(credit),0) FROM journal_lines WHERE account_name LIKE '1%'").fetchone()[0]
     liabilities = conn.execute("SELECT COALESCE(SUM(credit)-SUM(debit),0) FROM journal_lines WHERE account_name LIKE '2%'").fetchone()[0]
     equity = conn.execute("SELECT COALESCE(SUM(credit)-SUM(debit),0) FROM journal_lines WHERE account_name LIKE '3%'").fetchone()[0]
+    
+    # بيانات إضافية
+    top_cust = [dict(r) for r in conn.execute("""
+        SELECT c.name, SUM(i.total) as total FROM invoices i JOIN customers c ON i.customer_id = c.id WHERE i.type='sale' AND i.status='completed' GROUP BY c.id ORDER BY total DESC LIMIT 3
+    """).fetchall()]
+    top_supp = [dict(r) for r in conn.execute("""
+        SELECT s.name, SUM(i.total) as total FROM invoices i JOIN suppliers s ON i.supplier_id = s.id WHERE i.type='purchase' AND i.status='completed' GROUP BY s.id ORDER BY total DESC LIMIT 3
+    """).fetchall()]
+    sales_trend = [dict(r) for r in conn.execute("""
+        SELECT strftime('%Y-%m', invoice_date) as month, SUM(total) as total FROM invoices WHERE type='sale' AND status='completed' GROUP BY month ORDER BY month DESC LIMIT 6
+    """).fetchall()]
+    
     conn.close()
     net_income = revenue - expenses
     profit_margin = (net_income / revenue * 100) if revenue > 0 else 0
@@ -160,6 +171,9 @@ def get_financial_snapshot():
         "profit_margin": round(profit_margin, 1),
         "debt_ratio": round(debt_ratio, 1),
         "roa": round(roa, 1),
+        "top_customers": top_cust,
+        "top_suppliers": top_supp,
+        "sales_trend": sales_trend,
         "warnings": validate_financial_snapshot({
             "revenue": revenue, "expenses": expenses, "net_income": net_income,
             "assets": assets, "liabilities": liabilities, "equity": equity,
@@ -175,19 +189,38 @@ def get_inventory_snapshot():
     if cached:
         return cached
     conn = get_conn()
-    total_products = conn.execute("SELECT COUNT(*) FROM products").fetchone()[0]
-    low_stock = [dict(r) for r in conn.execute(
-        "SELECT name, quantity, reorder_level FROM products WHERE quantity < reorder_level LIMIT 5"
-    ).fetchall()]
-    top_products = [dict(r) for r in conn.execute(
-        "SELECT name, quantity, selling_price FROM products ORDER BY quantity DESC LIMIT 5"
-    ).fetchall()]
+    # جلب جميع المنتجات مع أسعارها وكمياتها
+    all_products = [dict(r) for r in conn.execute("""
+        SELECT name, quantity, reorder_level, selling_price, purchase_price
+        FROM products ORDER BY quantity ASC
+    """).fetchall()]
+    total_products = len(all_products)
+    low_stock = [p for p in all_products if p['quantity'] < p['reorder_level']]
+    
+    # تحليل ذكي لكل منتج
+    for p in all_products:
+        if p['selling_price'] and p['purchase_price'] and p['purchase_price'] > 0:
+            p['profit_margin'] = round((p['selling_price'] - p['purchase_price']) / p['selling_price'] * 100, 1)
+        else:
+            p['profit_margin'] = 0
+        
+        # توصية ذكية
+        if p['quantity'] <= 0:
+            p['recommendation'] = "⚠️ نفد المخزون - طلب عاجل"
+        elif p['quantity'] < p['reorder_level']:
+            p['recommendation'] = f"📉 تحت الحد الأدنى - طلب {p['reorder_level'] - p['quantity']} وحدة"
+        elif p['quantity'] < p['reorder_level'] * 2:
+            p['recommendation'] = "📊 راقب المخزون"
+        else:
+            p['recommendation'] = "✅ مخزون آمن"
+    
     conn.close()
     snap = {
         "total_products": total_products,
         "low_stock_count": len(low_stock),
-        "low_stock_items": low_stock,
-        "top_products": top_products
+        "low_stock_items": low_stock[:10],
+        "top_products": sorted(all_products, key=lambda x: x['quantity'], reverse=True)[:10],
+        "all_products": all_products[:20]  # أول 20 منتج للتحليل
     }
     _cache_set(cache_key, snap)
     return snap
@@ -275,15 +308,34 @@ def get_cost_center_snapshot():
     return summary
 
 def build_ai_context(include_cost_centers=True):
-    ctx = {
-        "financial": get_financial_snapshot(),
-        "inventory": get_inventory_snapshot(),
-        "business": get_business_snapshot(),
-        "hr": get_hr_snapshot(),
-        "trends": get_trend_snapshot()
-    }
+    # بناء قاموس مسطح بالكامل
+    ctx = {}
+    
+    fin = get_financial_snapshot()
+    for k, v in fin.items():
+        ctx[k] = v
+    
+    inv = get_inventory_snapshot()
+    for k, v in inv.items():
+        if k not in ctx:
+            ctx[k] = v
+    
+    biz = get_business_snapshot()
+    for k, v in biz.items():
+        if k not in ctx:
+            ctx[k] = v
+    
+    hr = get_hr_snapshot()
+    for k, v in hr.items():
+        if k not in ctx:
+            ctx[k] = v
+    
+    trends = get_trend_snapshot()
+    ctx["trends"] = trends
+    
     if include_cost_centers:
         ctx["cost_centers"] = get_cost_center_snapshot()
+    
     return ctx
 
 # ===================== دوال عامة (متوافقة مع ui/ai_ui.py) =====================
@@ -292,7 +344,7 @@ def get_comprehensive_data():
 
 def get_inventory_data():
     snapshot = get_inventory_snapshot()
-    return snapshot['low_stock_items'], snapshot['top_products']
+    return snapshot['low_stock_items'], snapshot['all_products'][:20]
 
 def get_employee_info(name):
     conn = get_conn()
