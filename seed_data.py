@@ -58,7 +58,8 @@ for pid in product_ids:
     sid = random.choice(supplier_ids)
     cost = random.randint(50, 500)
     qty = random.randint(50, 200)
-    items = [{"product_id": pid, "quantity": qty, "unit_price": cost}]
+    # ✅ إصلاح: استخدام unit_price_base بدل unit_price
+    items = [{"product_id": pid, "quantity": qty, "unit_price_base": cost}]
     try:
         create_purchase_invoice(sid, items, currency_code="YER")
     except:
@@ -82,7 +83,8 @@ for op_num in range(TOTAL_OPERATIONS):
             pid = random.choice(product_ids)
             qty = random.randint(10, 50)
             price = random.randint(50, 500)
-            items = [{"product_id": pid, "quantity": qty, "unit_price": price}]
+            # ✅ إصلاح: استخدام unit_price_base بدل unit_price
+            items = [{"product_id": pid, "quantity": qty, "unit_price_base": price}]
             create_purchase_invoice(sid, items, currency_code="YER")
 
         elif op_type == 'sale':
@@ -123,7 +125,6 @@ for op_num in range(TOTAL_OPERATIONS):
     except Exception as e:
         err_msg = f"عملية {op_num} ({op_type}): {str(e)[:200]}"
         errors.append(err_msg)
-        # طباعة فورية للأخطاء لمراقبتها
         print(f"❌ {err_msg}")
 
 # ===================== 5. النتائج =====================
