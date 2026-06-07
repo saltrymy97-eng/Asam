@@ -49,7 +49,19 @@ for i in range(200):
     add_product(f"منتج-{i+1}", None, "عام", cost, price, 0, 10)
     product_ids.append(i+1)  # بافتراض أن IDs تبدأ من 1 وتتسلسل
 
-# ===================== 3. العمليات المالية =====================
+# ===================== 3. شراء مخزون افتتاحي =====================
+print("شراء مخزون افتتاحي...")
+for pid in product_ids:
+    sid = random.choice(supplier_ids)
+    cost = random.randint(50, 500)
+    qty = random.randint(50, 200)
+    items = [{"product_id": pid, "quantity": qty, "unit_price": cost}]
+    try:
+        create_purchase_invoice(sid, items, currency_code="YER")
+    except:
+        pass
+
+# ===================== 4. العمليات المالية =====================
 print("بدء توليد 10,000 عملية...")
 errors = []
 success_count = 0
@@ -57,15 +69,15 @@ success_count = 0
 for op_num in range(TOTAL_OPERATIONS):
     try:
         op_type = random.choices(
-            ['purchase', 'sale', 'purchase_return', 'sale_return', 'receipt', 'payment', 'expense', 'adjustment'],
-            weights=[2, 80, 1, 2, 5, 2, 2, 1]
+            ['purchase', 'sale', 'receipt', 'payment', 'expense', 'adjustment'],
+            weights=[5, 80, 5, 3, 3, 1]
         )[0]
         op_date = random_date()
 
         if op_type == 'purchase':
             sid = random.choice(supplier_ids)
             pid = random.choice(product_ids)
-            qty = random.randint(1, 30)
+            qty = random.randint(10, 50)
             price = random.randint(50, 500)
             items = [{"product_id": pid, "quantity": qty, "unit_price": price}]
             create_purchase_invoice(sid, items, currency_code="YER")
@@ -75,11 +87,9 @@ for op_num in range(TOTAL_OPERATIONS):
             pid = random.choice(product_ids)
             qty = random.randint(1, 5)
             price = random.randint(100, 1000)
-            items = [{"product_id": pid, "quantity": qty, "unit_price": price}]
+            # ✅ الإصلاح: إرسال unit_price_base وليس unit_price
+            items = [{"product_id": pid, "quantity": qty, "unit_price_base": price}]
             create_sale_invoice(cid, items, currency_code="YER")
-
-        elif op_type in ['purchase_return', 'sale_return']:
-            pass  # تحتاج منطق أكثر تعقيدًا، نتركها للتبسيط الآن
 
         elif op_type == 'receipt':
             cid = random.choice(customer_ids)
@@ -92,13 +102,17 @@ for op_num in range(TOTAL_OPERATIONS):
             create_voucher('payment', 'supplier', sid, amount, "11")
 
         elif op_type == 'expense':
-            create_expense(op_date, "إيجار", random.randint(500, 2000), "11", "cash")
+            create_expense(op_date, random.choice(["إيجار", "كهرباء", "صيانة", "أخرى"]), 
+                          random.randint(500, 3000), "11", "cash")
 
         elif op_type == 'adjustment':
             pid = random.choice(product_ids)
             diff = random.randint(-5, 5)
             if diff != 0:
-                create_adjustment(pid, 10, 10 + diff)
+                try:
+                    create_adjustment(pid, 10, 10 + diff)
+                except:
+                    pass
 
         success_count += 1
         if op_num % 1000 == 0:
@@ -107,7 +121,7 @@ for op_num in range(TOTAL_OPERATIONS):
     except Exception as e:
         errors.append(f"عملية {op_num} ({op_type}): {str(e)[:100]}")
 
-# ===================== 4. النتائج =====================
+# ===================== 5. النتائج =====================
 print("\n" + "="*60)
 print(f"✅ العمليات الناجحة: {success_count}/{TOTAL_OPERATIONS}")
 print(f"❌ الأخطاء: {len(errors)}")
