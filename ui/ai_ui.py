@@ -25,8 +25,8 @@ PR = "#8B5CF6"
 CY = "#06B6D4"
 
 AVAILABLE_MODELS = {
-    "Llama 3.3 70B (الأسرع)": "llama-3.3-70b-versatile",
-    "Gemma 2 9B (متوازن)": "gemma2-9b-it",  # ✅ تم استبدال النموذج الملغى
+    "Llama 3.3 70B": "llama-3.3-70b-versatile",
+    "Llama 3.1 8B (أسرع)": "llama-3.1-8b-instant",
 }
 
 def h1(title, color=PR):
