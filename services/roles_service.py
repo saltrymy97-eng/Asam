@@ -1,4 +1,4 @@
-# services/roles_service.py – منطق الصلاحيات والأدوار
+# services/roles_service.py – منطق الصلاحيات والأدوار (حوكمة ERP)
 import sqlite3
 from database import get_connection
 
@@ -14,15 +14,17 @@ def create_roles_tables():
     conn.execute("""
         CREATE TABLE IF NOT EXISTS role_permissions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            role_id INTEGER,
+            role_id INTEGER NOT NULL,
             module TEXT NOT NULL,
-            FOREIGN KEY (role_id) REFERENCES roles(id)
+            can_view INTEGER DEFAULT 1 CHECK(can_view IN (0,1)),
+            can_add INTEGER DEFAULT 0 CHECK(can_add IN (0,1)),
+            can_edit INTEGER DEFAULT 0 CHECK(can_edit IN (0,1)),
+            can_delete INTEGER DEFAULT 0 CHECK(can_delete IN (0,1)),
+            can_approve INTEGER DEFAULT 0 CHECK(can_approve IN (0,1)),
+            FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+            UNIQUE(role_id, module)
         )
     """)
-    try:
-        conn.execute("ALTER TABLE users ADD COLUMN role_id INTEGER REFERENCES roles(id)")
-    except sqlite3.OperationalError:
-        pass
     conn.commit()
     conn.close()
 
@@ -30,44 +32,71 @@ def seed_default_roles():
     """إنشاء الأدوار الافتراضية وصلاحياتها"""
     conn = get_connection()
     roles = {
-        "مدير": ["لوحة المعلومات", "المخزون", "المبيعات", "المشتريات", "الحسابات", "الموارد البشرية", "شجرة الحسابات", "القوائم المالية", "الصلاحيات"],
-        "محاسب": ["لوحة المعلومات", "الحسابات", "شجرة الحسابات", "القوائم المالية"],
-        "أمين مخزن": ["لوحة المعلومات", "المخزون"],
-        "كاشير": ["لوحة المعلومات", "المبيعات"]
+        "مدير": {
+            "modules": ["لوحة المعلومات", "المخزون", "المبيعات", "المشتريات", "الحسابات", "الموارد البشرية", "شجرة الحسابات", "القوائم المالية", "الصلاحيات"],
+            "full_access": True  # المدير يملك كل الصلاحيات
+        },
+        "محاسب": {
+            "modules": ["لوحة المعلومات", "الحسابات", "شجرة الحسابات", "القوائم المالية"],
+            "full_access": False
+        },
+        "أمين مخزن": {
+            "modules": ["لوحة المعلومات", "المخزون"],
+            "full_access": False
+        },
+        "كاشير": {
+            "modules": ["لوحة المعلومات", "المبيعات"],
+            "full_access": False
+        }
     }
-    for role_name, modules in roles.items():
+    
+    for role_name, config in roles.items():
         conn.execute("INSERT OR IGNORE INTO roles (name) VALUES (?)", (role_name,))
         conn.row_factory = sqlite3.Row
         role = conn.execute("SELECT id FROM roles WHERE name=?", (role_name,)).fetchone()
         if role:
-            for mod in modules:
-                conn.execute(
-                    "INSERT OR IGNORE INTO role_permissions (role_id, module) VALUES (?, ?)",
-                    (role["id"], mod)
-                )
+            for mod in config["modules"]:
+                if config["full_access"]:
+                    conn.execute("""
+                        INSERT OR IGNORE INTO role_permissions (role_id, module, can_view, can_add, can_edit, can_delete, can_approve)
+                        VALUES (?, ?, 1, 1, 1, 1, 1)
+                    """, (role["id"], mod))
+                else:
+                    conn.execute("""
+                        INSERT OR IGNORE INTO role_permissions (role_id, module, can_view, can_add, can_edit, can_delete, can_approve)
+                        VALUES (?, ?, 1, 1, 0, 0, 0)
+                    """, (role["id"], mod))
+    
+    # تعيين دور المدير للمستخدم admin إذا لم يكن له دور
     admin_role = conn.execute("SELECT id FROM roles WHERE name='مدير'").fetchone()
     if admin_role:
         conn.execute("UPDATE users SET role_id=? WHERE username='admin' AND role_id IS NULL", (admin_role["id"],))
     conn.commit()
     conn.close()
 
-def check_permission(username, module):
-    """التحقق من صلاحية المستخدم لدخول وحدة معينة"""
+def check_permission(username, module, action="view"):
+    """التحقق من صلاحية المستخدم لإجراء معين على وحدة"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     user = conn.execute("SELECT role_id FROM users WHERE username=?", (username,)).fetchone()
     if not user or not user["role_id"]:
         conn.close()
         return False
+    
+    # تحديد عمود الصلاحية المطلوب
+    action_column = f"can_{action}"
+    if action_column not in ["can_view", "can_add", "can_edit", "can_delete", "can_approve"]:
+        action_column = "can_view"
+    
     perm = conn.execute(
-        "SELECT COUNT(*) as cnt FROM role_permissions WHERE role_id=? AND module=?",
+        f"SELECT {action_column} as allowed FROM role_permissions WHERE role_id=? AND module=?",
         (user["role_id"], module)
     ).fetchone()
     conn.close()
-    return perm["cnt"] > 0
+    return perm["allowed"] == 1 if perm else False
 
 def get_allowed_modules(username):
-    """جلب قائمة الوحدات المسموحة للمستخدم"""
+    """جلب قائمة الوحدات المسموحة للمستخدم (للقراءة)"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     user = conn.execute("SELECT role_id FROM users WHERE username=?", (username,)).fetchone()
@@ -75,7 +104,7 @@ def get_allowed_modules(username):
         conn.close()
         return []
     modules = conn.execute(
-        "SELECT module FROM role_permissions WHERE role_id=?",
+        "SELECT module FROM role_permissions WHERE role_id=? AND can_view=1",
         (user["role_id"],)
     ).fetchall()
     conn.close()
@@ -90,19 +119,22 @@ def get_all_roles():
     return [dict(r) for r in roles]
 
 def get_role_permissions(role_id):
-    """جلب صلاحيات دور محدد"""
+    """جلب صلاحيات دور محدد (تفصيلية)"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
-    perms = conn.execute("SELECT module FROM role_permissions WHERE role_id=?", (role_id,)).fetchall()
+    perms = conn.execute(
+        "SELECT module, can_view, can_add, can_edit, can_delete, can_approve FROM role_permissions WHERE role_id=?",
+        (role_id,)
+    ).fetchall()
     conn.close()
-    return [p["module"] for p in perms]
+    return [dict(p) for p in perms]
 
 def get_all_users_with_roles():
     """جلب جميع المستخدمين مع أدوارهم"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     users = conn.execute("""
-        SELECT u.id, u.username, u.full_name, u.role as old_role, r.name as role_name
+        SELECT u.id, u.username, u.full_name, r.name as role_name
         FROM users u
         LEFT JOIN roles r ON u.role_id = r.id
     """).fetchall()
