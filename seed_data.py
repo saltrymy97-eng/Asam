@@ -32,6 +32,57 @@ def random_date(start_year=2025, end_year=2026):
 def random_phone():
     return f"77{random.randint(1000000, 9999999)}"
 
+# ===================== إنشاء الحسابات الافتراضية =====================
+def create_default_accounts():
+    """إنشاء شجرة الحسابات الأساسية إذا لم تكن موجودة"""
+    conn = database.get_connection()
+    c = conn.cursor()
+    
+    # تحقق إذا كانت الحسابات موجودة
+    count = c.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
+    if count > 0:
+        conn.close()
+        print("✅ شجرة الحسابات موجودة مسبقاً")
+        return
+    
+    print("إنشاء شجرة الحسابات الافتراضية...")
+    accounts = [
+        ("1", "الأصول", None, 1, "debit", None),
+        ("11", "المخزون", "1", 2, "debit", None),
+        ("12", "الصندوق", "1", 2, "debit", None),
+        ("2", "الخصوم", None, 1, "credit", None),
+        ("21", "الموردون", "2", 2, "credit", None),
+        ("22", "ضريبة القيمة المضافة المستحقة", "2", 2, "credit", None),
+        ("3", "حقوق الملكية", None, 1, "credit", None),
+        ("31", "رأس المال", "3", 2, "credit", None),
+        ("4", "الإيرادات", None, 1, "credit", None),
+        ("41", "المبيعات", "4", 2, "credit", None),
+        ("42", "مردودات المبيعات", "4", 2, "credit", None),
+        ("5", "المصروفات", None, 1, "debit", None),
+        ("51", "المشتريات", "5", 2, "debit", None),
+        ("52", "مردودات المشتريات", "5", 2, "debit", None),
+        ("53", "تكلفة البضاعة المباعة", "5", 2, "debit", None),
+        ("54", "مصروفات تشغيلية", "5", 2, "debit", None),
+    ]
+    
+    for code, name, parent_code, level, is_debit, acc_type in accounts:
+        try:
+            parent_id = None
+            if parent_code:
+                parent_row = c.execute("SELECT id FROM accounts WHERE code=?", (parent_code,)).fetchone()
+                if parent_row:
+                    parent_id = parent_row[0]
+            c.execute(
+                "INSERT INTO accounts (code, name, parent_id, level, is_debit) VALUES (?, ?, ?, ?, ?)",
+                (code, name, parent_id, level, is_debit)
+            )
+        except Exception as e:
+            pass  # تجاهل إذا كان الحساب موجوداً
+    
+    conn.commit()
+    conn.close()
+    print("✅ تم إنشاء شجرة الحسابات")
+
 # ===================== تشخيص تلقائي =====================
 def diagnostic():
     """فحص سريع للتأكد من أن الخدمات تعمل"""
@@ -62,7 +113,10 @@ def diagnostic():
         traceback.print_exc()
         return False
 
-# ===================== تشغيل التشخيص أولاً =====================
+# ===================== 0. إنشاء شجرة الحسابات =====================
+create_default_accounts()
+
+# ===================== تشغيل التشخيص =====================
 if not diagnostic():
     print("\n⚠️ فشل التشخيص. لن يتم حقن البيانات. أصلح الأخطاء أعلاه.")
     sys.exit(1)
