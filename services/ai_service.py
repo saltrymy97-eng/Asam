@@ -2,7 +2,7 @@
 import sqlite3
 import json
 from datetime import datetime, timedelta
-from groq import Groq
+from groq import Groq, BadRequestError
 import streamlit as st
 
 DB_PATH = "erp.db"
@@ -57,18 +57,28 @@ def create_ai_tables():
     conn.commit()
     conn.close()
 
-def query_groq(system_prompt, user_query, model="llama-3.3-70b-versatile", max_tokens=2000, temperature=0.3):
+def query_groq(system_prompt, user_query, model="llama-3.3-70b-versatile", max_tokens=1500, temperature=0.3):
+    """
+    إرسال استعلام إلى Groq API مع معالجة الخطأ.
+    max_tokens يجب ألا يتجاوز 1500 لتجنب أخطاء الطلب.
+    """
     client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_query}
-        ],
-        temperature=temperature,
-        max_tokens=max_tokens
-    )
-    return response.choices[0].message.content
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_query}
+            ],
+            temperature=temperature,
+            max_tokens=min(max_tokens, 1500)  # ضمان عدم تجاوز الحد
+        )
+        return response.choices[0].message.content
+    except BadRequestError as e:
+        # إرجاع رسالة خطأ واضحة للمستخدم
+        return f"⚠️ خطأ في طلب الذكاء الاصطناعي: {str(e)}. حاول تقليل طول النص أو استخدام نموذج آخر."
+    except Exception as e:
+        return f"❌ فشل الاتصال بالمساعد الذكي: {str(e)}"
 
 def save_chat_history(session_id, role, content, model="", tab_name=""):
     conn = get_conn()
