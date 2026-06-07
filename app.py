@@ -221,6 +221,22 @@ else:
             st.session_state.current_page = "المساعد الذكي"
 
         st.divider()
+        
+        # ✅ زر حقن البيانات (للمدير فقط)
+        if username == 'admin':
+            st.markdown('<div class="menu-section">🧪 أدوات المطور</div>', unsafe_allow_html=True)
+            if st.button("⚡ حقن 10,000 عملية", key="seed_data", help="توليد بيانات تجريبية لاختبار النظام"):
+                with st.spinner("🔄 جاري حقن 10,000 عملية مالية..."):
+                    import subprocess
+                    import sys
+                    result = subprocess.run([sys.executable, "seed_data.py"], capture_output=True, text=True)
+                    if result.returncode == 0:
+                        st.success("✅ تم حقن 10,000 عملية بنجاح!")
+                        st.text(result.stdout[-500:])
+                    else:
+                        st.error("❌ فشل حقن البيانات")
+                        st.text(result.stderr[-500:])
+        
         # زر الخروج
         if st.button("🚪 تسجيل الخروج", key="logout", help="تسجيل الخروج من النظام"):
             logout_session()
