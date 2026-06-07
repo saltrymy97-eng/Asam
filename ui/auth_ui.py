@@ -2,7 +2,6 @@
 import streamlit as st
 from database import init_db
 from services.auth_service import (
-    create_admin_if_needed,
     verify_user,
     change_password,
     logout_session
@@ -264,7 +263,6 @@ def password_change_form():
 
 def show():
     init_db()
-    create_admin_if_needed()
     
     if 'show_password_change' not in st.session_state:
         st.session_state.show_password_change = False
