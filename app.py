@@ -225,13 +225,13 @@ else:
         # ✅ زر حقن البيانات (للمدير فقط)
         if username == 'admin':
             st.markdown('<div class="menu-section">🧪 أدوات المطور</div>', unsafe_allow_html=True)
-            if st.button("⚡ حقن 10,000 عملية", key="seed_data", help="توليد بيانات تجريبية لاختبار النظام"):
-                with st.spinner("🔄 جاري حقن 10,000 عملية مالية..."):
+            if st.button("⚡ حقن 15,000 عملية", key="seed_data", help="توليد بيانات تجريبية لاختبار النظام"):
+                with st.spinner("🔄 جاري حقن 15,000 عملية مالية..."):
                     import subprocess
                     import sys
                     result = subprocess.run([sys.executable, "seed_data.py"], capture_output=True, text=True)
                     if result.returncode == 0:
-                        st.success("✅ تم حقن 10,000 عملية بنجاح!")
+                        st.success("✅ تم حقن 15,000 عملية بنجاح!")
                         st.text(result.stdout[-500:])
                     else:
                         st.error("❌ فشل حقن البيانات")
