@@ -10,3 +10,4 @@ fastapi
 uvicorn[standard]
 scalar-fastapi
 psycopg2-binary
+pkg install openssl
