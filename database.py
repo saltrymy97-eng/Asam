@@ -1,35 +1,25 @@
-# database.py - قاعدة بيانات نظام حوكمة ERP (PostgreSQL) – إصدار إنتاجي نهائي
-import pg8000.native
+# database.py - قاعدة بيانات نظام حوكمة ERP (SQLite) – إصدار إنتاجي نهائي
+import sqlite3
 import bcrypt
 
-# ==========================================
-# إعدادات الاتصال بقاعدة بيانات PostgreSQL
-# ==========================================
-DB_CONFIG = {
-    'host': 'localhost',
-    'port': 5432,
-    'user': 'admin',
-    'password': '123456',
-    'database': 'hokoma_erp'
-}
+DB_PATH = "erp.db"
 
 def get_connection():
-    """إنشاء اتصال بقاعدة بيانات PostgreSQL باستخدام pg8000"""
-    return pg8000.native.Connection(
-        host=DB_CONFIG['host'],
-        port=DB_CONFIG['port'],
-        user=DB_CONFIG['user'],
-        password=DB_CONFIG['password'],
-        database=DB_CONFIG['database']
-    )
+    """إنشاء اتصال بقاعدة البيانات مع دعم الوصول القاموسي للصفوف"""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=15)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.row_factory = sqlite3.Row
+    return conn
 
 def init_db():
     """إنشاء جميع جداول النظام إذا لم تكن موجودة"""
     conn = get_connection()
+    c = conn.cursor()
 
     # ========== 1. المستخدمين (الاعتماد على role_id فقط) ==========
-    conn.run('''CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
         full_name TEXT,
@@ -38,8 +28,8 @@ def init_db():
     )''')
 
     # ========== 2. المنتجات (أسعار وكميات غير سالبة) ==========
-    conn.run('''CREATE TABLE IF NOT EXISTS products (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS products (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         barcode TEXT UNIQUE,
         category TEXT,
@@ -49,8 +39,8 @@ def init_db():
         reorder_level INTEGER DEFAULT 10
     )''')
 
-    conn.run('''CREATE TABLE IF NOT EXISTS stock_movements (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS stock_movements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         product_id INTEGER NOT NULL,
         type TEXT NOT NULL,
         quantity INTEGER NOT NULL,
@@ -59,25 +49,25 @@ def init_db():
         FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
     )''')
 
-    conn.run('''CREATE TABLE IF NOT EXISTS customers (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS customers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         phone TEXT,
         address TEXT
     )''')
 
-    conn.run('''CREATE TABLE IF NOT EXISTS suppliers (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS suppliers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         phone TEXT,
         address TEXT
     )''')
 
     # ========== 3. الفواتير ==========
-    conn.run('''CREATE TABLE IF NOT EXISTS invoices (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS invoices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
-        invoice_date TEXT NOT NULL DEFAULT CURRENT_DATE,
+        invoice_date TEXT NOT NULL DEFAULT (date('now')),
         total REAL DEFAULT 0,
         total_base REAL DEFAULT 0,
         status TEXT DEFAULT 'draft',
@@ -93,8 +83,8 @@ def init_db():
         FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL
     )''')
 
-    conn.run('''CREATE TABLE IF NOT EXISTS invoice_items (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS invoice_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         invoice_id INTEGER NOT NULL,
         product_id INTEGER NOT NULL,
         quantity INTEGER NOT NULL,
@@ -104,15 +94,15 @@ def init_db():
     )''')
 
     # ========== 4. القيود المحاسبية (حماية من التكرار + منع مدين ودائن معاً) ==========
-    conn.run('''CREATE TABLE IF NOT EXISTS journal_entries (
-        id SERIAL PRIMARY KEY,
-        date TEXT NOT NULL DEFAULT CURRENT_DATE,
+    c.execute('''CREATE TABLE IF NOT EXISTS journal_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL DEFAULT (date('now')),
         description TEXT NOT NULL,
         reference TEXT UNIQUE
     )''')
 
-    conn.run('''CREATE TABLE IF NOT EXISTS journal_lines (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS journal_lines (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         entry_id INTEGER NOT NULL,
         account_name TEXT NOT NULL,
         debit REAL DEFAULT 0 CHECK(debit >= 0),
@@ -124,25 +114,25 @@ def init_db():
     )''')
 
     # ========== 5. الموارد البشرية ==========
-    conn.run('''CREATE TABLE IF NOT EXISTS employees (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS employees (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         position TEXT,
         salary REAL,
-        join_date TEXT DEFAULT CURRENT_DATE
+        join_date TEXT DEFAULT (date('now'))
     )''')
 
-    conn.run('''CREATE TABLE IF NOT EXISTS attendance (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS attendance (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         employee_id INTEGER NOT NULL,
-        date TEXT NOT NULL DEFAULT CURRENT_DATE,
+        date TEXT NOT NULL DEFAULT (date('now')),
         status TEXT NOT NULL,
         FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
     )''')
 
     # ========== 6. شجرة الحسابات ==========
-    conn.run('''CREATE TABLE IF NOT EXISTS accounts (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS accounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT UNIQUE NOT NULL,
         name TEXT NOT NULL,
         parent_id INTEGER,
@@ -154,28 +144,28 @@ def init_db():
     )''')
 
     # ========== 7. المخزون و FIFO ==========
-    conn.run('''CREATE TABLE IF NOT EXISTS inventory_batches (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS inventory_batches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         product_id INTEGER NOT NULL,
         quantity REAL NOT NULL CHECK(quantity > 0),
         unit_cost REAL NOT NULL CHECK(unit_cost >= 0),
-        batch_date TEXT NOT NULL DEFAULT CURRENT_DATE,
+        batch_date TEXT NOT NULL DEFAULT (date('now')),
         reference TEXT,
         FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
     )''')
 
-    conn.run('''CREATE TABLE IF NOT EXISTS fifo_consumptions (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS fifo_consumptions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         batch_id INTEGER NOT NULL,
         consumed_qty REAL NOT NULL CHECK(consumed_qty > 0),
-        consumption_date TEXT NOT NULL DEFAULT CURRENT_DATE,
+        consumption_date TEXT NOT NULL DEFAULT (date('now')),
         reference TEXT,
         FOREIGN KEY (batch_id) REFERENCES inventory_batches(id) ON DELETE CASCADE
     )''')
 
     # ========== 8. الرواتب ==========
-    conn.run('''CREATE TABLE IF NOT EXISTS employee_salaries (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS employee_salaries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         employee_id INTEGER UNIQUE NOT NULL,
         basic_salary REAL DEFAULT 0 CHECK(basic_salary >= 0),
         housing_allowance REAL DEFAULT 0 CHECK(housing_allowance >= 0),
@@ -185,8 +175,8 @@ def init_db():
         FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
     )''')
 
-    conn.run('''CREATE TABLE IF NOT EXISTS payroll_runs (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS payroll_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         employee_id INTEGER NOT NULL,
         month TEXT NOT NULL,
         basic_salary REAL,
@@ -201,23 +191,23 @@ def init_db():
     )''')
 
     # ========== 9. إغلاق الفترات ==========
-    conn.run('''CREATE TABLE IF NOT EXISTS closed_periods (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS closed_periods (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         period_type TEXT NOT NULL,
         period_value TEXT NOT NULL,
-        closed_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        closed_at TEXT NOT NULL DEFAULT (datetime('now')),
         closed_by TEXT NOT NULL,
         UNIQUE(period_type, period_value)
     )''')
 
     # ========== 10. الصلاحيات والأدوار ==========
-    conn.run('''CREATE TABLE IF NOT EXISTS roles (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS roles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT UNIQUE NOT NULL
     )''')
 
-    conn.run('''CREATE TABLE IF NOT EXISTS role_permissions (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS role_permissions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         role_id INTEGER NOT NULL,
         module TEXT NOT NULL,
         can_view INTEGER DEFAULT 1 CHECK(can_view IN (0,1)),
@@ -230,20 +220,20 @@ def init_db():
     )''')
 
     # ========== 11. سجل التدقيق ==========
-    conn.run('''CREATE TABLE IF NOT EXISTS audit_log (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT,
         action TEXT NOT NULL,
         table_name TEXT NOT NULL,
         record_id INTEGER,
         old_value TEXT,
         new_value TEXT,
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     )''')
 
     # ========== 12. مراكز التكلفة ==========
-    conn.run('''CREATE TABLE IF NOT EXISTS cost_centers (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS cost_centers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT UNIQUE NOT NULL,
         name TEXT NOT NULL,
         parent_id INTEGER,
@@ -252,8 +242,8 @@ def init_db():
         FOREIGN KEY (parent_id) REFERENCES cost_centers(id) ON DELETE SET NULL
     )''')
 
-    conn.run('''CREATE TABLE IF NOT EXISTS cost_center_allocations (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS cost_center_allocations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         journal_line_id INTEGER NOT NULL,
         cost_center_id INTEGER NOT NULL,
         amount REAL NOT NULL,
@@ -263,8 +253,8 @@ def init_db():
         FOREIGN KEY (cost_center_id) REFERENCES cost_centers(id) ON DELETE CASCADE
     )''')
 
-    conn.run('''CREATE TABLE IF NOT EXISTS cost_center_budgets (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS cost_center_budgets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         cost_center_id INTEGER NOT NULL,
         account_id INTEGER NOT NULL,
         fiscal_year INTEGER NOT NULL,
@@ -276,8 +266,8 @@ def init_db():
     )''')
 
     # ========== 13. العملات ==========
-    conn.run('''CREATE TABLE IF NOT EXISTS currencies (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS currencies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT UNIQUE NOT NULL,
         name TEXT NOT NULL,
         symbol TEXT,
@@ -286,19 +276,19 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
-    conn.run('''CREATE TABLE IF NOT EXISTS exchange_rates (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS exchange_rates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         from_currency TEXT NOT NULL,
         to_currency TEXT NOT NULL,
         rate REAL NOT NULL CHECK(rate > 0),
-        date TEXT NOT NULL DEFAULT CURRENT_DATE,
+        date TEXT NOT NULL DEFAULT (date('now')),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(from_currency, to_currency, date)
     )''')
 
     # ========== 14. البنوك ==========
-    conn.run('''CREATE TABLE IF NOT EXISTS bank_accounts (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS bank_accounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         bank_name TEXT NOT NULL,
         account_number TEXT NOT NULL,
         account_name TEXT,
@@ -309,10 +299,10 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
-    conn.run('''CREATE TABLE IF NOT EXISTS bank_transactions (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS bank_transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         bank_account_id INTEGER NOT NULL,
-        transaction_date TEXT NOT NULL DEFAULT CURRENT_DATE,
+        transaction_date TEXT NOT NULL DEFAULT (date('now')),
         description TEXT,
         type TEXT NOT NULL,
         amount REAL NOT NULL,
@@ -324,10 +314,10 @@ def init_db():
         FOREIGN KEY (journal_line_id) REFERENCES journal_lines(id) ON DELETE SET NULL
     )''')
 
-    conn.run('''CREATE TABLE IF NOT EXISTS bank_reconciliations (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS bank_reconciliations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         bank_account_id INTEGER NOT NULL,
-        reconciliation_date TEXT NOT NULL DEFAULT CURRENT_DATE,
+        reconciliation_date TEXT NOT NULL DEFAULT (date('now')),
         statement_balance REAL NOT NULL,
         book_balance REAL NOT NULL,
         difference REAL DEFAULT 0,
@@ -338,8 +328,8 @@ def init_db():
     )''')
 
     # ========== 15. المرفقات ==========
-    conn.run('''CREATE TABLE IF NOT EXISTS attachments (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS attachments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         filename TEXT NOT NULL,
         original_name TEXT NOT NULL,
         file_path TEXT NOT NULL,
@@ -352,19 +342,19 @@ def init_db():
     )''')
 
     # ========== 16. ضريبة ==========
-    conn.run('''CREATE TABLE IF NOT EXISTS vat_config (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS vat_config (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         rate REAL NOT NULL DEFAULT 0.15 CHECK(rate >= 0 AND rate <= 1),
         is_active INTEGER CHECK(is_active IN (0,1)) DEFAULT 1,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
-    conn.run("INSERT INTO vat_config (id, rate, is_active) VALUES (1, 0.15, 1) ON CONFLICT (id) DO NOTHING")
+    c.execute("INSERT OR IGNORE INTO vat_config (id, rate, is_active) VALUES (1, 0.15, 1)")
 
     # ========== 17. السندات والمصروفات والتسويات والافتتاحية وإعادة التقييم ==========
-    conn.run('''CREATE TABLE IF NOT EXISTS vouchers (
-        id SERIAL PRIMARY KEY,
+    c.execute('''CREATE TABLE IF NOT EXISTS vouchers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
-        date TEXT NOT NULL DEFAULT CURRENT_DATE,
+        date TEXT NOT NULL DEFAULT (date('now')),
         party_type TEXT NOT NULL,
         party_id INTEGER,
         amount REAL NOT NULL CHECK(amount > 0),
@@ -377,9 +367,9 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
-    conn.run('''CREATE TABLE IF NOT EXISTS expenses (
-        id SERIAL PRIMARY KEY,
-        date TEXT NOT NULL DEFAULT CURRENT_DATE,
+    c.execute('''CREATE TABLE IF NOT EXISTS expenses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL DEFAULT (date('now')),
         category TEXT NOT NULL,
         amount REAL NOT NULL CHECK(amount > 0),
         account_code TEXT NOT NULL,
@@ -393,9 +383,9 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
-    conn.run('''CREATE TABLE IF NOT EXISTS inventory_adjustments (
-        id SERIAL PRIMARY KEY,
-        date TEXT NOT NULL DEFAULT CURRENT_DATE,
+    c.execute('''CREATE TABLE IF NOT EXISTS inventory_adjustments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL DEFAULT (date('now')),
         product_id INTEGER NOT NULL,
         expected_qty REAL NOT NULL,
         actual_qty REAL NOT NULL,
@@ -410,9 +400,9 @@ def init_db():
         FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
     )''')
 
-    conn.run('''CREATE TABLE IF NOT EXISTS opening_balances (
-        id SERIAL PRIMARY KEY,
-        entry_date TEXT NOT NULL DEFAULT CURRENT_DATE,
+    c.execute('''CREATE TABLE IF NOT EXISTS opening_balances (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entry_date TEXT NOT NULL DEFAULT (date('now')),
         account_code TEXT NOT NULL,
         account_name TEXT,
         debit REAL DEFAULT 0,
@@ -422,9 +412,9 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
-    conn.run('''CREATE TABLE IF NOT EXISTS opening_inventory (
-        id SERIAL PRIMARY KEY,
-        entry_date TEXT NOT NULL DEFAULT CURRENT_DATE,
+    c.execute('''CREATE TABLE IF NOT EXISTS opening_inventory (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entry_date TEXT NOT NULL DEFAULT (date('now')),
         product_id INTEGER NOT NULL,
         quantity REAL NOT NULL CHECK(quantity > 0),
         unit_cost REAL NOT NULL CHECK(unit_cost >= 0),
@@ -434,9 +424,9 @@ def init_db():
         FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
     )''')
 
-    conn.run('''CREATE TABLE IF NOT EXISTS currency_revaluations (
-        id SERIAL PRIMARY KEY,
-        date TEXT NOT NULL DEFAULT CURRENT_DATE,
+    c.execute('''CREATE TABLE IF NOT EXISTS currency_revaluations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL DEFAULT (date('now')),
         account_name TEXT NOT NULL,
         currency_code TEXT NOT NULL,
         old_rate REAL,
@@ -451,43 +441,41 @@ def init_db():
     )''')
 
     # ========== 18. الفهارس (Indexes) لتحسين الأداء ==========
-    conn.run("CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)")
-    conn.run("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name)")
-    conn.run("CREATE INDEX IF NOT EXISTS idx_invoices_date ON invoices(invoice_date)")
-    conn.run("CREATE INDEX IF NOT EXISTS idx_invoices_type ON invoices(type)")
-    conn.run("CREATE INDEX IF NOT EXISTS idx_invoices_customer ON invoices(customer_id)")
-    conn.run("CREATE INDEX IF NOT EXISTS idx_invoices_supplier ON invoices(supplier_id)")
-    conn.run("CREATE INDEX IF NOT EXISTS idx_journal_entries_date ON journal_entries(date)")
-    conn.run("CREATE INDEX IF NOT EXISTS idx_journal_lines_account ON journal_lines(account_name)")
-    conn.run("CREATE INDEX IF NOT EXISTS idx_stock_movements_product ON stock_movements(product_id)")
-    conn.run("CREATE INDEX IF NOT EXISTS idx_inventory_batches_product ON inventory_batches(product_id)")
-    conn.run("CREATE INDEX IF NOT EXISTS idx_fifo_consumptions_batch ON fifo_consumptions(batch_id)")
-    conn.run("CREATE INDEX IF NOT EXISTS idx_attendance_employee ON attendance(employee_id)")
-    conn.run("CREATE INDEX IF NOT EXISTS idx_audit_log_table ON audit_log(table_name)")
-    conn.run("CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(username)")
-    conn.run("CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_date ON invoices(invoice_date)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_type ON invoices(type)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_customer ON invoices(customer_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_supplier ON invoices(supplier_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_journal_entries_date ON journal_entries(date)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_account ON journal_lines(account_name)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_product ON stock_movements(product_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_inventory_batches_product ON inventory_batches(product_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_fifo_consumptions_batch ON fifo_consumptions(batch_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_attendance_employee ON attendance(employee_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_table ON audit_log(table_name)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(username)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp)")
 
+    conn.commit()
     conn.close()
 
 def create_default_admin():
     """إنشاء مستخدم مسؤول افتراضي بكلمة مرور ثابتة"""
     conn = get_connection()
-    # التحقق من وجود مستخدمين
-    rows = conn.run("SELECT COUNT(*) FROM users")
-    count = rows[0][0] if rows else 0
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM users")
+    row = c.fetchone()
+    count = row[0] if row else 0
     if count == 0:
         try:
             # 1. تأكد من وجود دور المدير
-            conn.run("INSERT INTO roles (id, name) VALUES (1, 'مدير') ON CONFLICT (id) DO NOTHING")
+            c.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (1, 'مدير')")
             # 2. كلمة مرور ثابتة
             hashed = bcrypt.hashpw("admin".encode(), bcrypt.gensalt()).decode()
-            conn.run(
-                "INSERT INTO users (username, password, full_name, role_id) VALUES (:username, :password, :full_name, :role_id) ON CONFLICT (username) DO NOTHING",
-                username="admin",
-                password=hashed,
-                full_name="مدير النظام",
-                role_id=1
-            )
-        except Exception:
+            c.execute("INSERT INTO users (username, password, full_name, role_id) VALUES (?, ?, ?, ?)",
+                      ("admin", hashed, "مدير النظام", 1))
+            conn.commit()
+        except sqlite3.IntegrityError:
             pass
     conn.close()
