@@ -318,7 +318,7 @@ for name, cat, pur_date, cost, salvage, years in asset_types:
         run_depreciation(asset_id)
 print(f"  ✅ {len(asset_ids)} أصول + 200 إهلاك")
 
-# --- 5.4 البنوك (تم إصلاح أنواع الحركات) ---
+# --- 5.4 البنوك (تم إصلاح أنواع الحركات إلى الإنجليزية) ---
 print("\n🏦 إنشاء حسابات بنكية...")
 banks = [
     ("بنك الأمل", "1234567890", "حساب بنك الأمل", "YER", 500000),
@@ -332,7 +332,7 @@ for bank_name, acc_num, acc_name, curr, balance in banks:
     bank_id = create_bank_account(bank_name, acc_num, acc_name, curr, balance)
     bank_ids.append(bank_id)
     for _ in range(100):
-        trans_type = random.choice(["إيداع", "سحب"])
+        trans_type = random.choice(["deposit", "withdrawal"])
         add_bank_transaction(bank_id, random_date(), f"حركة {bank_name}", trans_type, random.randint(1000, 100000))
     create_bank_reconciliation(bank_id, random_date(), balance + random.randint(-5000, 5000))
 print(f"  ✅ {len(bank_ids)} حسابات + 500 حركة")
