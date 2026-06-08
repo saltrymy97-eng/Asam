@@ -68,62 +68,77 @@ def get_all_assets():
     return [dict(a) for a in assets]
 
 def run_depreciation(asset_id, entry_date=None, notes=""):
-    """تشغيل إهلاك شهري لأصل محدد وتسجيل قيد محاسبي"""
+    """تشغيل إهلاك شهري لأصل محدد وتسجيل قيد محاسبي (مع حماية atomicity)"""
     if entry_date is None:
         entry_date = date.today().strftime("%Y-%m-%d")
 
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     
-    asset = conn.execute("SELECT * FROM fixed_assets WHERE id=?", (asset_id,)).fetchone()
-    if not asset or asset["status"] != "نشط":
+    try:
+        conn.execute("BEGIN")
+        
+        asset = conn.execute("SELECT * FROM fixed_assets WHERE id=?", (asset_id,)).fetchone()
+        if not asset or asset["status"] != "نشط":
+            conn.rollback()
+            conn.close()
+            return False, "الأصل غير موجود أو غير نشط"
+
+        monthly_dep = asset["monthly_depreciation"]
+        if monthly_dep <= 0:
+            conn.rollback()
+            conn.close()
+            return False, "قيمة الإهلاك صفر"
+
+        # الحل الاحترافي: رقم تسلسلي للإهلاك لكل أصل
+        count = conn.execute(
+            "SELECT COUNT(*) FROM depreciation_entries WHERE asset_id=?", (asset_id,)
+        ).fetchone()[0] + 1
+        
+        desc = f"إهلاك {asset['name']} - الشهر {count} - {entry_date}"
+        reference = f"إهلاك أصل #{asset_id} - شهر {count}"
+        
+        cur = conn.execute(
+            "INSERT INTO journal_entries (date, description, reference) VALUES (?, ?, ?)",
+            (entry_date, desc, reference)
+        )
+        entry_id = cur.lastrowid
+
+        # مدين: مصروف الإهلاك
+        conn.execute(
+            "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, 'مصروف الإهلاك', ?, 0)",
+            (entry_id, monthly_dep)
+        )
+        # دائن: مجمع الإهلاك
+        conn.execute(
+            "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, 'مجمع الإهلاك', 0, ?)",
+            (entry_id, monthly_dep)
+        )
+
+        # تحديث الأصل
+        new_accumulated = round(asset["accumulated_depreciation"] + monthly_dep, 2)
+        new_book_value = round(asset["purchase_cost"] - new_accumulated, 2)
+        new_status = "نشط" if new_book_value > asset["salvage_value"] else "مستنفذ"
+
+        conn.execute(
+            "UPDATE fixed_assets SET accumulated_depreciation=?, book_value=?, status=? WHERE id=?",
+            (new_accumulated, new_book_value, new_status, asset_id)
+        )
+
+        # تسجيل في سجل الإهلاك
+        conn.execute(
+            "INSERT INTO depreciation_entries (asset_id, entry_date, amount, journal_entry_id, notes) VALUES (?, ?, ?, ?, ?)",
+            (asset_id, entry_date, monthly_dep, entry_id, notes)
+        )
+
+        conn.commit()
         conn.close()
-        return False, "الأصل غير موجود أو غير نشط"
-
-    monthly_dep = asset["monthly_depreciation"]
-    if monthly_dep <= 0:
+        return True, f"تم تسجيل إهلاك {monthly_dep:.2f} للأصل {asset['name']} (شهر {count})"
+    
+    except Exception as e:
+        conn.rollback()
         conn.close()
-        return False, "قيمة الإهلاك صفر"
-
-    # تسجيل قيد الإهلاك في journal_entries (مع reference فريد)
-    desc = f"إهلاك {asset['name']} - {entry_date}"
-    reference = f"إهلاك أصل #{asset_id} - {entry_date}"
-    cur = conn.execute(
-        "INSERT INTO journal_entries (date, description, reference) VALUES (?, ?, ?)",
-        (entry_date, desc, reference)
-    )
-    entry_id = cur.lastrowid
-
-    # مدين: مصروف الإهلاك
-    conn.execute(
-        "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, 'مصروف الإهلاك', ?, 0)",
-        (entry_id, monthly_dep)
-    )
-    # دائن: مجمع الإهلاك
-    conn.execute(
-        "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, 'مجمع الإهلاك', 0, ?)",
-        (entry_id, monthly_dep)
-    )
-
-    # تحديث الأصل
-    new_accumulated = round(asset["accumulated_depreciation"] + monthly_dep, 2)
-    new_book_value = round(asset["purchase_cost"] - new_accumulated, 2)
-    new_status = "نشط" if new_book_value > asset["salvage_value"] else "مستنفذ"
-
-    conn.execute(
-        "UPDATE fixed_assets SET accumulated_depreciation=?, book_value=?, status=? WHERE id=?",
-        (new_accumulated, new_book_value, new_status, asset_id)
-    )
-
-    # تسجيل في سجل الإهلاك
-    conn.execute(
-        "INSERT INTO depreciation_entries (asset_id, entry_date, amount, journal_entry_id, notes) VALUES (?, ?, ?, ?, ?)",
-        (asset_id, entry_date, monthly_dep, entry_id, notes)
-    )
-
-    conn.commit()
-    conn.close()
-    return True, f"تم تسجيل إهلاك {monthly_dep:.2f} للأصل {asset['name']}"
+        return False, f"فشل تسجيل الإهلاك: {str(e)}"
 
 def run_all_depreciations():
     """تشغيل الإهلاك الشهري لجميع الأصول النشطة"""
