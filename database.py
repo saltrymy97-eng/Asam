@@ -440,7 +440,7 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
-    # ========== 18. الأصول الثابتة (إضافة جديدة) ==========
+    # ========== 18. الأصول الثابتة (تم إضافة depreciation_method) ==========
     c.execute('''CREATE TABLE IF NOT EXISTS fixed_assets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -450,6 +450,7 @@ def init_db():
         salvage_value REAL DEFAULT 0,
         useful_life_years INTEGER DEFAULT 5,
         method TEXT DEFAULT 'قسط ثابت',
+        depreciation_method TEXT DEFAULT 'قسط ثابت',
         monthly_dep REAL DEFAULT 0,
         accumulated_dep REAL DEFAULT 0,
         book_value REAL,
