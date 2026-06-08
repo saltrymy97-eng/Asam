@@ -85,11 +85,12 @@ def run_depreciation(asset_id, entry_date=None, notes=""):
         conn.close()
         return False, "قيمة الإهلاك صفر"
 
-    # تسجيل قيد الإهلاك في journal_entries
+    # تسجيل قيد الإهلاك في journal_entries (مع reference فريد)
     desc = f"إهلاك {asset['name']} - {entry_date}"
+    reference = f"إهلاك أصل #{asset_id} - {entry_date}"
     cur = conn.execute(
         "INSERT INTO journal_entries (date, description, reference) VALUES (?, ?, ?)",
-        (entry_date, desc, f"إهلاك أصل #{asset_id}")
+        (entry_date, desc, reference)
     )
     entry_id = cur.lastrowid
 
