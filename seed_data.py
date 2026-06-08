@@ -18,7 +18,7 @@ from services.inventory_adjustment_service import create_adjustment
 from services.accounting_service import get_trial_balance, save_journal_entry
 
 # استيراد خدمات الوحدات الإضافية
-from services.hr_service import add_employee, add_attendance
+from services.hr_service import add_employee, record_attendance  # تم التصحيح
 from services.payroll_service import create_salary_record, run_payroll
 from services.assets_service import add_asset, depreciate_asset
 from services.bank_service import create_bank_account, create_bank_transaction, reconcile_bank
@@ -278,11 +278,24 @@ for i in range(50):
     name = f"موظف-{i+1}"
     pos = random.choice(positions)
     salary = random.randint(25000, 100000)
-    emp_id = add_employee(name, pos, salary)
-    employee_ids.append(emp_id)
-    for d in range(9):
-        day = (date.today() - timedelta(days=d)).strftime("%Y-%m-%d")
-        add_attendance(emp_id, day, random.choice(["حاضر", "حاضر", "حاضر", "غائب", "متأخر"]))
+    join_date = random_date()
+    success, msg = add_employee(name, pos, salary, join_date)
+    if success:
+        # جلب المعرف المضاف حديثاً
+        conn = database.get_connection()
+        cur = conn.execute("SELECT id FROM employees ORDER BY id DESC LIMIT 1")
+        row = cur.fetchone()
+        emp_id = row[0] if row else 0
+        conn.close()
+        employee_ids.append(emp_id)
+        # تسجيل 9 أيام حضور
+        for d in range(9):
+            day = (date.today() - timedelta(days=d)).strftime("%Y-%m-%d")
+            status = random.choice(["حاضر", "حاضر", "حاضر", "غائب", "متأخر"])
+            record_attendance(emp_id, name, day, status)
+    else:
+        print(f"  ⚠️ فشل إضافة موظف {name}: {msg}")
+
 print(f"  ✅ {len(employee_ids)} موظف + {len(employee_ids)*9} سجل حضور = 500 عملية")
 
 # --- 5.2 الرواتب (200 عملية: 50 سجل + 3 أشهر تشغيل = 200) ---
@@ -440,12 +453,17 @@ for _ in range(extra_ops):
         elif op == 'expense':
             create_expense(random_date(), random.choice(["إيجار","كهرباء","صيانة"]), random.randint(500,3000), "11", "cash")
         elif op == 'attendance':
-            add_attendance(random.choice(employee_ids), random_date(), "حاضر")
+            if employee_ids:
+                emp_id = random.choice(employee_ids)
+                # نحتاج اسم الموظف، يمكن جلب المخزون أولاً أو استخدام اسم وهمي
+                record_attendance(emp_id, "موظف", random_date(), "حاضر")
         elif op == 'bank_trans':
-            create_bank_transaction(random.choice(bank_ids), random_date(), random.choice(["إيداع","سحب"]), random.randint(1000,50000), "حركة")
+            if bank_ids:
+                create_bank_transaction(random.choice(bank_ids), random_date(), random.choice(["إيداع","سحب"]), random.randint(1000,50000), "حركة")
         elif op == 'allocation':
-            allocate_to_cost_center(random.randint(1,20), random.choice(cc_ids), random.randint(500,20000), random.randint(10,100))
-    except:
+            if cc_ids:
+                allocate_to_cost_center(random.randint(1,20), random.choice(cc_ids), random.randint(500,20000), random.randint(10,100))
+    except Exception:
         pass
 print(f"  ✅ {extra_ops} عملية إضافية")
 
