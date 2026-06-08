@@ -292,7 +292,7 @@ for emp_id in employee_ids:
     deductions = random.randint(0, 3000)
     save_salary_config(emp_id, basic, housing, transport, other, deductions)
 for month in ["2026-04", "2026-05", "2026-06"]:
-    for emp_id in employee_ids[:5]:  # 5 موظفين فقط للسرعة
+    for emp_id in employee_ids[:5]:
         run_payroll(emp_id, month)
 print(f"  ✅ تم إعداد 50 راتب وتشغيل 3 أشهر")
 
@@ -318,7 +318,7 @@ for name, cat, pur_date, cost, salvage, years in asset_types:
         run_depreciation(asset_id)
 print(f"  ✅ {len(asset_ids)} أصول + 200 إهلاك")
 
-# --- 5.4 البنوك ---
+# --- 5.4 البنوك (تم إصلاح أنواع الحركات) ---
 print("\n🏦 إنشاء حسابات بنكية...")
 banks = [
     ("بنك الأمل", "1234567890", "حساب بنك الأمل", "YER", 500000),
@@ -332,7 +332,7 @@ for bank_name, acc_num, acc_name, curr, balance in banks:
     bank_id = create_bank_account(bank_name, acc_num, acc_name, curr, balance)
     bank_ids.append(bank_id)
     for _ in range(100):
-        trans_type = random.choice(["إيداع", "سحب", "تحويل"])
+        trans_type = random.choice(["إيداع", "سحب"])
         add_bank_transaction(bank_id, random_date(), f"حركة {bank_name}", trans_type, random.randint(1000, 100000))
     create_bank_reconciliation(bank_id, random_date(), balance + random.randint(-5000, 5000))
 print(f"  ✅ {len(bank_ids)} حسابات + 500 حركة")
@@ -390,7 +390,6 @@ print(f"  ✅ 50 مستخدم")
 
 # --- 5.9 المرفقات ---
 print("\n📎 رفع مرفقات...")
-# upload_attachment يأخذ uploaded_file (كائن ملف)، لذا نستخدم try
 for i in range(50):
     try:
         upload_attachment(None, "invoices", 1, "admin")
