@@ -440,7 +440,34 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
-    # ========== 18. الفهارس (Indexes) لتحسين الأداء ==========
+    # ========== 18. الأصول الثابتة (إضافة جديدة) ==========
+    c.execute('''CREATE TABLE IF NOT EXISTS fixed_assets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        category TEXT,
+        purchase_date TEXT,
+        purchase_cost REAL,
+        salvage_value REAL DEFAULT 0,
+        useful_life_years INTEGER DEFAULT 5,
+        method TEXT DEFAULT 'قسط ثابت',
+        monthly_dep REAL DEFAULT 0,
+        accumulated_dep REAL DEFAULT 0,
+        book_value REAL,
+        notes TEXT
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS depreciation_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        asset_id INTEGER NOT NULL,
+        entry_date TEXT,
+        dep_amount REAL,
+        accumulated REAL,
+        book_value_after REAL,
+        notes TEXT,
+        FOREIGN KEY (asset_id) REFERENCES fixed_assets(id) ON DELETE CASCADE
+    )''')
+
+    # ========== 19. الفهارس (Indexes) لتحسين الأداء ==========
     c.execute("CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_date ON invoices(invoice_date)")
@@ -456,6 +483,8 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_table ON audit_log(table_name)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(username)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_fixed_assets_category ON fixed_assets(category)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_depreciation_entries_asset ON depreciation_entries(asset_id)")
 
     conn.commit()
     conn.close()
