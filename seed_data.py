@@ -318,7 +318,7 @@ for name, cat, pur_date, cost, salvage, years in asset_types:
         run_depreciation(asset_id)
 print(f"  ✅ {len(asset_ids)} أصول + 200 إهلاك")
 
-# --- 5.4 البنوك (تم إصلاح أنواع الحركات إلى الإنجليزية) ---
+# --- 5.4 البنوك ---
 print("\n🏦 إنشاء حسابات بنكية...")
 banks = [
     ("بنك الأمل", "1234567890", "حساب بنك الأمل", "YER", 500000),
@@ -337,21 +337,28 @@ for bank_name, acc_num, acc_name, curr, balance in banks:
     create_bank_reconciliation(bank_id, random_date(), balance + random.randint(-5000, 5000))
 print(f"  ✅ {len(bank_ids)} حسابات + 500 حركة")
 
-# --- 5.5 العملات ---
-print("\n💱 إنشاء عملات...")
-currencies = [
+# --- 5.5 العملات (حل احترافي: يتجنب التكرار مع seed_default_roles) ---
+print("\n💱 إنشاء عملات وأسعار صرف...")
+currencies_to_seed = [
     ("USD", "دولار أمريكي", "$"),
     ("SAR", "ريال سعودي", "ر.س"),
     ("AED", "درهم إماراتي", "د.إ"),
     ("EUR", "يورو", "€"),
     ("GBP", "جنيه إسترليني", "£"),
 ]
-for code, name, symbol in currencies:
-    create_currency(code, name, symbol)
+for code, name, symbol in currencies_to_seed:
+    try:
+        create_currency(code, name, symbol)
+    except:
+        pass  # العملة موجودة مسبقاً (أنشأتها seed_default_roles)
+    # إضافة أسعار صرف متنوعة
     for _ in range(40):
         rate = random.uniform(250, 1500) if code in ["USD", "EUR", "GBP"] else random.uniform(3.5, 270)
-        set_exchange_rate(code, "YER", rate, random_date())
-print(f"  ✅ {len(currencies)} عملات + 200 سعر صرف")
+        try:
+            set_exchange_rate(code, "YER", rate, random_date())
+        except:
+            pass
+print(f"  ✅ {len(currencies_to_seed)} عملات + 200 سعر صرف")
 
 # --- 5.6 مراكز التكلفة ---
 print("\n🏢 إنشاء مراكز تكلفة...")
@@ -441,7 +448,7 @@ print(f"  مصروفات: {expense_count}")
 print(f"  تسويات: {adjustment_count}")
 print(f"  موظفين: {len(employee_ids)}")
 print(f"  حسابات بنكية: {len(bank_ids)}")
-print(f"  عملات: {len(currencies)}")
+print(f"  عملات: {len(currencies_to_seed)}")
 print(f"  مراكز تكلفة: {len(cc_ids)}")
 print(f"  أصول: {len(asset_ids)}")
 print(f"  عملاء محتملين: {len(lead_ids)}")
