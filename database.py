@@ -440,35 +440,32 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
-    # ========== 18. الأصول الثابتة (متوافق كلياً مع assets_service) ==========
+    # ========== 18. الأصول الثابتة (متوافق 100% مع assets_service.py) ==========
     c.execute('''CREATE TABLE IF NOT EXISTS fixed_assets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
-        category TEXT,
-        purchase_date TEXT,
-        purchase_cost REAL,
+        category TEXT DEFAULT 'أثاث ومعدات',
+        purchase_date TEXT NOT NULL,
+        purchase_cost REAL NOT NULL,
         salvage_value REAL DEFAULT 0,
         useful_life_years INTEGER DEFAULT 5,
-        method TEXT DEFAULT 'قسط ثابت',
         depreciation_method TEXT DEFAULT 'قسط ثابت',
-        monthly_dep REAL DEFAULT 0,
         monthly_depreciation REAL DEFAULT 0,
-        accumulated_dep REAL DEFAULT 0,
         accumulated_depreciation REAL DEFAULT 0,
-        book_value REAL,
+        book_value REAL DEFAULT 0,
         status TEXT DEFAULT 'نشط',
-        notes TEXT
+        notes TEXT,
+        created_at TEXT DEFAULT (datetime('now','localtime'))
     )''')
 
     c.execute('''CREATE TABLE IF NOT EXISTS depreciation_entries (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        asset_id INTEGER NOT NULL,
-        entry_date TEXT,
-        dep_amount REAL,
-        accumulated REAL,
-        book_value_after REAL,
+        asset_id INTEGER,
+        entry_date TEXT NOT NULL,
+        amount REAL NOT NULL,
+        journal_entry_id INTEGER,
         notes TEXT,
-        FOREIGN KEY (asset_id) REFERENCES fixed_assets(id) ON DELETE CASCADE
+        FOREIGN KEY (asset_id) REFERENCES fixed_assets(id)
     )''')
 
     # ========== 19. الفهارس (Indexes) لتحسين الأداء ==========
