@@ -1,5 +1,4 @@
-# services/sales_service.py – منطق أعمال المبيعات المُحسَّن (إصدار احترافي)
-import sqlite3
+# services/sales_service.py – منطق أعمال المبيعات المُحسَّن (إصدار PostgreSQL)
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
 from database import get_connection
@@ -22,34 +21,46 @@ def _to_decimal(value) -> Decimal:
     return Decimal(str(value))
 
 
+def _row_to_dict(columns, row):
+    """تحويل صف من قاعدة البيانات إلى قاموس"""
+    if row is None:
+        return None
+    return {columns[i]: row[i] for i in range(len(columns))}
+
+
+def _rows_to_dicts(columns, rows):
+    """تحويل قائمة صفوف إلى قائمة قواميس"""
+    return [_row_to_dict(columns, r) for r in rows]
+
+
 # ---------- الدوال الرئيسية ----------
 def get_customers():
     """جلب العملاء (ID واسم فقط) للاختيار"""
     conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    customers = conn.execute("SELECT id, name FROM customers ORDER BY name").fetchall()
+    rows = conn.run("SELECT id, name FROM customers ORDER BY name")
     conn.close()
-    return [dict(c) for c in customers]
+    return [{"id": r[0], "name": r[1]} for r in rows]
 
 
 def get_all_customers():
     """جلب جميع بيانات العملاء"""
     conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    customers = conn.execute("SELECT * FROM customers ORDER BY id DESC").fetchall()
+    rows = conn.run("SELECT * FROM customers ORDER BY id DESC")
     conn.close()
-    return [dict(c) for c in customers]
+    cols = ["id", "name", "phone", "address"]
+    return _rows_to_dicts(cols, rows)
 
 
 def add_customer(name, phone, address, username="admin"):
     """إضافة عميل جديد"""
     conn = get_connection()
-    cur = conn.execute(
-        "INSERT INTO customers (name, phone, address) VALUES (?, ?, ?)",
-        (name, phone, address)
+    conn.run(
+        "INSERT INTO customers (name, phone, address) VALUES (:name, :phone, :address)",
+        name=name, phone=phone, address=address
     )
-    customer_id = cur.lastrowid
-    conn.commit()
+    # pg8000 لا يدعم lastrowid مباشرة، نستخدم استعلام منفصل
+    rows = conn.run("SELECT id FROM customers WHERE name = :name ORDER BY id DESC LIMIT 1", name=name)
+    customer_id = rows[0][0] if rows else 0
     conn.close()
     log_action(username=username, action="إضافة عميل", table_name="customers",
                new_value=f"العميل: {name}, الهاتف: {phone}")
@@ -59,14 +70,13 @@ def add_customer(name, phone, address, username="admin"):
 def get_products_for_sale():
     """جلب المنتجات المتاحة للبيع (الكمية > 0)"""
     conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    products = conn.execute(
+    rows = conn.run(
         "SELECT id, name, selling_price, quantity FROM products WHERE quantity > 0 ORDER BY name"
-    ).fetchall()
+    )
     conn.close()
     return [
-        {"id": p["id"], "name": p["name"], "selling_price": p["selling_price"], "quantity": p["quantity"]}
-        for p in products
+        {"id": r[0], "name": r[1], "selling_price": r[2], "quantity": r[3]}
+        for r in rows
     ]
 
 
@@ -86,7 +96,6 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
         if Decimal(str(price)) < 0:
             return None, Decimal("0"), "سعر الوحدة يجب أن لا يكون سالباً"
 
-    # ✅ تجميع الكميات حسب المنتج للفحص الشامل (يمنع التجاوز إذا تكرر نفس المنتج)
     from collections import defaultdict
     qty_by_product = defaultdict(int)
     for item in items:
@@ -107,28 +116,23 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
     vat_rate = _to_decimal(get_vat_rate())
 
     conn = get_connection()
-    conn.row_factory = sqlite3.Row
     try:
-        conn.execute("BEGIN")
-
-        # 1. التحقق من المخزون لكل منتج (بعد تجميع الكميات)
+        # 1. التحقق من المخزون لكل منتج
         product_prices = {}
         total_cogs = Decimal("0")
         fifo_details = []
 
         for product_id, total_qty in qty_by_product.items():
-            row = conn.execute(
-                "SELECT selling_price, quantity FROM products WHERE id = ?",
-                (product_id,)
-            ).fetchone()
-            if not row:
+            rows = conn.run(
+                "SELECT selling_price, quantity FROM products WHERE id = :pid", pid=product_id
+            )
+            if not rows:
                 raise Exception(f"المنتج {product_id} غير موجود")
             
-            available = row["quantity"]
+            available = rows[0][1]
             if available < total_qty:
                 raise Exception(f"المخزون غير كافٍ للمنتج '{product_id}'، المتاح: {available}، المطلوب: {total_qty}")
 
-            # حساب تكلفة FIFO للكمية الإجمالية لهذا المنتج
             fifo_cost = get_fifo_cost(product_id, total_qty)
             if fifo_cost is None:
                 raise Exception(f"لا توجد دفعات FIFO كافية للمنتج {product_id}")
@@ -140,15 +144,13 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
                 "fifo_cost": fifo_cost
             })
 
-        # تجهيز الأسعار حسب كل عنصر (قد تختلف الأسعار)
         for item in items:
             user_price = item.get("unit_price") or item.get("unit_price_base")
             if user_price is not None:
                 product_prices[item["product_id"]] = _to_decimal(user_price)
             elif item["product_id"] not in product_prices:
-                # إذا لم يحدد السعر، نأخذه من قاعدة البيانات مرة واحدة فقط
-                row = conn.execute("SELECT selling_price FROM products WHERE id = ?", (item["product_id"],)).fetchone()
-                product_prices[item["product_id"]] = _to_decimal(row["selling_price"])
+                rows = conn.run("SELECT selling_price FROM products WHERE id = :pid", pid=item["product_id"])
+                product_prices[item["product_id"]] = _to_decimal(rows[0][0])
 
         # 2. حساب المبالغ
         subtotal_local = Decimal("0")
@@ -172,97 +174,73 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
         vat_amount_base = _quantize(subtotal_base * vat_rate)
         total_base = _quantize(subtotal_base + vat_amount_base)
 
-        # 3. إدراج الفاتورة (باستخدام customer_id)
-        cur = conn.execute(
+        # 3. إدراج الفاتورة
+        conn.run(
             """INSERT INTO invoices 
                (type, customer_id, invoice_date, total, total_base, status, vat_rate, vat_amount, currency_code, exchange_rate)
-               VALUES (?, ?, date('now'), ?, ?, 'completed', ?, ?, ?, ?)""",
-            ("sale", customer_id, float(total_local), float(total_base), float(vat_rate),
-             float(vat_amount_local), currency_code, float(exchange_rate))
+               VALUES (:type, :cid, CURRENT_DATE, :total, :total_base, 'completed', :vat_rate, :vat_amount, :currency, :rate)""",
+            type="sale", cid=customer_id, total=float(total_local), total_base=float(total_base),
+            vat_rate=float(vat_rate), vat_amount=float(vat_amount_local), currency=currency_code,
+            rate=float(exchange_rate)
         )
-        invoice_id = cur.lastrowid
+        rows = conn.run("SELECT id FROM invoices ORDER BY id DESC LIMIT 1")
+        invoice_id = rows[0][0]
 
         # 4. إدراج بنود الفاتورة
         for item in items:
             base_price = product_prices[item["product_id"]]
             qty = item["quantity"]
             local_unit_price = _quantize(base_price / exchange_rate)
-            conn.execute(
-                "INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?)",
-                (invoice_id, item["product_id"], qty, float(local_unit_price))
+            conn.run(
+                "INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price) VALUES (:iid, :pid, :qty, :price)",
+                iid=invoice_id, pid=item["product_id"], qty=qty, price=float(local_unit_price)
             )
 
-        # 5. استهلاك دفعات FIFO وتحديث المخزون
+        # 5. استهلاك دفعات FIFO
         for detail in fifo_details:
             consume_fifo(detail["product_id"], detail["quantity"], conn,
                         f"فاتورة مبيعات #{invoice_id}")
 
-        # 6. خصم المخزون من جدول products
+        # 6. خصم المخزون
         for product_id, total_qty in qty_by_product.items():
-            conn.execute(
-                "UPDATE products SET quantity = quantity - ? WHERE id = ? AND quantity >= ?",
-                (total_qty, product_id, total_qty)
+            conn.run(
+                "UPDATE products SET quantity = quantity - :qty WHERE id = :pid AND quantity >= :qty",
+                qty=total_qty, pid=product_id
             )
-            if conn.total_changes == 0:
-                raise Exception(f"تعذر خصم المخزون للمنتج {product_id} (تحديث متزامن)")
-            conn.execute(
-                "INSERT INTO stock_movements (product_id, type, quantity, date, reference) VALUES (?, 'out', ?, date('now'), ?)",
-                (product_id, total_qty, f"فاتورة مبيعات #{invoice_id}")
+            conn.run(
+                "INSERT INTO stock_movements (product_id, type, quantity, date, reference) VALUES (:pid, 'out', :qty, CURRENT_DATE, :ref)",
+                pid=product_id, qty=total_qty, ref=f"فاتورة مبيعات #{invoice_id}"
             )
 
-        # 7. إنشاء القيد المحاسبي (قبل commit)
+        # 7. إنشاء القيد المحاسبي
         customer_name = "غير معروف"
         try:
-            row = conn.execute("SELECT name FROM customers WHERE id = ?", (customer_id,)).fetchone()
-            if row:
-                customer_name = row["name"]
+            rows = conn.run("SELECT name FROM customers WHERE id = :cid", cid=customer_id)
+            if rows:
+                customer_name = rows[0][0]
         except:
             pass
 
         from services.accounting_service import save_journal_entry
 
         lines = [
-            {
-                "account": customer_name,
-                "debit": float(total_local),
-                "credit": 0,
-                "currency_code": currency_code,
-                "exchange_rate": float(exchange_rate)
-            },
-            {
-                "account": "المبيعات",
-                "debit": 0,
-                "credit": float(subtotal_local),
-                "currency_code": currency_code,
-                "exchange_rate": float(exchange_rate)
-            }
+            {"account": customer_name, "debit": float(total_local), "credit": 0,
+             "currency_code": currency_code, "exchange_rate": float(exchange_rate)},
+            {"account": "المبيعات", "debit": 0, "credit": float(subtotal_local),
+             "currency_code": currency_code, "exchange_rate": float(exchange_rate)}
         ]
 
         if float(vat_amount_local) > 0:
-            lines.append({
-                "account": "ضريبة القيمة المضافة المستحقة",
-                "debit": 0,
-                "credit": float(vat_amount_local),
-                "currency_code": currency_code,
-                "exchange_rate": float(exchange_rate)
-            })
+            lines.append({"account": "ضريبة القيمة المضافة المستحقة", "debit": 0,
+                         "credit": float(vat_amount_local), "currency_code": currency_code,
+                         "exchange_rate": float(exchange_rate)})
 
         if float(total_cogs) > 0:
             lines.extend([
-                {
-                    "account": "تكلفة البضاعة المباعة",
-                    "debit": float(total_cogs),
-                    "credit": 0,
-                    "currency_code": currency_code,
-                    "exchange_rate": float(exchange_rate)
-                },
-                {
-                    "account": "المخزون",
-                    "debit": 0,
-                    "credit": float(total_cogs),
-                    "currency_code": currency_code,
-                    "exchange_rate": float(exchange_rate)
-                }
+                {"account": "تكلفة البضاعة المباعة", "debit": float(total_cogs), "credit": 0,
+                 "currency_code": currency_code, "exchange_rate": float(exchange_rate)},
+                {"account": "المخزون", "debit": 0, "credit": float(total_cogs),
+                 "currency_code": currency_code, "exchange_rate": float(exchange_rate)}
             ])
 
         entry_id, entry_error = save_journal_entry(
@@ -275,8 +253,6 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
         if entry_error:
             raise Exception(f"فشل إنشاء القيد المحاسبي: {entry_error}")
 
-        conn.commit()
-
         log_action(
             username=username, action="فاتورة مبيعات", table_name="invoices",
             record_id=invoice_id,
@@ -287,7 +263,10 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
         return invoice_id, total_local, None
 
     except Exception as e:
-        conn.rollback()
+        try:
+            conn.run("ROLLBACK")
+        except:
+            pass
         return None, Decimal("0"), str(e)
     finally:
         conn.close()
@@ -296,40 +275,36 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
 def get_sale_invoices():
     """جلب فواتير المبيعات"""
     conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    invoices = conn.execute("""
+    rows = conn.run("""
         SELECT i.id, c.name AS customer, i.invoice_date, i.total, i.total_base,
                i.status, i.vat_rate, i.vat_amount, i.currency_code, i.exchange_rate
         FROM invoices i
         LEFT JOIN customers c ON i.customer_id = c.id
         WHERE i.type = 'sale' ORDER BY i.id DESC
-    """).fetchall()
+    """)
     conn.close()
     result = []
-    for inv in invoices:
-        d = dict(inv)
-        d["total"] = _to_decimal(d["total"])
-        d["total_base"] = _to_decimal(d["total_base"])
-        d["vat_amount"] = _to_decimal(d["vat_amount"])
-        d["exchange_rate"] = _to_decimal(d["exchange_rate"])
-        result.append(d)
+    for r in rows:
+        result.append({
+            "id": r[0], "customer": r[1], "invoice_date": r[2], "total": _to_decimal(r[3]),
+            "total_base": _to_decimal(r[4]), "status": r[5], "vat_rate": r[6],
+            "vat_amount": _to_decimal(r[7]), "currency_code": r[8], "exchange_rate": _to_decimal(r[9])
+        })
     return result
 
 
 def get_invoice_details(invoice_id):
     """تفاصيل فاتورة المبيعات"""
     conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    details = conn.execute("""
+    rows = conn.run("""
         SELECT p.name, ii.quantity, ii.unit_price,
                (ii.quantity * ii.unit_price) AS total
         FROM invoice_items ii
         JOIN products p ON ii.product_id = p.id
-        WHERE ii.invoice_id = ?
-    """, (invoice_id,)).fetchall()
+        WHERE ii.invoice_id = :iid
+    """, iid=invoice_id)
     conn.close()
     return [
-        {"name": d["name"], "quantity": d["quantity"],
-         "unit_price": _to_decimal(d["unit_price"]), "total": _to_decimal(d["total"])}
-        for d in details
+        {"name": r[0], "quantity": r[1], "unit_price": _to_decimal(r[2]), "total": _to_decimal(r[3])}
+        for r in rows
     ]
