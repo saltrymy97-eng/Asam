@@ -456,6 +456,7 @@ def init_db():
         accumulated_dep REAL DEFAULT 0,
         accumulated_depreciation REAL DEFAULT 0,
         book_value REAL,
+        status TEXT DEFAULT 'نشط',
         notes TEXT
     )''')
 
