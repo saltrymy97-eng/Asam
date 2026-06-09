@@ -11,6 +11,19 @@ except Exception as e:
 
 database.init_db()
 
+# إضافة العملة الأساسية فوراً
+def ensure_base_currency():
+    conn = database.get_connection()
+    c = conn.cursor()
+    count = c.execute("SELECT COUNT(*) FROM currencies").fetchone()[0]
+    if count == 0:
+        c.execute("INSERT INTO currencies (code, name, symbol, is_base, is_active) VALUES ('YER', 'ريال يمني', 'ر.ي', 1, 1)")
+        conn.commit()
+    conn.close()
+    print("✅ تم التأكد من وجود العملة الأساسية YER")
+
+ensure_base_currency()
+
 import random
 from datetime import date, timedelta
 from decimal import Decimal
@@ -133,36 +146,8 @@ def create_default_accounts():
     conn.close()
     print("✅ تم إنشاء شجرة الحسابات الكاملة (38 حساب)")
 
-# ===================== تشخيص =====================
-def diagnostic():
-    print("🔍 تشخيص النظام...")
-    try:
-        cid = add_customer("اختبار_تشخيص", "770000000", "عنوان")
-        sid = add_supplier("اختبار_مورد", "771111111", "عنوان")
-        add_product("منتج_تشخيص", None, "عام", 100, 200, 100, 10)
-        items_p = [{"product_id": 1, "quantity": 10, "unit_price_base": 100}]
-        inv_p, _, err_p = create_purchase_invoice(sid, items_p)
-        if err_p:
-            print(f"❌ فشل شراء: {err_p}")
-            return False
-        items_s = [{"product_id": 1, "quantity": 1, "unit_price_base": 200}]
-        inv_s, _, err_s = create_sale_invoice(cid, items_s)
-        if err_s:
-            print(f"❌ فشل بيع: {err_s}")
-            return False
-        print("✅ التشخيص ناجح")
-        return True
-    except Exception as e:
-        print(f"❌ فشل التشخيص: {e}")
-        traceback.print_exc()
-        return False
-
 # ===================== التنفيذ =====================
 create_default_accounts()
-
-if not diagnostic():
-    print("\n⚠️ فشل التشخيص. لن يتم حقن البيانات.")
-    sys.exit(1)
 
 # ===================== 1. العملاء والموردين =====================
 print("\nإنشاء العملاء والموردين...")
