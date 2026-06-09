@@ -1,11 +1,12 @@
 # services/ai_service.py – المساعد الذكي (AI Data Layer + Cache + Memory + Validation)
 import sqlite3
 import json
+import os
 from datetime import datetime, timedelta
 from groq import Groq, BadRequestError
 import streamlit as st
 
-DB_PATH = "erp.db"
+DB_PATH = os.path.join("data", "erp.db")
 
 # ========== طبقة تخزين مؤقت بسيطة (Cache Layer) ==========
 _cache = {}          # { key: (data, timestamp) }
