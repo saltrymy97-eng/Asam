@@ -45,7 +45,7 @@ def random_date(start_year=2025, end_year=2026):
 def random_phone():
     return f"77{random.randint(1000000, 9999999)}"
 
-# ===================== إنشاء الحسابات الافتراضية (مع account_type) =====================
+# ===================== إنشاء شجرة الحسابات الكاملة =====================
 def create_default_accounts():
     conn = database.get_connection()
     c = conn.cursor()
@@ -54,25 +54,59 @@ def create_default_accounts():
         conn.close()
         print("✅ شجرة الحسابات موجودة مسبقاً")
         return
-    print("إنشاء شجرة الحسابات الافتراضية...")
+    print("إنشاء شجرة الحسابات الكاملة...")
+    
+    # (كود, اسم, أب, مستوى, طبيعة, تصنيف)
     accounts = [
+        # ===== 1 - الأصول =====
         ("1", "الأصول", None, 1, "debit", "Asset"),
-        ("11", "المخزون", "1", 2, "debit", "Asset"),
-        ("12", "الصندوق", "1", 2, "debit", "Asset"),
+        ("11", "الأصول المتداولة", "1", 2, "debit", "Asset"),
+        ("111", "الصندوق", "11", 3, "debit", "Asset"),
+        ("112", "البنوك", "11", 3, "debit", "Asset"),
+        ("113", "العملاء", "11", 3, "debit", "Asset"),
+        ("114", "المخزون", "11", 3, "debit", "Asset"),
+        ("115", "أوراق القبض", "11", 3, "debit", "Asset"),
+        ("12", "الأصول غير المتداولة", "1", 2, "debit", "Asset"),
+        ("121", "الأصول الثابتة", "12", 3, "debit", "Asset"),
+        ("122", "مجمع الإهلاك", "12", 3, "credit", "Asset"),
+        
+        # ===== 2 - الخصوم =====
         ("2", "الخصوم", None, 1, "credit", "Liability"),
-        ("21", "الموردون", "2", 2, "credit", "Liability"),
-        ("22", "ضريبة القيمة المضافة المستحقة", "2", 2, "credit", "Liability"),
+        ("21", "الخصوم المتداولة", "2", 2, "credit", "Liability"),
+        ("211", "الموردون", "21", 3, "credit", "Liability"),
+        ("212", "أوراق الدفع", "21", 3, "credit", "Liability"),
+        ("213", "ضريبة القيمة المضافة المستحقة", "21", 3, "credit", "Liability"),
+        ("214", "مصروفات مستحقة", "21", 3, "credit", "Liability"),
+        ("22", "الخصوم غير المتداولة", "2", 2, "credit", "Liability"),
+        ("221", "قروض طويلة الأجل", "22", 3, "credit", "Liability"),
+        
+        # ===== 3 - حقوق الملكية =====
         ("3", "حقوق الملكية", None, 1, "credit", "Equity"),
         ("31", "رأس المال", "3", 2, "credit", "Equity"),
+        ("32", "الأرباح المحتجزة", "3", 2, "credit", "Equity"),
+        
+        # ===== 4 - الإيرادات =====
         ("4", "الإيرادات", None, 1, "credit", "Revenue"),
         ("41", "المبيعات", "4", 2, "credit", "Revenue"),
         ("42", "مردودات المبيعات", "4", 2, "debit", "Revenue"),
+        ("43", "إيرادات خدمات", "4", 2, "credit", "Revenue"),
+        ("44", "إيرادات أخرى", "4", 2, "credit", "Revenue"),
+        
+        # ===== 5 - المصروفات =====
         ("5", "المصروفات", None, 1, "debit", "Expense"),
-        ("51", "المشتريات", "5", 2, "debit", "Expense"),
-        ("52", "مردودات المشتريات", "5", 2, "credit", "Expense"),
-        ("53", "تكلفة البضاعة المباعة", "5", 2, "debit", "Expense"),
+        ("51", "تكلفة البضاعة المباعة", "5", 2, "debit", "Expense"),
+        ("52", "المشتريات", "5", 2, "debit", "Expense"),
+        ("53", "مردودات المشتريات", "5", 2, "credit", "Expense"),
         ("54", "مصروفات تشغيلية", "5", 2, "debit", "Expense"),
+        ("541", "الإيجار", "54", 3, "debit", "Expense"),
+        ("542", "الكهرباء", "54", 3, "debit", "Expense"),
+        ("543", "الصيانة", "54", 3, "debit", "Expense"),
+        ("544", "رواتب وأجور", "54", 3, "debit", "Expense"),
+        ("545", "مصروف الإهلاك", "54", 3, "debit", "Expense"),
+        ("546", "مصروفات إدارية", "54", 3, "debit", "Expense"),
+        ("547", "مصروفات تسويقية", "54", 3, "debit", "Expense"),
     ]
+    
     for code, name, parent_code, level, is_debit, acc_type in accounts:
         try:
             parent_id = None
@@ -84,11 +118,12 @@ def create_default_accounts():
                 "INSERT INTO accounts (code, name, parent_id, level, is_debit, account_type) VALUES (?, ?, ?, ?, ?, ?)",
                 (code, name, parent_id, level, is_debit, acc_type)
             )
-        except:
+        except Exception as e:
             pass
+    
     conn.commit()
     conn.close()
-    print("✅ تم إنشاء شجرة الحسابات")
+    print("✅ تم إنشاء شجرة الحسابات الكاملة (38 حساب)")
 
 # ===================== تشخيص =====================
 def diagnostic():
@@ -165,7 +200,7 @@ if total_opening_stock_value > 0:
         entry_id, err = save_journal_entry(
             description="قيد الأرصدة الافتتاحية",
             lines=[
-                {"account": "11", "debit": total_opening_stock_value, "credit": 0},
+                {"account": "114", "debit": total_opening_stock_value, "credit": 0},
                 {"account": "31", "debit": 0, "credit": total_opening_stock_value}
             ],
             entry_date=date.today().strftime("%Y-%m-%d")
@@ -221,7 +256,7 @@ for op_num in range(TOTAL_OPERATIONS):
         elif op_type == 'receipt':
             cid = random.choice(customer_ids)
             amount = random.randint(100, 5000)
-            vid, err = create_voucher('receipt', 'customer', cid, amount, "11")
+            vid, err = create_voucher('receipt', 'customer', cid, amount, "111")
             if err:
                 raise Exception(err)
             receipt_count += 1
@@ -229,14 +264,14 @@ for op_num in range(TOTAL_OPERATIONS):
         elif op_type == 'payment':
             sid = random.choice(supplier_ids)
             amount = random.randint(100, 5000)
-            vid, err = create_voucher('payment', 'supplier', sid, amount, "11")
+            vid, err = create_voucher('payment', 'supplier', sid, amount, "111")
             if err:
                 raise Exception(err)
             payment_count += 1
 
         elif op_type == 'expense':
             eid, err = create_expense(op_date, random.choice(["إيجار", "كهرباء", "صيانة", "أخرى"]),
-                          random.randint(500, 3000), "11", "cash")
+                          random.randint(500, 3000), "111", "cash")
             if err:
                 raise Exception(err)
             expense_count += 1
