@@ -1,4 +1,11 @@
+import os
 import database
+
+# حذف قاعدة البيانات القديمة إجبارياً
+if os.path.exists("erp.db"):
+    os.remove("erp.db")
+    print("🗑️ تم حذف erp.db القديم")
+
 database.init_db()
 
 import random
