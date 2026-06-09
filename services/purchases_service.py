@@ -198,7 +198,7 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
 
         lines = [
             {
-                "account": "المشتريات",
+                "account": "52",                 # المشتريات (مدين)
                 "debit": float(subtotal_local),
                 "credit": 0,
                 "currency_code": currency_code,
@@ -215,7 +215,7 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
 
         if float(vat_amount_local) > 0:
             lines.insert(1, {
-                "account": "ضريبة القيمة المضافة المدخلة",
+                "account": "213",                # ضريبة القيمة المضافة (مدين)
                 "debit": float(vat_amount_local),
                 "credit": 0,
                 "currency_code": currency_code,
