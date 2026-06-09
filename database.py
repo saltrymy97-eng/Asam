@@ -1,11 +1,15 @@
 # database.py - قاعدة بيانات نظام حوكمة ERP (SQLite) – إصدار إنتاجي نهائي
 import sqlite3
 import bcrypt
+import os
 
-DB_PATH = "erp.db"
+# تغيير مسار قاعدة البيانات إلى مجلد data/ ليتم حفظه مع المشروع
+DB_PATH = os.path.join("data", "erp.db")
 
 def get_connection():
     """إنشاء اتصال بقاعدة البيانات مع دعم الوصول القاموسي للصفوف"""
+    # التأكد من وجود مجلد data
+    os.makedirs("data", exist_ok=True)
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=15)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys = ON")
