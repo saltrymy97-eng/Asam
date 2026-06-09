@@ -29,23 +29,22 @@ def create_expenses_table():
     conn.close()
 
 def get_expense_categories():
-    """فئات المصروفات القياسية (مع ربطها بالحسابات)"""
+    """فئات المصروفات القياسية (مع ربطها بأكواد الحسابات)"""
     return [
-        {"code": "إيجار", "account": "إيجار"},
-        {"code": "كهرباء", "account": "كهرباء"},
-        {"code": "ماء", "account": "ماء"},
-        {"code": "رواتب", "account": "رواتب"},
-        {"code": "صيانة", "account": "صيانة"},
-        {"code": "إعلانات", "account": "إعلانات"},
-        {"code": "اتصالات", "account": "اتصالات"},
-        {"code": "أخرى", "account": "مصروفات أخرى"}
+        {"code": "إيجار", "account": "541"},
+        {"code": "كهرباء", "account": "542"},
+        {"code": "ماء", "account": "546"},
+        {"code": "رواتب", "account": "544"},
+        {"code": "صيانة", "account": "543"},
+        {"code": "إعلانات", "account": "547"},
+        {"code": "اتصالات", "account": "546"},
+        {"code": "أخرى", "account": "546"}
     ]
 
 def get_cash_accounts():
     """جلب حسابات النقدية (لدفع المصروف)"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
-    # نحاول جلب حسابات تحت الأصول (1)
     accounts = conn.execute("""
         SELECT code, name FROM accounts
         WHERE parent_id = (SELECT id FROM accounts WHERE code = '1')
@@ -53,7 +52,7 @@ def get_cash_accounts():
     """).fetchall()
     conn.close()
     if not accounts:
-        return [{"code": "صندوق", "name": "صندوق"}, {"code": "بنك", "name": "بنك"}]
+        return [{"code": "111", "name": "صندوق"}, {"code": "112", "name": "بنك"}]
     return [{"code": a["code"], "name": a["name"]} for a in accounts]
 
 def get_suppliers_for_expense():
@@ -88,17 +87,20 @@ def create_expense(expense_date, category, amount, account_code, payment_method,
               party_type, party_id, invoice_ref, notes, created_by))
         expense_id = cur.lastrowid
         
-        # 2. تحديد أسماء الحسابات
-        # حساب المصروف (مدين)
-        expense_account = category
+        # 2. تحديد أكواد الحسابات
+        # استخدام كود الحساب الموحد للمصروف
+        expense_account = "546"  # مصروفات إدارية (افتراضي)
+        # محاولة تحويل اسم الفئة إلى كود
+        for cat in get_expense_categories():
+            if cat["code"] == category:
+                expense_account = cat["account"]
+                break
         
         # حساب الدائن
         if payment_method == 'credit' and party_type == 'supplier' and party_id:
-            supplier = conn.execute("SELECT name FROM suppliers WHERE id=?", 
-                                   (party_id,)).fetchone()
-            credit_account = supplier["name"] if supplier else "مورد غير معروف"
+            credit_account = "211"  # الموردون
         else:
-            credit_account = account_code  # النقدية (صندوق/بنك)
+            credit_account = account_code  # النقدية (كود الصندوق/البنك)
         
         # 3. إنشاء القيد المحاسبي
         lines = [
