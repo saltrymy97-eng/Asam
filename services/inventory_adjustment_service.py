@@ -73,19 +73,16 @@ def create_adjustment(product_id, expected_qty, actual_qty, unit_cost=None,
         # 2. تحديد التكلفة إذا لم يعطها المستخدم
         if unit_cost is None:
             if difference > 0:
-                # فائض: نستخدم سعر البيع كتكلفة تقديرية (أو يمكن جلب آخر تكلفة شراء)
-                # نبحث عن تكلفة آخر دفعة متاحة
                 batches = get_available_batches(product_id, conn)
                 if batches:
-                    unit_cost = batches[-1]["unit_cost"]  # أحدث تكلفة
+                    unit_cost = batches[-1]["unit_cost"]
                 else:
                     unit_cost = product["selling_price"] if product["selling_price"] else 1.0
             else:
-                # عجز: نحسب تكلفة FIFO للكمية المراد خصمها
                 fifo_cost = get_fifo_cost(product_id, abs(difference), conn)
                 if fifo_cost is None:
                     raise Exception("لا توجد دفعات كافية لحساب تكلفة العجز")
-                unit_cost = fifo_cost / abs(difference)  # متوسط تقريبي
+                unit_cost = fifo_cost / abs(difference)
         else:
             unit_cost = float(unit_cost)
         
@@ -101,20 +98,18 @@ def create_adjustment(product_id, expected_qty, actual_qty, unit_cost=None,
                 VALUES (?, 'in', ?, ?, ?)
             """, (product_id, difference, adjustment_date, f"تسوية جرد (فائض) - مرجع: {reference}"))
             
-            # إضافة دفعة FIFO جديدة
             add_batch(product_id, difference, unit_cost, adjustment_date,
                      reference=f"تسوية جرد (فائض) - {reference}", conn=conn)
             
-            # القيد المحاسبي
+            # القيد المحاسبي - استخدام الأكواد الموحدة
             lines = [
-                {"account": "المخزون", "debit": total_cost, "credit": 0},
-                {"account": "أرباح الفائض المخزني", "debit": 0, "credit": total_cost}
+                {"account": "114", "debit": total_cost, "credit": 0},  # المخزون
+                {"account": "44", "debit": 0, "credit": total_cost}    # إيرادات أخرى (فائض)
             ]
             desc = f"فائض جرد - {product['name']} (+{difference})"
         else:
             # عجز: خصم من المخزون
             qty_to_remove = abs(difference)
-            # التأكد من وجود كمية كافية
             if system_qty < qty_to_remove:
                 raise Exception(f"الكمية المتاحة ({system_qty}) أقل من العجز ({qty_to_remove})")
             
@@ -125,17 +120,16 @@ def create_adjustment(product_id, expected_qty, actual_qty, unit_cost=None,
                 VALUES (?, 'out', ?, ?, ?)
             """, (product_id, qty_to_remove, adjustment_date, f"تسوية جرد (عجز) - مرجع: {reference}"))
             
-            # استهلاك FIFO
             cost, err = consume_fifo(product_id, qty_to_remove, conn=conn,
                                     reference=f"تسوية جرد (عجز) - {reference}")
             if cost is None:
                 raise Exception(f"فشل استهلاك FIFO: {err}")
             total_cost = cost
             
-            # القيد المحاسبي
+            # القيد المحاسبي - استخدام الأكواد الموحدة
             lines = [
-                {"account": "خسائر العجز المخزني", "debit": total_cost, "credit": 0},
-                {"account": "المخزون", "debit": 0, "credit": total_cost}
+                {"account": "546", "debit": total_cost, "credit": 0},  # مصروفات إدارية (عجز)
+                {"account": "114", "debit": 0, "credit": total_cost}   # المخزون
             ]
             desc = f"عجز جرد - {product['name']} (-{abs(difference)})"
         
