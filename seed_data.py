@@ -1,16 +1,17 @@
-import os
+import os, sys, traceback
 import database
 
-# حذف قاعدة البيانات القديمة إجبارياً
-if os.path.exists("erp.db"):
-    os.remove("erp.db")
-    print("🗑️ تم حذف erp.db القديم")
+# حذف قاعدة البيانات القديمة إجبارياً (مع حماية من الفشل)
+try:
+    if os.path.exists("erp.db"):
+        os.remove("erp.db")
+        print("🗑️ تم حذف erp.db القديم")
+except Exception as e:
+    print(f"⚠️ لم يتم حذف erp.db (قد لا يكون مشكلة): {e}")
 
 database.init_db()
 
 import random
-import sys
-import traceback
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -153,6 +154,7 @@ def diagnostic():
         return True
     except Exception as e:
         print(f"❌ فشل التشخيص: {e}")
+        traceback.print_exc()
         return False
 
 # ===================== التنفيذ =====================
