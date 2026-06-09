@@ -142,16 +142,17 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
                                      (party_id,)).fetchone()["name"]
         
         if voucher_type == 'receipt':
-            debit_acc = account
-            credit_acc = party_name
+            # قبض: مدين الصندوق، دائن العميل
+            lines = [
+                {"account": account, "debit": amount, "credit": 0},
+                {"account": "113", "debit": 0, "credit": amount}  # العملاء
+            ]
         else:
-            debit_acc = party_name
-            credit_acc = account
-            
-        lines = [
-            {"account": debit_acc, "debit": amount, "credit": 0},
-            {"account": credit_acc, "debit": 0, "credit": amount}
-        ]
+            # صرف: مدين المورد، دائن الصندوق
+            lines = [
+                {"account": "211", "debit": amount, "credit": 0},  # الموردون
+                {"account": account, "debit": 0, "credit": amount}
+            ]
         
         desc = f"سند {'قبض' if voucher_type == 'receipt' else 'صرف'} #{voucher_id} - {party_name}"
         if invoice_id:
