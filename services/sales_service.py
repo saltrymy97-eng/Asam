@@ -223,14 +223,14 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
 
         lines = [
             {
-                "account": customer_name,
+                "account": "113",                # العملاء (مدين)
                 "debit": float(total_local),
                 "credit": 0,
                 "currency_code": currency_code,
                 "exchange_rate": float(exchange_rate)
             },
             {
-                "account": "المبيعات",
+                "account": "41",                 # المبيعات (دائن)
                 "debit": 0,
                 "credit": float(subtotal_local),
                 "currency_code": currency_code,
@@ -240,7 +240,7 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
 
         if float(vat_amount_local) > 0:
             lines.append({
-                "account": "ضريبة القيمة المضافة المستحقة",
+                "account": "213",                # ضريبة القيمة المضافة المستحقة (دائن)
                 "debit": 0,
                 "credit": float(vat_amount_local),
                 "currency_code": currency_code,
@@ -250,14 +250,14 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
         if float(total_cogs) > 0:
             lines.extend([
                 {
-                    "account": "تكلفة البضاعة المباعة",
+                    "account": "51",             # تكلفة البضاعة المباعة (مدين)
                     "debit": float(total_cogs),
                     "credit": 0,
                     "currency_code": currency_code,
                     "exchange_rate": float(exchange_rate)
                 },
                 {
-                    "account": "المخزون",
+                    "account": "114",            # المخزون (دائن)
                     "debit": 0,
                     "credit": float(total_cogs),
                     "currency_code": currency_code,
