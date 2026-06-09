@@ -18,24 +18,24 @@ def get_account_balance(account_code, cost_center_id=None):
     conn = get_conn()
     if cost_center_id:
         debit = conn.execute("""
-            SELECT COALESCE(SUM(cca.amount * jl.exchange_rate), 0)
+            SELECT COALESCE(SUM(cca.amount * COALESCE(jl.exchange_rate, 1.0)), 0)
             FROM cost_center_allocations cca
             JOIN journal_lines jl ON cca.journal_line_id = jl.id
             WHERE jl.account_name = ? AND cca.cost_center_id = ? AND jl.debit > 0
         """, (account_code, cost_center_id)).fetchone()[0]
         credit = conn.execute("""
-            SELECT COALESCE(SUM(cca.amount * jl.exchange_rate), 0)
+            SELECT COALESCE(SUM(cca.amount * COALESCE(jl.exchange_rate, 1.0)), 0)
             FROM cost_center_allocations cca
             JOIN journal_lines jl ON cca.journal_line_id = jl.id
             WHERE jl.account_name = ? AND cca.cost_center_id = ? AND jl.credit > 0
         """, (account_code, cost_center_id)).fetchone()[0]
     else:
         debit = conn.execute(
-            "SELECT COALESCE(SUM(debit * exchange_rate), 0) FROM journal_lines WHERE account_name=?",
+            "SELECT COALESCE(SUM(debit * COALESCE(exchange_rate, 1.0)), 0) FROM journal_lines WHERE account_name=?",
             (account_code,)
         ).fetchone()[0]
         credit = conn.execute(
-            "SELECT COALESCE(SUM(credit * exchange_rate), 0) FROM journal_lines WHERE account_name=?",
+            "SELECT COALESCE(SUM(credit * COALESCE(exchange_rate, 1.0)), 0) FROM journal_lines WHERE account_name=?",
             (account_code,)
         ).fetchone()[0]
     conn.close()
