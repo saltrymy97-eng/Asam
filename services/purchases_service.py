@@ -193,7 +193,7 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
             if not success:
                 raise Exception(f"فشل إضافة دفعة FIFO للمنتج {item['product_id']}: {error}")
 
-        # 6. إنشاء القيد المحاسبي (قبل commit) - بدون سطر المخزون المكرر
+        # 6. إنشاء القيد المحاسبي (قبل commit) - استخدام حساب الموردون الجامع (211)
         from services.accounting_service import save_journal_entry
 
         lines = [
@@ -205,7 +205,7 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
                 "exchange_rate": float(exchange_rate)
             },
             {
-                "account": supplier_name,
+                "account": "211",                # حساب الموردون (الخصوم)
                 "debit": 0,
                 "credit": float(total_local),
                 "currency_code": currency_code,
