@@ -1,13 +1,5 @@
-import os, sys, traceback
+import sys, traceback
 import database
-
-# حذف قاعدة البيانات القديمة إجبارياً (مع حماية من الفشل)
-try:
-    if os.path.exists("erp.db"):
-        os.remove("erp.db")
-        print("🗑️ تم حذف erp.db القديم")
-except Exception as e:
-    print(f"⚠️ لم يتم حذف erp.db (قد لا يكون مشكلة): {e}")
 
 database.init_db()
 
