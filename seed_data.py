@@ -45,7 +45,7 @@ def random_date(start_year=2025, end_year=2026):
 def random_phone():
     return f"77{random.randint(1000000, 9999999)}"
 
-# ===================== إنشاء الحسابات الافتراضية =====================
+# ===================== إنشاء الحسابات الافتراضية (مع account_type) =====================
 def create_default_accounts():
     conn = database.get_connection()
     c = conn.cursor()
@@ -56,22 +56,22 @@ def create_default_accounts():
         return
     print("إنشاء شجرة الحسابات الافتراضية...")
     accounts = [
-        ("1", "الأصول", None, 1, "debit", None),
-        ("11", "المخزون", "1", 2, "debit", None),
-        ("12", "الصندوق", "1", 2, "debit", None),
-        ("2", "الخصوم", None, 1, "credit", None),
-        ("21", "الموردون", "2", 2, "credit", None),
-        ("22", "ضريبة القيمة المضافة المستحقة", "2", 2, "credit", None),
-        ("3", "حقوق الملكية", None, 1, "credit", None),
-        ("31", "رأس المال", "3", 2, "credit", None),
-        ("4", "الإيرادات", None, 1, "credit", None),
-        ("41", "المبيعات", "4", 2, "credit", None),
-        ("42", "مردودات المبيعات", "4", 2, "credit", None),
-        ("5", "المصروفات", None, 1, "debit", None),
-        ("51", "المشتريات", "5", 2, "debit", None),
-        ("52", "مردودات المشتريات", "5", 2, "debit", None),
-        ("53", "تكلفة البضاعة المباعة", "5", 2, "debit", None),
-        ("54", "مصروفات تشغيلية", "5", 2, "debit", None),
+        ("1", "الأصول", None, 1, "debit", "Asset"),
+        ("11", "المخزون", "1", 2, "debit", "Asset"),
+        ("12", "الصندوق", "1", 2, "debit", "Asset"),
+        ("2", "الخصوم", None, 1, "credit", "Liability"),
+        ("21", "الموردون", "2", 2, "credit", "Liability"),
+        ("22", "ضريبة القيمة المضافة المستحقة", "2", 2, "credit", "Liability"),
+        ("3", "حقوق الملكية", None, 1, "credit", "Equity"),
+        ("31", "رأس المال", "3", 2, "credit", "Equity"),
+        ("4", "الإيرادات", None, 1, "credit", "Revenue"),
+        ("41", "المبيعات", "4", 2, "credit", "Revenue"),
+        ("42", "مردودات المبيعات", "4", 2, "debit", "Revenue"),
+        ("5", "المصروفات", None, 1, "debit", "Expense"),
+        ("51", "المشتريات", "5", 2, "debit", "Expense"),
+        ("52", "مردودات المشتريات", "5", 2, "credit", "Expense"),
+        ("53", "تكلفة البضاعة المباعة", "5", 2, "debit", "Expense"),
+        ("54", "مصروفات تشغيلية", "5", 2, "debit", "Expense"),
     ]
     for code, name, parent_code, level, is_debit, acc_type in accounts:
         try:
@@ -81,8 +81,8 @@ def create_default_accounts():
                 if parent_row:
                     parent_id = parent_row[0]
             c.execute(
-                "INSERT INTO accounts (code, name, parent_id, level, is_debit) VALUES (?, ?, ?, ?, ?)",
-                (code, name, parent_id, level, is_debit)
+                "INSERT INTO accounts (code, name, parent_id, level, is_debit, account_type) VALUES (?, ?, ?, ?, ?, ?)",
+                (code, name, parent_id, level, is_debit, acc_type)
             )
         except:
             pass
