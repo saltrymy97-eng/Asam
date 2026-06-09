@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
+import os
 from services.audit_service import (
     create_audit_table,
     get_audit_logs,
@@ -74,7 +75,8 @@ def show():
     with col1:
         filter_table = st.selectbox("تصفية حسب الجدول", ["الكل", "users", "products", "invoices", "journal_entries", "employees", "customers", "suppliers"], key="audit_filter_table")
     with col2:
-        conn = sqlite3.connect("erp.db")
+        DB_PATH = os.path.join("data", "erp.db")
+        conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         users = [u["username"] for u in conn.execute("SELECT DISTINCT username FROM audit_log").fetchall()]
         conn.close()
