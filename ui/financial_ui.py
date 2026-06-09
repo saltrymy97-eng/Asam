@@ -1,7 +1,6 @@
 # ui/financial_ui.py - واجهة القوائم المالية (تصميم زجاجي فخم + فلترة مراكز التكلفة)
 import streamlit as st
 import pandas as pd
-import sqlite3
 from services.financial_service import get_income_statement, get_balance_sheet
 from services import cost_center_service as ccs
 
@@ -54,16 +53,6 @@ def show():
         format_func=lambda x: center_options[x]
     )
     cost_center_id = selected_center if selected_center != 0 else None
-
-    # ===== تشخيص مؤقت =====
-    conn = sqlite3.connect("erp.db")
-    rows = conn.execute("SELECT DISTINCT account_name FROM journal_lines ORDER BY account_name").fetchall()
-    st.write("الحسابات في القيود:", [r[0] for r in rows])
-    
-    rows2 = conn.execute("SELECT code, name, account_type FROM accounts ORDER BY code").fetchall()
-    st.write("شجرة الحسابات:", [(r[0], r[1], r[2]) for r in rows2])
-    conn.close()
-    # ===== نهاية التشخيص =====
 
     tab1, tab2 = st.tabs(["📈 قائمة الدخل", "⚖️ الميزانية العمومية"])
 
