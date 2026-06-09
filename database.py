@@ -440,7 +440,7 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
-    # ========== 18. الأصول الثابتة (متوافق 100% مع assets_service.py) ==========
+    # ========== 18. الأصول الثابتة ==========
     c.execute('''CREATE TABLE IF NOT EXISTS fixed_assets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -468,7 +468,44 @@ def init_db():
         FOREIGN KEY (asset_id) REFERENCES fixed_assets(id)
     )''')
 
-    # ========== 19. الفهارس (Indexes) لتحسين الأداء ==========
+    # ========== 19. CRM (إدارة علاقات العملاء) ==========
+    c.execute('''CREATE TABLE IF NOT EXISTS crm_leads (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        company TEXT,
+        phone TEXT,
+        email TEXT,
+        source TEXT DEFAULT 'أخرى',
+        status TEXT DEFAULT 'جديد',
+        notes TEXT,
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        updated_at TEXT DEFAULT (datetime('now','localtime'))
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS crm_opportunities (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        lead_id INTEGER,
+        title TEXT NOT NULL,
+        amount REAL DEFAULT 0,
+        stage TEXT DEFAULT 'مؤهل',
+        probability INTEGER DEFAULT 50,
+        expected_close_date TEXT,
+        notes TEXT,
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        FOREIGN KEY (lead_id) REFERENCES crm_leads(id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS crm_interactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        lead_id INTEGER,
+        type TEXT DEFAULT 'اتصال',
+        date TEXT NOT NULL,
+        notes TEXT,
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        FOREIGN KEY (lead_id) REFERENCES crm_leads(id)
+    )''')
+
+    # ========== 20. الفهارس (Indexes) لتحسين الأداء ==========
     c.execute("CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_date ON invoices(invoice_date)")
@@ -486,6 +523,9 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_fixed_assets_category ON fixed_assets(category)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_depreciation_entries_asset ON depreciation_entries(asset_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_crm_leads_status ON crm_leads(status)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_crm_opportunities_lead ON crm_opportunities(lead_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_crm_interactions_lead ON crm_interactions(lead_id)")
 
     conn.commit()
     conn.close()
