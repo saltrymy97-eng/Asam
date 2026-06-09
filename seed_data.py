@@ -493,6 +493,59 @@ if errors:
     for err in errors[:3]:
         print(f"  - {err}")
 
+# ===================== تشخيص تلقائي للمشكلة =====================
+print("\n🔍 تشخيص تلقائي...")
+conn = database.get_connection()
+
+# 1. فحص الحسابات المكررة في القيود
+print("\n📋 الحسابات المستخدمة في القيود:")
+rows = conn.execute("""
+    SELECT account_name, 
+           COUNT(*) as cnt,
+           SUM(debit * exchange_rate) as total_debit,
+           SUM(credit * exchange_rate) as total_credit
+    FROM journal_lines 
+    GROUP BY account_name 
+    ORDER BY account_name
+""").fetchall()
+
+for r in rows:
+    # هل هذا الحساب موجود في شجرة الحسابات؟
+    tree = conn.execute(
+        "SELECT code, name, account_type FROM accounts WHERE code=? OR name=?",
+        (r['account_name'], r['account_name'])
+    ).fetchone()
+    
+    found = "✅" if tree else "❌ غير موجود في الشجرة"
+    name = tree['name'] if tree else r['account_name']
+    atype = tree['account_type'] if tree else "غير مصنف"
+    
+    print(f"  {found} {r['account_name']} ({atype}) | مدين: {r['total_debit']:,.2f} | دائن: {r['total_credit']:,.2f}")
+
+# 2. فحص تطابق الميزان
+tb = get_trial_balance()
+total_d = sum(row['total_debit'] for row in tb)
+total_c = sum(row['total_credit'] for row in tb)
+diff = abs(total_d - total_c)
+
+if diff > 0.01:
+    print(f"\n⚠️ الميزان غير متوازن بفارق: {diff:,.2f}")
+    print("   البحث عن الحسابات غير المصنفة...")
+    
+    for r in rows:
+        tree = conn.execute(
+            "SELECT code, name, account_type FROM accounts WHERE code=? OR name=?",
+            (r['account_name'], r['account_name'])
+        ).fetchone()
+        
+        if not tree:
+            net = r['total_debit'] - r['total_credit']
+            if abs(net) > 0.01:
+                print(f"   ⚠️ حساب غير مصنف: {r['account_name']} (صافي: {net:,.2f})")
+
+conn.close()
+print("\n🔍 انتهى التشخيص")
+
 print("\n📊 ميزان المراجعة النهائي:")
 tb = get_trial_balance()
 total_d = sum(row['total_debit'] for row in tb)
