@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
+import os
 from datetime import date
 from services.accounting_service import (
     get_account_code,
@@ -15,7 +16,7 @@ from services.accounting_service import (
 from services.audit_service import log_action
 from services import cost_center_service
 
-DB_PATH = "erp.db"
+DB_PATH = os.path.join("data", "erp.db")
 
 # ========== ألوان التصميم ==========
 GLASS_BG = "rgba(255, 255, 255, 0.12)"
