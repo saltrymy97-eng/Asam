@@ -1,7 +1,6 @@
 # ui/financial_ui.py - واجهة القوائم المالية (تصميم زجاجي فخم + فلترة مراكز التكلفة)
 import streamlit as st
 import pandas as pd
-import os
 from services.financial_service import get_income_statement, get_balance_sheet
 from services import cost_center_service as ccs
 
@@ -62,9 +61,6 @@ def show():
         st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>قائمة الدخل</h3>", unsafe_allow_html=True)
         
         income = get_income_statement(cost_center_id)
-        
-        # تشخيص: هل ملف قاعدة البيانات موجود؟
-        st.write("ملف قاعدة البيانات موجود:", os.path.exists("data/erp.db"))
         
         # رسالة توضيحية إذا تم التصفية
         if cost_center_id:
