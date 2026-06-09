@@ -27,7 +27,7 @@ def get_all_accounts_by_prefix(prefix):
     conn.close()
     return accounts
 
-def create_closing_entry(year, retained_earnings_code="310000"):
+def create_closing_entry(year, retained_earnings_code="32"):
     """
     إنشاء قيد إغلاق السنة المالية العامة (للشركة بالكامل) مع حماية العمليات.
     تُرجع (success, net_income, error_message)
@@ -95,7 +95,7 @@ def create_closing_entry(year, retained_earnings_code="310000"):
                 (entry_id, code, abs(amt))
             )
         
-        # توجيه صافي الدخل إلى الأرباح المحتجزة
+        # توجيه صافي الدخل إلى الأرباح المحتجزة (32)
         if net_income > 0:
             conn.execute(
                 "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, ?, 0, ?)",
@@ -116,7 +116,7 @@ def create_closing_entry(year, retained_earnings_code="310000"):
     finally:
         conn.close()
 
-def create_cost_center_closing_entry(year, cost_center_id, retained_earnings_code="310000"):
+def create_cost_center_closing_entry(year, cost_center_id, retained_earnings_code="32"):
     """
     إنشاء قيد إغلاق لمركز تكلفة محدد (لتصفير إيراداته ومصروفاته المخصصة).
     يعتمد على توزيعات مراكز التكلفة الفعلية لتحديد المبالغ، ويتم توزيع كل سطر
