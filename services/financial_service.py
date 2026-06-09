@@ -64,7 +64,11 @@ def get_all_active_accounts(cost_center_id=None):
     
     for row in rows:
         code = row["code"]
-        tree = conn.execute("SELECT name, is_debit, account_type FROM accounts WHERE code=?", (code,)).fetchone()
+        # التعديل: البحث بالكود أو بالاسم ليشمل الحسابات النصية
+        tree = conn.execute(
+            "SELECT name, is_debit, account_type FROM accounts WHERE code=? OR name=?",
+            (code, code)
+        ).fetchone()
         accounts.append({
             "code": code,
             "name": tree["name"] if tree else code,
