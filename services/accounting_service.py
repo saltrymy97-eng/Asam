@@ -1,11 +1,12 @@
 # services/accounting_service.py - منطق الحسابات وقيود اليومية (مع دعم الاتصال الخارجي – إصدار احترافي)
 import sqlite3
 import uuid
+import os
 from datetime import date
 from services import cost_center_service
 from services.currency_service import get_base_currency, get_exchange_rate
 
-DB_PATH = "erp.db"
+DB_PATH = os.path.join("data", "erp.db")
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
