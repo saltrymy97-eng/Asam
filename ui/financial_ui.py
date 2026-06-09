@@ -1,8 +1,6 @@
 # ui/financial_ui.py - واجهة القوائم المالية (تصميم زجاجي فخم + فلترة مراكز التكلفة)
 import streamlit as st
 import pandas as pd
-import sqlite3
-import os
 from services.financial_service import get_income_statement, get_balance_sheet
 from services import cost_center_service as ccs
 
@@ -63,24 +61,6 @@ def show():
         st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>قائمة الدخل</h3>", unsafe_allow_html=True)
         
         income = get_income_statement(cost_center_id)
-        
-        # تشخيص
-        st.write("تشخيص الدخل:", income)
-        
-        # تشخيص الحسابات في القيود
-        DB_PATH = os.path.join("data", "erp.db")
-        conn = sqlite3.connect(DB_PATH)
-        rows = conn.execute("SELECT DISTINCT account_name FROM journal_lines ORDER BY account_name").fetchall()
-        st.write("الحسابات في القيود:", [r[0] for r in rows])
-        
-        # هل حساب 41 موجود في شجرة الحسابات؟
-        acc = conn.execute("SELECT * FROM accounts WHERE code='41' OR name='41'").fetchone()
-        st.write("حساب 41 في الشجرة:", dict(acc) if acc else "غير موجود")
-        
-        # رصيد حساب 41
-        bal = conn.execute("SELECT SUM(debit), SUM(credit) FROM journal_lines WHERE account_name='41'").fetchone()
-        st.write("رصيد 41:", bal[0], bal[1])
-        conn.close()
         
         # رسالة توضيحية إذا تم التصفية
         if cost_center_id:
