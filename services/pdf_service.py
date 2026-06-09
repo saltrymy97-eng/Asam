@@ -3,7 +3,7 @@ import sqlite3
 import os
 from datetime import datetime
 
-DB_PATH = "erp.db"
+DB_PATH = os.path.join("data", "erp.db")
 OUTPUT_DIR = "pdf_reports"
 
 def get_conn():
