@@ -1,8 +1,9 @@
 # services/financial_service.py - القوائم المالية (مع مراكز التكلفة والعملات) - نسخة مصححة ونهائية
 import sqlite3
+import os
 from collections import defaultdict
 
-DB_PATH = "erp.db"
+DB_PATH = os.path.join("data", "erp.db")
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
