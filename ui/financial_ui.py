@@ -62,6 +62,9 @@ def show():
         
         income = get_income_statement(cost_center_id)
         
+        # تشخيص
+        st.write("تشخيص الدخل:", income)
+        
         # رسالة توضيحية إذا تم التصفية
         if cost_center_id:
             center_name = next((f"{c['code']} - {c['name']}" for c in centers if c['id'] == cost_center_id), "")
