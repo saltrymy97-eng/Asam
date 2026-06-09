@@ -1,8 +1,9 @@
 # services/audit_service.py - منطق سجل التدقيق (حوكمة ERP)
 import sqlite3
+import os
 from datetime import datetime
 
-DB_PATH = "erp.db"
+DB_PATH = os.path.join("data", "erp.db")
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
