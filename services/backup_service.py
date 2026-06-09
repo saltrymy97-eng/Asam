@@ -4,7 +4,7 @@ import shutil
 import os
 from datetime import datetime
 
-DB_PATH = "erp.db"
+DB_PATH = os.path.join("data", "erp.db")
 BACKUP_DIR = "backups"
 
 # ---------- إعدادات قابلة للتعديل ----------
