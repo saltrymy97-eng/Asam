@@ -98,16 +98,16 @@ def run_payroll(employee_id, month):
         entry_id = cur.lastrowid
 
         conn.execute(
-            "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, 'مصروف الرواتب', ?, 0)",
+            "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, '544', ?, 0)",
             (entry_id, basic + total_allowances)
         )
         conn.execute(
-            "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, 'البنك', 0, ?)",
+            "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, '112', 0, ?)",
             (entry_id, net)
         )
         if deductions > 0:
             conn.execute(
-                "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, 'خصومات الموظفين', 0, ?)",
+                "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, '214', 0, ?)",
                 (entry_id, deductions)
             )
 
