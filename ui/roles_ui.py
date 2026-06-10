@@ -59,10 +59,9 @@ def show():
             df = df.rename(columns={
                 "username": "المستخدم",
                 "full_name": "الاسم",
-                "old_role": "الدور القديم",
                 "role_name": "الدور الحالي"
             })
-            st.dataframe(df[["المستخدم", "الاسم", "الدور القديم", "الدور الحالي"]], use_container_width=True, hide_index=True)
+            st.dataframe(df[["المستخدم", "الاسم", "الدور الحالي"]], use_container_width=True, hide_index=True)
         else:
             st.info("لا يوجد مستخدمون")
 
