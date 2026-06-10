@@ -1,6 +1,7 @@
 # services/roles_service.py – منطق الصلاحيات والأدوار (حوكمة ERP)
 import sqlite3
 from database import get_connection
+from services.audit_service import log_action
 
 def create_roles_tables():
     """إنشاء جداول الأدوار والصلاحيات إذا لم تكن موجودة"""
@@ -34,7 +35,7 @@ def seed_default_roles():
     roles = {
         "مدير": {
             "modules": ["لوحة المعلومات", "المخزون", "المبيعات", "المشتريات", "الحسابات", "الموارد البشرية", "شجرة الحسابات", "القوائم المالية", "الصلاحيات"],
-            "full_access": True  # المدير يملك كل الصلاحيات
+            "full_access": True
         },
         "محاسب": {
             "modules": ["لوحة المعلومات", "الحسابات", "شجرة الحسابات", "القوائم المالية"],
@@ -67,7 +68,6 @@ def seed_default_roles():
                         VALUES (?, ?, 1, 1, 0, 0, 0)
                     """, (role["id"], mod))
     
-    # تعيين دور المدير للمستخدم admin إذا لم يكن له دور
     admin_role = conn.execute("SELECT id FROM roles WHERE name='مدير'").fetchone()
     if admin_role:
         conn.execute("UPDATE users SET role_id=? WHERE username='admin' AND role_id IS NULL", (admin_role["id"],))
@@ -83,7 +83,6 @@ def check_permission(username, module, action="view"):
         conn.close()
         return False
     
-    # تحديد عمود الصلاحية المطلوب
     action_column = f"can_{action}"
     if action_column not in ["can_view", "can_add", "can_edit", "can_delete", "can_approve"]:
         action_column = "can_view"
@@ -144,7 +143,24 @@ def get_all_users_with_roles():
 def assign_role_to_user(user_id, role_id):
     """تعيين دور لمستخدم"""
     conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    
+    # جلب اسم المستخدم والدور للتسجيل
+    user = conn.execute("SELECT username FROM users WHERE id=?", (user_id,)).fetchone()
+    role = conn.execute("SELECT name FROM roles WHERE id=?", (role_id,)).fetchone()
+    
     conn.execute("UPDATE users SET role_id=? WHERE id=?", (role_id, user_id))
     conn.commit()
     conn.close()
+    
+    # تسجيل العملية في سجل التدقيق
+    if user and role:
+        log_action(
+            username="admin",
+            action="تعيين دور",
+            table_name="users",
+            record_id=user_id,
+            new_value=f"المستخدم: {user['username']}, الدور الجديد: {role['name']}"
+        )
+    
     return True
