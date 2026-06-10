@@ -3,7 +3,6 @@ import streamlit as st
 import pandas as pd
 from services.roles_service import (
     create_roles_tables,
-    seed_default_roles,
     get_all_roles,
     get_role_permissions,
     get_all_users_with_roles,
@@ -32,7 +31,7 @@ def show():
     """, unsafe_allow_html=True)
 
     create_roles_tables()
-    seed_default_roles()
+    # تم نقل seed_default_roles() إلى app.py ليتم استدعاؤه مرة واحدة فقط
 
     tab1, tab2, tab3, tab4 = st.tabs(["🔑 الأدوار والصلاحيات", "👥 المستخدمين", "⚙️ تعيين دور", "➕ إضافة مستخدم"])
 
@@ -117,5 +116,6 @@ def show():
                         success, message = create_user(new_username, new_password, new_fullname, role_id)
                         if success:
                             st.success(message)
+                            st.rerun()      # إعادة تشغيل التطبيق لتحديث قائمة المستخدمين
                         else:
                             st.error(message)
