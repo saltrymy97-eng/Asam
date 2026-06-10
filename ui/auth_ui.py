@@ -54,45 +54,28 @@ def apply_ultra_premium_css():
             box-shadow: 0 50px 100px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255,255,255,0.02) !important;
         }}
 
-        /* 3. حقول الإدخال - القضاء على المستطيل الأبيض نهائياً */
+        /* 3. حقول الإدخال الأنيقة والذكية */
         div[data-baseweb="input"] {{
-            background: rgba(3, 7, 18, 0.0) !important;
+            background: rgba(3, 7, 18, 0.5) !important;
             border: 1px solid rgba(255, 255, 255, 0.06) !important;
             border-radius: 20px !important;
             padding: 10px 18px !important;
             transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1) !important;
         }}
         div[data-baseweb="input"]:focus-within {{
-            background: rgba(0, 0, 0, 0.2) !important;
+            background: rgba(0, 0, 0, 0.7) !important;
             border-color: rgba(124, 58, 237, 0.6) !important;
             box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.6), 0 20px 40px rgba(0,0,0,0.5) !important;
             transform: translateY(-2px);
         }}
-        
         div[data-baseweb="input"] input {{
             background: transparent !important;
-            background-color: transparent !important;
             color: {T} !important;
             font-size: 1.15rem !important;
             font-weight: 500 !important;
-            -webkit-text-fill-color: {T} !important;
-            caret-color: {PR} !important;
-            box-shadow: none !important;
         }}
-
-        div[data-baseweb="input"] input:-webkit-autofill,
-        div[data-baseweb="input"] input:-webkit-autofill:hover,
-        div[data-baseweb="input"] input:-webkit-autofill:focus,
-        div[data-baseweb="input"] input:-webkit-autofill:active {{
-            -webkit-box-shadow: 0 0 0 30px rgba(3, 7, 18, 0.8) inset !important;
-            -webkit-text-fill-color: {T} !important;
-            caret-color: {PR} !important;
-            transition: background-color 5000s ease-in-out 0s;
-        }}
-
         div[data-baseweb="input"] input::placeholder {{
-            color: rgba(255, 255, 255, 0.25) !important;
-            font-weight: 400;
+            color: rgba(255, 255, 255, 0.15) !important;
         }}
 
         /* عناوين الحقول السلوكية */
@@ -105,7 +88,7 @@ def apply_ultra_premium_css():
             text-transform: uppercase;
         }}
 
-        /* 4. زر الدخول التنفيذي المتدرج */
+        /* 4. زر الدخول التنفيذي المتدرج (Executive Call-to-Action) */
         button[kind="primary"] {{
             background: linear-gradient(135deg, {PR} 0%, {BL} 100%) !important;
             border: none !important;
@@ -158,6 +141,7 @@ def render_premium_header(is_change_password=False):
     if not is_change_password:
         st.markdown(f"""
         <div style="text-align:center; margin-bottom: 3rem; margin-top: 0.5rem;">
+            <!-- أيقونة حوكمة ERP الفاخرة -->
             <div class="executive-logo-box" style="
                 width: 160px; height: 160px; margin: 0 auto 2rem auto;
                 background: linear-gradient(135deg, rgba(124,58,237,0.1) 0%, rgba(37,99,235,0.05) 100%);
@@ -174,6 +158,7 @@ def render_premium_header(is_change_password=False):
                     letter-spacing: 2px; display: inline-block;
                 ">حوكمة</span>
             </div>
+            <!-- الشعار الفرعي الجذاب بتصميم مميز -->
             <p style="color:{S}; margin-top: 0.9rem; font-size: 1.2rem; letter-spacing: 2px; font-weight: 600;">
                 إدارة <span style="color:#A78BFA; font-weight:700;">ذكية</span> .. قرارات <span style="color:#60A5FA; font-weight:700;">واثقة</span>
             </p>
