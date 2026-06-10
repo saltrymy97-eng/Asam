@@ -73,9 +73,11 @@ def apply_ultra_premium_css():
             color: {T} !important;
             font-size: 1.15rem !important;
             font-weight: 500 !important;
+            -webkit-text-fill-color: {T} !important;
+            caret-color: {PR} !important;
         }}
         div[data-baseweb="input"] input::placeholder {{
-            color: rgba(255, 255, 255, 0.15) !important;
+            color: rgba(255, 255, 255, 0.25) !important;
         }}
 
         /* عناوين الحقول السلوكية */
