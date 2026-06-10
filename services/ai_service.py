@@ -359,7 +359,7 @@ def get_employee_info(name):
 
 def get_recent_entries():
     conn = get_conn()
-    entries = [dict(r) for r in conn.execute("SELECT * FROM journal_entries ORDER BY id DESC LIMIT 1000").fetchall()]
+    entries = [dict(r) for r in conn.execute("SELECT * FROM journal_entries ORDER BY id DESC LIMIT 200").fetchall()]
     conn.close()
     return entries
 
