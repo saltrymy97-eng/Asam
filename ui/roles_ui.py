@@ -45,7 +45,13 @@ def show():
                     perms = get_role_permissions(role["id"])
                     if perms:
                         for p in perms:
-                            st.write(f"- {p}")
+                            module = p['module']
+                            view = "✅" if p['can_view'] else "❌"
+                            add = "✅" if p['can_add'] else "❌"
+                            edit = "✅" if p['can_edit'] else "❌"
+                            delete = "✅" if p['can_delete'] else "❌"
+                            approve = "✅" if p['can_approve'] else "❌"
+                            st.write(f"**{module}**: عرض {view} | إضافة {add} | تعديل {edit} | حذف {delete} | موافقة {approve}")
                     else:
                         st.write("لا توجد صلاحيات")
         else:
