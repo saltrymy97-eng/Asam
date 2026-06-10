@@ -20,7 +20,7 @@ from services.roles_service import (
     get_allowed_modules
 )
 
-# تهيئة الأدوار والصلاحيات الافتراضية
+# تهيئة الأدوار والصلاحيات الافتراضية (مرة واحدة فقط)
 seed_default_roles()
 
 # استيراد جميع الوحدات
