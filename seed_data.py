@@ -186,8 +186,8 @@ if total_opening_stock_value > 0:
         entry_id, err = save_journal_entry(
             description="قيد الأرصدة الافتتاحية",
             lines=[
-                {"account": "114", "debit": total_opening_stock_value, "credit": 0},
-                {"account": "31", "debit": 0, "credit": total_opening_stock_value}
+                {"account": "114", "debit": total_opening_stock_value, "credit": 0, "exchange_rate": 1.0},
+                {"account": "31", "debit": 0, "credit": total_opening_stock_value, "exchange_rate": 1.0}
             ],
             entry_date=date.today().strftime("%Y-%m-%d")
         )
@@ -478,6 +478,13 @@ if errors:
     print(f"\nأول 3 أخطاء:")
     for err in errors[:3]:
         print(f"  - {err}")
+
+# ===================== تشخيص exchange_rate =====================
+conn = database.get_connection()
+null_count = conn.execute("SELECT COUNT(*) FROM journal_lines WHERE exchange_rate IS NULL").fetchone()[0]
+total_count = conn.execute("SELECT COUNT(*) FROM journal_lines").fetchone()[0]
+print(f"\n⚠️ قيود بـ exchange_rate=NULL: {null_count} من {total_count}")
+conn.close()
 
 # ===================== تشخيص تلقائي للمشكلة =====================
 print("\n🔍 تشخيص تلقائي...")
