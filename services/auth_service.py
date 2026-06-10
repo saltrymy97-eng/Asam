@@ -2,6 +2,7 @@
 import sqlite3
 import bcrypt
 from database import get_connection
+from services.audit_service import log_action
 
 def verify_user(username, password):
     """التحقق من صحة بيانات المستخدم"""
@@ -42,6 +43,15 @@ def change_password(username, old_password, new_password):
     c.execute("UPDATE users SET password=? WHERE username=?", (hashed.decode(), username))
     conn.commit()
     conn.close()
+    
+    # تسجيل تغيير كلمة المرور
+    log_action(
+        username=username,
+        action="تغيير كلمة المرور",
+        table_name="users",
+        new_value=f"تم تغيير كلمة المرور للمستخدم: {username}"
+    )
+    
     return True, "تم تغيير كلمة المرور بنجاح"
 
 def create_user(username, password, full_name, role_id=None):
@@ -54,6 +64,19 @@ def create_user(username, password, full_name, role_id=None):
             (username, hashed, full_name, role_id)
         )
         conn.commit()
+        
+        # جلب ID المستخدم الجديد للتسجيل
+        conn.row_factory = sqlite3.Row
+        user = conn.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
+        if user:
+            log_action(
+                username=username,
+                action="إنشاء مستخدم",
+                table_name="users",
+                record_id=user["id"],
+                new_value=f"المستخدم: {username}, الاسم: {full_name}, الدور: {role_id}"
+            )
+        
         return True, "تم إنشاء المستخدم بنجاح"
     except sqlite3.IntegrityError:
         return False, "اسم المستخدم موجود مسبقاً"
