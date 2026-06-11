@@ -81,29 +81,29 @@ def create_closing_entry(year, retained_earnings_code="32"):
         )
         entry_id = cur.lastrowid
         
-        # إقفال الإيرادات (مدين)
+        # إقفال الإيرادات (مدين) – مع exchange_rate و currency_code
         for code, name, amt in revenue_details:
             conn.execute(
-                "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, ?, ?, 0)",
+                "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, ?, 0, 'YER', 1.0)",
                 (entry_id, code, abs(amt))
             )
         
-        # إقفال المصروفات (دائن)
+        # إقفال المصروفات (دائن) – مع exchange_rate و currency_code
         for code, name, amt in expense_details:
             conn.execute(
-                "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, ?, 0, ?)",
+                "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, 0, ?, 'YER', 1.0)",
                 (entry_id, code, abs(amt))
             )
         
-        # توجيه صافي الدخل إلى الأرباح المحتجزة (32)
+        # توجيه صافي الدخل إلى الأرباح المحتجزة (32) – مع exchange_rate و currency_code
         if net_income > 0:
             conn.execute(
-                "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, ?, 0, ?)",
+                "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, 0, ?, 'YER', 1.0)",
                 (entry_id, retained_earnings_code, net_income)
             )
         elif net_income < 0:
             conn.execute(
-                "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, ?, ?, 0)",
+                "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, ?, 0, 'YER', 1.0)",
                 (entry_id, retained_earnings_code, -net_income)
             )
         
@@ -169,28 +169,28 @@ def create_cost_center_closing_entry(year, cost_center_id, retained_earnings_cod
             account_type = item['account_type']
             abs_net = abs(item['net'])
             
-            # إيرادات: مدين لإغلاقها (طبيعتها دائنة)
+            # إيرادات: مدين لإغلاقها (طبيعتها دائنة) – مع exchange_rate و currency_code
             if account_type in ('revenue', 'income'):
                 cur_line = conn.execute(
-                    "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, ?, ?, 0)",
+                    "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, ?, 0, 'YER', 1.0)",
                     (entry_id, account_code, abs_net)
                 )
-            # مصروفات: دائن لإغلاقها (طبيعتها مدينة)
+            # مصروفات: دائن لإغلاقها (طبيعتها مدينة) – مع exchange_rate و currency_code
             elif account_type in ('expense', 'cost_of_sales'):
                 cur_line = conn.execute(
-                    "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, ?, 0, ?)",
+                    "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, 0, ?, 'YER', 1.0)",
                     (entry_id, account_code, abs_net)
                 )
             else:
-                # حسابات أخرى لا نغلقها عادةً، لكن إذا وُجدت نضبطها بنفس المنطق
+                # حسابات أخرى لا نغلقها عادةً، لكن إذا وُجدت نضبطها بنفس المنطق مع exchange_rate
                 if item['net'] > 0:
                     cur_line = conn.execute(
-                        "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, ?, ?, 0)",
+                        "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, ?, 0, 'YER', 1.0)",
                         (entry_id, account_code, abs_net)
                     )
                 else:
                     cur_line = conn.execute(
-                        "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, ?, 0, ?)",
+                        "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, 0, ?, 'YER', 1.0)",
                         (entry_id, account_code, abs_net)
                     )
             
@@ -204,15 +204,15 @@ def create_cost_center_closing_entry(year, cost_center_id, retained_earnings_cod
                 'percentage': 100.0
             }])
         
-        # إضافة سطر صافي الدخل إلى الأرباح المحتجزة وتوزيعه على المركز
+        # إضافة سطر صافي الدخل إلى الأرباح المحتجزة وتوزيعه على المركز – مع exchange_rate و currency_code
         if net_income > 0:
             cur_line = conn.execute(
-                "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, ?, 0, ?)",
+                "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, 0, ?, 'YER', 1.0)",
                 (entry_id, retained_earnings_code, net_income)
             )
         elif net_income < 0:
             cur_line = conn.execute(
-                "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, ?, ?, 0)",
+                "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, ?, 0, 'YER', 1.0)",
                 (entry_id, retained_earnings_code, -net_income)
             )
         if net_income != 0:
