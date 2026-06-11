@@ -260,30 +260,30 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
                     raise Exception(f"فشل خصم FIFO: {err}")
                 total_fifo_cost += cost
         
-        # 7. إنشاء القيد المحاسبي (قبل commit)
+        # 7. إنشاء القيد المحاسبي (قبل commit) - استخدام الأكواد الموحدة
         from services.accounting_service import save_journal_entry
         
         if invoice_type == "sale":
             lines = [
-                {"account": "مردودات المبيعات", "debit": subtotal_return, "credit": 0,
+                {"account": "42", "debit": subtotal_return, "credit": 0,
                  "currency_code": currency_code, "exchange_rate": exchange_rate},
-                {"account": "ضريبة القيمة المضافة المستحقة", "debit": vat_amount, "credit": 0,
+                {"account": "213", "debit": vat_amount, "credit": 0,
                  "currency_code": currency_code, "exchange_rate": exchange_rate},
-                {"account": party_name, "debit": 0, "credit": total_return,
+                {"account": "113", "debit": 0, "credit": total_return,
                  "currency_code": currency_code, "exchange_rate": exchange_rate},
-                {"account": "المخزون", "debit": total_fifo_cost, "credit": 0,
+                {"account": "114", "debit": total_fifo_cost, "credit": 0,
                  "currency_code": currency_code, "exchange_rate": exchange_rate},
-                {"account": "تكلفة البضاعة المباعة", "debit": 0, "credit": total_fifo_cost,
+                {"account": "51", "debit": 0, "credit": total_fifo_cost,
                  "currency_code": currency_code, "exchange_rate": exchange_rate}
             ]
         else:
             # مرتجع مشتريات بدون سطر المخزون
             lines = [
-                {"account": party_name, "debit": total_return, "credit": 0,
+                {"account": "211", "debit": total_return, "credit": 0,
                  "currency_code": currency_code, "exchange_rate": exchange_rate},
-                {"account": "مردودات المشتريات", "debit": 0, "credit": subtotal_return,
+                {"account": "53", "debit": 0, "credit": subtotal_return,
                  "currency_code": currency_code, "exchange_rate": exchange_rate},
-                {"account": "ضريبة القيمة المضافة المدخلة", "debit": 0, "credit": vat_amount,
+                {"account": "213", "debit": 0, "credit": vat_amount,
                  "currency_code": currency_code, "exchange_rate": exchange_rate}
             ]
         
