@@ -104,14 +104,14 @@ def run_depreciation(asset_id, entry_date=None, notes=""):
         )
         entry_id = cur.lastrowid
 
-        # مدين: مصروف الإهلاك (كود 545)
+        # مدين: مصروف الإهلاك (كود 545) – مع exchange_rate و currency_code
         conn.execute(
-            "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, '545', ?, 0)",
+            "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, '545', ?, 0, 'YER', 1.0)",
             (entry_id, monthly_dep)
         )
-        # دائن: مجمع الإهلاك (كود 122)
+        # دائن: مجمع الإهلاك (كود 122) – مع exchange_rate و currency_code
         conn.execute(
-            "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, '122', 0, ?)",
+            "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, '122', 0, ?, 'YER', 1.0)",
             (entry_id, monthly_dep)
         )
 
