@@ -97,17 +97,20 @@ def run_payroll(employee_id, month):
         )
         entry_id = cur.lastrowid
 
+        # مدين: رواتب وأجور (544) – مع exchange_rate و currency_code
         conn.execute(
-            "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, '544', ?, 0)",
+            "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, '544', ?, 0, 'YER', 1.0)",
             (entry_id, basic + total_allowances)
         )
+        # دائن: البنوك (112) – مع exchange_rate و currency_code
         conn.execute(
-            "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, '112', 0, ?)",
+            "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, '112', 0, ?, 'YER', 1.0)",
             (entry_id, net)
         )
         if deductions > 0:
+            # دائن: مصروفات مستحقة (214) – مع exchange_rate و currency_code
             conn.execute(
-                "INSERT INTO journal_lines (entry_id, account_name, debit, credit) VALUES (?, '214', 0, ?)",
+                "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, '214', 0, ?, 'YER', 1.0)",
                 (entry_id, deductions)
             )
 
