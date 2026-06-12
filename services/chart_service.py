@@ -1,6 +1,7 @@
 # services/chart_service.py – منطق شجرة الحسابات (مع إدارة العمليات)
 import sqlite3
 from database import get_connection
+from services.audit_service import log_action
 
 def create_accounts_table():
     """إنشاء جدول الحسابات إذا لم يكن موجوداً"""
@@ -40,6 +41,15 @@ def add_account(code, name, parent_id=None):
             (code, name, parent_id, level, is_debit)
         )
         conn.commit()
+
+        # تسجيل العملية في سجل التدقيق
+        log_action(
+            username="admin",
+            action="إضافة حساب",
+            table_name="accounts",
+            new_value=f"الكود: {code}, الاسم: {name}, المستوى: {level}"
+        )
+
         return True, None
     except sqlite3.IntegrityError:
         conn.rollback()
