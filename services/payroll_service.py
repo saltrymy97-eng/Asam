@@ -86,8 +86,13 @@ def run_payroll(employee_id, month):
     total_allowances, net = calculate_net(basic, housing, transport, other, deductions)
 
     conn = get_connection()
+    conn.row_factory = sqlite3.Row  # لجلب اسم الموظف
 
     try:
+        # جلب اسم الموظف لتسجيله في السجل
+        emp = conn.execute("SELECT name FROM employees WHERE id=?", (employee_id,)).fetchone()
+        emp_name = emp["name"] if emp else "موظف غير معروف"
+
         conn.execute("BEGIN")
 
         desc = f"راتب شهر {month}"
@@ -121,6 +126,16 @@ def run_payroll(employee_id, month):
         """, (employee_id, month, basic, housing, transport, other, total_allowances, deductions, net, entry_id))
 
         conn.commit()
+
+        # تسجيل العملية في سجل التدقيق
+        log_action(
+            username="admin",
+            action="تشغيل راتب",
+            table_name="payroll_runs",
+            record_id=entry_id,
+            new_value=f"الموظف: {emp_name}, الشهر: {month}, الصافي: {net:,.2f}"
+        )
+
         return net, None
 
     except Exception as e:
