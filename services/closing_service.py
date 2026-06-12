@@ -2,6 +2,7 @@
 import sqlite3
 from database import get_connection
 from services import cost_center_service as ccs
+from services.audit_service import log_action
 
 def get_account_balance(account_code):
     """جلب رصيد حساب محدد (عام)"""
@@ -108,6 +109,16 @@ def create_closing_entry(year, retained_earnings_code="32"):
             )
         
         conn.commit()
+
+        # تسجيل العملية في سجل التدقيق
+        log_action(
+            username="admin",
+            action="إغلاق سنة مالية",
+            table_name="journal_entries",
+            record_id=entry_id,
+            new_value=f"إغلاق السنة المالية {year}, صافي الدخل: {net_income:,.2f}"
+        )
+
         return True, net_income, None
         
     except Exception as e:
@@ -224,6 +235,16 @@ def create_cost_center_closing_entry(year, cost_center_id, retained_earnings_cod
             }])
         
         conn.commit()
+
+        # تسجيل العملية في سجل التدقيق
+        log_action(
+            username="admin",
+            action="إغلاق سنة مالية (مركز تكلفة)",
+            table_name="journal_entries",
+            record_id=entry_id,
+            new_value=f"إغلاق مركز {center['code']} - {center['name']} للسنة {year}, صافي الدخل: {net_income:,.2f}"
+        )
+
         return True, net_income, None
         
     except Exception as e:
