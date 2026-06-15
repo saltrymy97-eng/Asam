@@ -61,10 +61,11 @@ def add_account(code, name, parent_id=None):
         conn.close()
 
 def get_accounts_tree():
-    """جلب جميع الحسابات مرتبة"""
+    """جلب جميع الحسابات مرتبة مع التصنيف"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
-    accounts = conn.execute("SELECT * FROM accounts ORDER BY code").fetchall()
+    # تم تحديد الحقول بشكل صريح لضمان جلب account_type
+    accounts = conn.execute("SELECT id, code, name, parent_id, level, is_debit, account_type FROM accounts ORDER BY code").fetchall()
     conn.close()
     return accounts
 
@@ -73,7 +74,11 @@ def build_tree(accounts, parent_id=None, indent=0):
     tree = []
     for acc in accounts:
         if acc["parent_id"] == parent_id:
-            tree.append(dict(acc, indent=indent))
+            # تحويل الصف إلى قاموس وإضافة المسافة البادئة
+            # مع التأكد من تضمين account_type
+            acc_dict = dict(acc)
+            acc_dict["indent"] = indent
+            tree.append(acc_dict)
             tree.extend(build_tree(accounts, acc["id"], indent + 1))
     return tree
 
