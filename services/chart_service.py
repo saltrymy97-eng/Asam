@@ -14,13 +14,14 @@ def create_accounts_table():
             parent_id INTEGER,
             level INTEGER DEFAULT 1,
             is_debit TEXT DEFAULT 'debit',
+            account_type TEXT,
             FOREIGN KEY (parent_id) REFERENCES accounts(id)
         )
     """)
     conn.commit()
     conn.close()
 
-def add_account(code, name, parent_id=None):
+def add_account(code, name, parent_id=None, account_type=None):
     """إضافة حساب جديد مع حماية العملية"""
     level = 1
     if parent_id:
@@ -37,8 +38,8 @@ def add_account(code, name, parent_id=None):
     try:
         conn.execute("BEGIN")
         conn.execute(
-            "INSERT INTO accounts (code, name, parent_id, level, is_debit) VALUES (?,?,?,?,?)",
-            (code, name, parent_id, level, is_debit)
+            "INSERT INTO accounts (code, name, parent_id, level, is_debit, account_type) VALUES (?,?,?,?,?,?)",
+            (code, name, parent_id, level, is_debit, account_type)
         )
         conn.commit()
 
@@ -47,7 +48,7 @@ def add_account(code, name, parent_id=None):
             username="admin",
             action="إضافة حساب",
             table_name="accounts",
-            new_value=f"الكود: {code}, الاسم: {name}, المستوى: {level}"
+            new_value=f"الكود: {code}, الاسم: {name}, المستوى: {level}, التصنيف: {account_type or 'غير محدد'}"
         )
 
         return True, None
@@ -64,7 +65,6 @@ def get_accounts_tree():
     """جلب جميع الحسابات مرتبة مع التصنيف"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
-    # تم تحديد الحقول بشكل صريح لضمان جلب account_type
     accounts = conn.execute("SELECT id, code, name, parent_id, level, is_debit, account_type FROM accounts ORDER BY code").fetchall()
     conn.close()
     return accounts
@@ -74,8 +74,6 @@ def build_tree(accounts, parent_id=None, indent=0):
     tree = []
     for acc in accounts:
         if acc["parent_id"] == parent_id:
-            # تحويل الصف إلى قاموس وإضافة المسافة البادئة
-            # مع التأكد من تضمين account_type
             acc_dict = dict(acc)
             acc_dict["indent"] = indent
             tree.append(acc_dict)
