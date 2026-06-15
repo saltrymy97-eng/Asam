@@ -509,7 +509,31 @@ def init_db():
         FOREIGN KEY (lead_id) REFERENCES crm_leads(id)
     )''')
 
-    # ========== 20. الفهارس (Indexes) لتحسين الأداء ==========
+    # ========== 20. الصندوق (Cash Management) ==========
+    c.execute('''CREATE TABLE IF NOT EXISTS cash_accounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        currency_code TEXT NOT NULL DEFAULT 'YER',
+        opening_balance REAL DEFAULT 0.0,
+        current_balance REAL DEFAULT 0.0,
+        is_active INTEGER DEFAULT 1 CHECK(is_active IN (0,1)),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS cash_transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cash_account_id INTEGER NOT NULL,
+        transaction_date TEXT NOT NULL,
+        description TEXT,
+        type TEXT NOT NULL CHECK(type IN ('deposit','withdrawal')),
+        amount REAL NOT NULL CHECK(amount > 0),
+        reference TEXT,
+        journal_line_id INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (cash_account_id) REFERENCES cash_accounts(id)
+    )''')
+
+    # ========== 21. الفهارس (Indexes) لتحسين الأداء ==========
     c.execute("CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_date ON invoices(invoice_date)")
@@ -530,6 +554,8 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_crm_leads_status ON crm_leads(status)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_crm_opportunities_lead ON crm_opportunities(lead_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_crm_interactions_lead ON crm_interactions(lead_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_cash_transactions_account ON cash_transactions(cash_account_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_cash_transactions_date ON cash_transactions(transaction_date)")
 
     conn.commit()
     conn.close()
