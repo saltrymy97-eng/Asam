@@ -188,7 +188,7 @@ else:
             if can_access("مراكز التكلفة") and st.button("🏢 مراكز تكلفة", key="cost_center"): st.session_state.current_page = "مراكز التكلفة"
             if can_access("العملات") and st.button("💱 عملات", key="currency"): st.session_state.current_page = "العملات"
             if can_access("الأرصدة الافتتاحية") and st.button("📋 أرصدة افتتاحية", key="opening"): st.session_state.current_page = "الأرصدة الافتتاحية"
-            if can_access("الصندوق") and st.button("💰 صندوق", key="cash"): st.session_state.current_page = "الصندوق"  # 🆕
+            if can_access("الصندوق") and st.button("💰 صندوق", key="cash"): st.session_state.current_page = "الصندوق"
         with col2:
             if can_access("التعاملات البنكية") and st.button("🏦 بنوك", key="bank"): st.session_state.current_page = "التعاملات البنكية"
             if can_access("الضريبة") and st.button("🧾 ضريبة", key="vat"): st.session_state.current_page = "الضريبة"
@@ -196,6 +196,7 @@ else:
             if can_access("إغلاق الفترات") and st.button("📅 إغلاق فترات", key="period"): st.session_state.current_page = "إغلاق الفترات"
             if can_access("FIFO المخزون") and st.button("📊 FIFO", key="fifo"): st.session_state.current_page = "FIFO المخزون"
             if can_access("تقييم العملات") and st.button("💱 تقييم عملات", key="revaluation"): st.session_state.current_page = "تقييم العملات"
+            if can_access("التقارير المالية XBRL") and st.button("🌐 تقارير XBRL", key="pdf"): st.session_state.current_page = "التقارير المالية XBRL"
 
         # المجموعة 4: إدارة الأعمال
         st.markdown('<div class="menu-section">👥 إدارة الأعمال</div>', unsafe_allow_html=True)
@@ -215,7 +216,6 @@ else:
             if can_access("سجل التدقيق") and st.button("📋 سجل تدقيق", key="audit"): st.session_state.current_page = "سجل التدقيق"
         with col2:
             if can_access("نسخ احتياطي") and st.button("💾 نسخ احتياطي", key="backup"): st.session_state.current_page = "نسخ احتياطي"
-            if can_access("تقارير HTML") and st.button("📄 تقارير HTML", key="pdf"): st.session_state.current_page = "تقارير HTML"
 
         # المجموعة 6: الذكاء الاصطناعي
         st.markdown('<div class="menu-section">🤖 الذكاء الاصطناعي</div>', unsafe_allow_html=True)
@@ -287,5 +287,5 @@ else:
     elif page == "المساعد الذكي": show_if_permitted("المساعد الذكي", ai_show)
     elif page == "سجل التدقيق": show_if_permitted("سجل التدقيق", audit_show)
     elif page == "نسخ احتياطي": show_if_permitted("نسخ احتياطي", backup_show)
-    elif page == "تقارير HTML": show_if_permitted("تقارير HTML", pdf_show)
+    elif page == "التقارير المالية XBRL": show_if_permitted("التقارير المالية XBRL", pdf_show)
     elif page == "الصندوق": show_if_permitted("الصندوق", cash_show)  # 🆕
