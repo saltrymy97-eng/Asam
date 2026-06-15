@@ -1,4 +1,4 @@
-# ui/chart_ui.py – واجهة شجرة الحسابات (تصميم زجاجي فخم + توضيح وجهة الحساب)
+# ui/chart_ui.py – واجهة شجرة الحسابات (تصميم زجاجي فخم + توضيح وجهة الحساب + اختيار التصنيف)
 import streamlit as st
 import pandas as pd
 from services.chart_service import (
@@ -76,12 +76,29 @@ def show():
         col1, col2 = st.columns(2)
         code = col1.text_input("كود الحساب")
         name = col2.text_input("اسم الحساب")
+        
+        # 🆕 حقل اختيار تصنيف الحساب
+        account_type = st.selectbox(
+            "تصنيف الحساب (يحدد أين يظهر في القوائم المالية)",
+            ["", "Asset - أصل", "Liability - خصم", "Equity - حقوق ملكية", "Revenue - إيراد", "Expense - مصروف"],
+            help="اختر التصنيف المناسب. يحدد ما إذا كان الحساب يظهر في الميزانية العمومية أم قائمة الدخل"
+        )
+        
+        # تحويل القيمة المعروضة إلى القيمة المخزنة
+        account_type_map = {
+            "Asset - أصل": "Asset",
+            "Liability - خصم": "Liability",
+            "Equity - حقوق ملكية": "Equity",
+            "Revenue - إيراد": "Revenue",
+            "Expense - مصروف": "Expense"
+        }
+        selected_account_type = account_type_map.get(account_type)
 
         if st.button("💾 حفظ الحساب"):
             if not code or not name:
                 st.error("الكود والاسم مطلوبان")
             else:
-                success, error = add_account(code, name, parent_id)
+                success, error = add_account(code, name, parent_id, selected_account_type)
                 if success:
                     st.success(f"تم إضافة الحساب {code} - {name}")
                     st.rerun()
