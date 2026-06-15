@@ -54,6 +54,7 @@ from ui.audit_log import show as audit_show
 from ui.backup import show as backup_show
 from ui.pdf_reports import show as pdf_show
 from ui.ai_ui import show as ai_show
+from ui.cash_ui import show as cash_show  # 🆕 وحدة الصندوق
 
 st.set_page_config(page_title="حوكمة ERP", layout="wide")
 
@@ -187,6 +188,7 @@ else:
             if can_access("مراكز التكلفة") and st.button("🏢 مراكز تكلفة", key="cost_center"): st.session_state.current_page = "مراكز التكلفة"
             if can_access("العملات") and st.button("💱 عملات", key="currency"): st.session_state.current_page = "العملات"
             if can_access("الأرصدة الافتتاحية") and st.button("📋 أرصدة افتتاحية", key="opening"): st.session_state.current_page = "الأرصدة الافتتاحية"
+            if can_access("الصندوق") and st.button("💰 صندوق", key="cash"): st.session_state.current_page = "الصندوق"  # 🆕
         with col2:
             if can_access("التعاملات البنكية") and st.button("🏦 بنوك", key="bank"): st.session_state.current_page = "التعاملات البنكية"
             if can_access("الضريبة") and st.button("🧾 ضريبة", key="vat"): st.session_state.current_page = "الضريبة"
@@ -286,3 +288,4 @@ else:
     elif page == "سجل التدقيق": show_if_permitted("سجل التدقيق", audit_show)
     elif page == "نسخ احتياطي": show_if_permitted("نسخ احتياطي", backup_show)
     elif page == "تقارير HTML": show_if_permitted("تقارير HTML", pdf_show)
+    elif page == "الصندوق": show_if_permitted("الصندوق", cash_show)  # 🆕
