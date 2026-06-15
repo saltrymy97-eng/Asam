@@ -1,4 +1,4 @@
-# ui/chart_ui.py – واجهة شجرة الحسابات (تصميم زجاجي فخم)
+# ui/chart_ui.py – واجهة شجرة الحسابات (تصميم زجاجي فخم + توضيح وجهة الحساب)
 import streamlit as st
 import pandas as pd
 from services.chart_service import (
@@ -40,8 +40,27 @@ def show():
             tree = build_tree(accounts)
             df = pd.DataFrame(tree)
             df["display_name"] = df.apply(lambda r: " " * r["indent"] + r["name"], axis=1)
-            df_display = df[["code", "display_name", "level", "is_debit"]].rename(
-                columns={"display_name": "اسم الحساب", "code": "الكود", "level": "المستوى", "is_debit": "طبيعة الحساب"}
+            
+            # 🆕 تحديد أين يظهر الحساب بناءً على تصنيفه
+            def where_appears(acc_type):
+                if acc_type in ("Asset", "Liability", "Equity"):
+                    return "الميزانية العمومية"
+                elif acc_type in ("Revenue", "Expense"):
+                    return "قائمة الدخل"
+                else:
+                    return "غير محدد"
+            
+            df["يظهر في"] = df["account_type"].apply(where_appears)
+            
+            # إعادة ترتيب وتسمية الأعمدة للعرض
+            df_display = df[["code", "display_name", "level", "is_debit", "يظهر في"]].rename(
+                columns={
+                    "display_name": "اسم الحساب",
+                    "code": "الكود",
+                    "level": "المستوى",
+                    "is_debit": "طبيعة الحساب",
+                    "يظهر في": "يظهر في"
+                }
             )
             st.dataframe(df_display, use_container_width=True, hide_index=True)
         else:
