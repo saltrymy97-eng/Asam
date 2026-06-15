@@ -170,6 +170,24 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
         conn.execute("UPDATE vouchers SET journal_entry_id=? WHERE id=?", 
                     (entry_id, voucher_id))
         
+        # ✅ ربط السندات بوحدة الصندوق تلقائياً
+        if account == "111":
+            try:
+                from services.cash_service import add_cash_transaction, get_all_cash_accounts
+                cash_accounts = get_all_cash_accounts(active_only=True)
+                if cash_accounts:
+                    cash_acc = cash_accounts[0]  # أول حساب صندوق نشط
+                    trans_type = "deposit" if voucher_type == "receipt" else "withdrawal"
+                    add_cash_transaction(
+                        cash_acc['id'],
+                        voucher_date,
+                        f"سند {'قبض' if voucher_type == 'receipt' else 'صرف'} #{voucher_id} - {party_name}",
+                        trans_type,
+                        amount
+                    )
+            except Exception:
+                pass  # إذا فشلت حركة الصندوق، لا يؤثر على السند
+        
         conn.commit()
         
         log_action(
