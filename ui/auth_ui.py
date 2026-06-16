@@ -1,4 +1,4 @@
-# ui/auth_ui.py – شاشة الدخول الذهبية الفاخرة
+# ui/auth_ui.py
 import streamlit as st
 from database import init_db
 from services.auth_service import (
@@ -7,35 +7,31 @@ from services.auth_service import (
     logout_session
 )
 
-# ========== لوحة ألوان ذهبية ملكية ==========
+# ========== لوحة ألوان النخبة والفخامة المطلقة ==========
 T = "#F8FAFC"        # أبيض بلاتيني ناصع للنصوص القيادية
-S = "#CBD5E1"        # رمادي فضي خافت للنصوص الثانوية
-GOLD = "#D4AF37"     # ذهبي ملكي
-GOLD_LIGHT = "#FCF6BA"  # ذهبي فاتح
-GOLD_DARK = "#AA771C"   # ذهبي داكن
+S = "#64748B"        # رمادي فضي خافت للنصوص الثانوية
+PR = "#7C3AED"       # بنفسجي ملكي عميق (Royal Violet)
+BL = "#2563EB"       # أزرق سيادي (Sovereign Blue)
 BG_CORE = "#020617"  # أسود بركاني عميق للخلفية الأساسية
 
 def apply_ultra_premium_css():
-    """حقن نظام التصميم الذهبي الملكي لصفحة الدخول"""
+    """حقن نظام التصميم السيادي والـ Obsidian Glassmorphism لصفحة الدخول"""
     st.markdown(f"""
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap');
-        * {{ font-family: 'Cairo', sans-serif; }}
-
-        /* 1. خلفية كونية متحركة بنعومة متناهية */
+        /* 1. خلفية كونية متحركة بنعومة متناهية دون تشتيت */
         @keyframes subtleOrbit {{
             0% {{ background-position: 0% 50%; }}
             50% {{ background-position: 100% 50%; }}
             100% {{ background-position: 0% 50%; }}
         }}
         .stApp {{
-            background: radial-gradient(circle at top right, #1a1a0a 0%, #0a0d06 60%, {BG_CORE} 100%) !important;
+            background: radial-gradient(circle at top right, #1e1b4b 0%, #090d16 60%, {BG_CORE} 100%) !important;
             background-size: 200% 200% !important;
             animation: subtleOrbit 25s ease infinite !important;
             background-attachment: fixed !important;
         }}
 
-        /* 🧹 تطهير تام للواجهة */
+        /* 🧹 تطهير تام للواجهة لمنع قفزات العناصر أو الفراغات الهيكلية */
         div[data-testid="stVerticalBlock"] > div:empty,
         div[data-testid="stHorizontalBlock"] > div:empty,
         div[data-testid="element-container"]:empty,
@@ -46,30 +42,30 @@ def apply_ultra_premium_css():
             padding: 0px !important;
         }}
 
-        /* 2. حاوية الزجاج الذهبي */
+        /* 2. حاوية الزجاج البركاني (Obsidian Luxury Card) */
         div[data-testid="stVerticalBlock"] > div > div > div[data-testid="stVerticalBlock"] {{
-            background: linear-gradient(145deg, rgba(20, 20, 10, 0.7) 0%, rgba(10, 10, 5, 0.85) 100%) !important;
+            background: linear-gradient(145deg, rgba(15, 23, 42, 0.55) 0%, rgba(8, 13, 24, 0.75) 100%) !important;
             backdrop-filter: blur(50px) saturate(160%) !important;
             -webkit-backdrop-filter: blur(50px) saturate(160%) !important;
-            border: 1px solid rgba(212, 175, 55, 0.2) !important;
-            border-top: 1px solid rgba(212, 175, 55, 0.4) !important;
+            border: 1px solid rgba(255, 255, 255, 0.04) !important;
+            border-top: 1px solid rgba(255, 255, 255, 0.12) !important;
             border-radius: 40px !important;
             padding: 4rem 3.5rem !important;
-            box-shadow: 0 50px 100px rgba(0, 0, 0, 0.85), 0 0 30px rgba(212, 175, 55, 0.05), inset 0 1px 0 rgba(255,255,255,0.02) !important;
+            box-shadow: 0 50px 100px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255,255,255,0.02) !important;
         }}
 
-        /* 3. حقول الإدخال الذهبية */
+        /* 3. حقول الإدخال الأنيقة والذكية */
         div[data-baseweb="input"] {{
-            background: rgba(10, 10, 5, 0.6) !important;
-            border: 1px solid rgba(212, 175, 55, 0.2) !important;
+            background: rgba(3, 7, 18, 0.5) !important;
+            border: 1px solid rgba(255, 255, 255, 0.06) !important;
             border-radius: 20px !important;
             padding: 10px 18px !important;
             transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1) !important;
         }}
         div[data-baseweb="input"]:focus-within {{
-            background: rgba(0, 0, 0, 0.8) !important;
-            border-color: rgba(212, 175, 55, 0.8) !important;
-            box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.6), 0 20px 40px rgba(0,0,0,0.5), 0 0 20px rgba(212, 175, 55, 0.2) !important;
+            background: rgba(0, 0, 0, 0.7) !important;
+            border-color: rgba(124, 58, 237, 0.6) !important;
+            box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.6), 0 20px 40px rgba(0,0,0,0.5) !important;
             transform: translateY(-2px);
         }}
         div[data-baseweb="input"] input {{
@@ -77,27 +73,14 @@ def apply_ultra_premium_css():
             color: {T} !important;
             font-size: 1.15rem !important;
             font-weight: 500 !important;
-            -webkit-text-fill-color: {T} !important;
-            caret-color: {GOLD} !important;
-            box-shadow: none !important;
-        }}
-        div[data-baseweb="input"] input:-webkit-autofill,
-        div[data-baseweb="input"] input:-webkit-autofill:hover,
-        div[data-baseweb="input"] input:-webkit-autofill:focus,
-        div[data-baseweb="input"] input:-webkit-autofill:active {{
-            -webkit-box-shadow: 0 0 0 30px rgba(10, 10, 5, 0.9) inset !important;
-            -webkit-text-fill-color: {T} !important;
-            caret-color: {GOLD} !important;
-            transition: background-color 5000s ease-in-out 0s;
         }}
         div[data-baseweb="input"] input::placeholder {{
-            color: rgba(255, 255, 255, 0.25) !important;
-            font-weight: 400;
+            color: rgba(255, 255, 255, 0.15) !important;
         }}
 
         /* عناوين الحقول السلوكية */
         .stTextInput label p {{
-            color: {GOLD_LIGHT} !important;
+            color: {S} !important;
             font-size: 0.92rem !important;
             font-weight: 700 !important;
             letter-spacing: 0.5px !important;
@@ -105,31 +88,30 @@ def apply_ultra_premium_css():
             text-transform: uppercase;
         }}
 
-        /* 4. زر الدخول الذهبي */
+        /* 4. زر الدخول التنفيذي المتدرج (Executive Call-to-Action) */
         button[kind="primary"] {{
-            background: linear-gradient(135deg, {GOLD} 0%, {GOLD_DARK} 100%) !important;
+            background: linear-gradient(135deg, {PR} 0%, {BL} 100%) !important;
             border: none !important;
             font-weight: 800 !important;
             font-size: 1.15rem !important;
             letter-spacing: 0.5px !important;
             padding: 22px 28px !important;
             border-radius: 20px !important;
-            color: #000 !important;
+            color: white !important;
             transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1) !important;
-            box-shadow: 0 15px 30px -5px rgba(212, 175, 55, 0.4), inset 0 -3px 0 rgba(0,0,0,0.15) !important;
+            box-shadow: 0 15px 30px -5px rgba(124, 58, 237, 0.4), inset 0 -3px 0 rgba(0,0,0,0.15) !important;
         }}
         button[kind="primary"]:hover {{
             transform: translateY(-4px) !important;
-            box-shadow: 0 25px 50px -10px rgba(212, 175, 55, 0.6), 0 0 30px rgba(212, 175, 55, 0.3), inset 0 -3px 0 rgba(0,0,0,0.15) !important;
-            filter: brightness(1.2) !important;
-            color: #000 !important;
+            box-shadow: 0 25px 50px -10px rgba(124, 58, 237, 0.6), inset 0 -3px 0 rgba(0,0,0,0.15) !important;
+            filter: brightness(1.1) !important;
         }}
 
-        /* 5. الزر الثانوي الذهبي */
+        /* 5. الزر الثانوي المحيد والمعزز */
         button[kind="secondary"] {{
-            background: rgba(212, 175, 55, 0.05) !important;
-            border: 1px solid rgba(212, 175, 55, 0.3) !important;
-            color: {GOLD_LIGHT} !important;
+            background: rgba(255, 255, 255, 0.02) !important;
+            border: 1px solid rgba(255, 255, 255, 0.05) !important;
+            color: {S} !important;
             font-weight: 700 !important;
             font-size: 1rem !important;
             border-radius: 20px !important;
@@ -137,56 +119,50 @@ def apply_ultra_premium_css():
             transition: all 0.4s ease !important;
         }}
         button[kind="secondary"]:hover {{
-            background: rgba(212, 175, 55, 0.15) !important;
-            color: {GOLD} !important;
-            border-color: rgba(212, 175, 55, 0.6) !important;
+            background: rgba(255, 255, 255, 0.06) !important;
+            color: {T} !important;
+            border-color: rgba(255, 255, 255, 0.15) !important;
             transform: translateY(-2px);
         }}
 
-        /* 6. تأثير النبض الضوئي الذهبي للشعار */
+        /* 6. تأثير النبض الضوئي المستقر للشعار */
         @keyframes executiveGlow {{
-            0%, 100% {{ filter: drop-shadow(0 0 30px rgba(212, 175, 55, 0.3)); transform: translateY(0); }}
-            50% {{ filter: drop-shadow(0 0 50px rgba(212, 175, 55, 0.5)); transform: translateY(-4px); }}
+            0%, 100% {{ filter: drop-shadow(0 0 30px rgba(124, 58, 237, 0.3)); transform: translateY(0); }}
+            50% {{ filter: drop-shadow(0 0 50px rgba(37, 99, 219, 0.45)); transform: translateY(-4px); }}
         }}
         .executive-logo-box {{
             animation: executiveGlow 6s ease-in-out infinite;
-        }}
-
-        /* 7. رسائل الخطأ والنجاح */
-        .stAlert {{
-            background: rgba(212, 175, 55, 0.1) !important;
-            border: 1px solid rgba(212, 175, 55, 0.3) !important;
-            color: {GOLD_LIGHT} !important;
-            border-radius: 12px !important;
         }}
     </style>
     """, unsafe_allow_html=True)
 
 def render_premium_header(is_change_password=False):
-    """توليد الهيدر الذهبي الفاخر"""
+    """توليد الهيدر التنفيذي الفاخر"""
     if not is_change_password:
         st.markdown(f"""
         <div style="text-align:center; margin-bottom: 3rem; margin-top: 0.5rem;">
+            <!-- أيقونة حوكمة ERP الفاخرة -->
             <div class="executive-logo-box" style="
                 width: 160px; height: 160px; margin: 0 auto 2rem auto;
-                background: linear-gradient(135deg, rgba(212,175,55,0.1) 0%, rgba(170,119,28,0.05) 100%);
+                background: linear-gradient(135deg, rgba(124,58,237,0.1) 0%, rgba(37,99,235,0.05) 100%);
                 backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px);
-                border: 1px solid rgba(212, 175, 55, 0.4); 
-                border-top: 1px solid rgba(212, 175, 55, 0.7);
+                border: 1px solid rgba(124, 58, 237, 0.3); 
+                border-top: 1px solid rgba(124, 58, 237, 0.5);
                 border-radius: 38px;
                 display: flex; align-items: center; justify-content: center;
-                box-shadow: 0 0 35px rgba(212, 175, 55, 0.2), inset 0 0 25px rgba(212, 175, 55, 0.1);
+                box-shadow: 0 0 35px rgba(124, 58, 237, 0.15), inset 0 0 25px rgba(124, 58, 237, 0.1);
             ">
                 <span style="font-size: 3.2rem; font-weight: 950; 
-                    background: linear-gradient(135deg, #FFFFFF 20%, #FCF6BA 70%, {GOLD} 100%);
+                    background: linear-gradient(135deg, #FFFFFF 20%, #A78BFA 70%, #7C3AED 100%);
                     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
                     letter-spacing: 2px; display: inline-block;
                 ">حوكمة</span>
             </div>
+            <!-- الشعار الفرعي الجذاب بتصميم مميز -->
             <p style="color:{S}; margin-top: 0.9rem; font-size: 1.2rem; letter-spacing: 2px; font-weight: 600;">
-                إدارة <span style="color:{GOLD_LIGHT}; font-weight:700;">ذكية</span> .. قرارات <span style="color:{GOLD}; font-weight:700;">واثقة</span>
+                إدارة <span style="color:#A78BFA; font-weight:700;">ذكية</span> .. قرارات <span style="color:#60A5FA; font-weight:700;">واثقة</span>
             </p>
-            <div style="width: 220px; height: 1px; background: linear-gradient(90deg, transparent, {GOLD}, transparent); margin: 0.6rem auto 0 auto;"></div>
+            <div style="width: 220px; height: 1px; background: linear-gradient(90deg, transparent, #A78BFA, transparent); margin: 0.6rem auto 0 auto;"></div>
         </div>
         """, unsafe_allow_html=True)
     else:
@@ -194,14 +170,14 @@ def render_premium_header(is_change_password=False):
         <div style="text-align:center; margin-bottom: 3rem; margin-top: 0.5rem;">
             <div class="executive-logo-box" style="
                 width: 110px; height: 110px; margin: 0 auto 1.8rem auto;
-                background: rgba(212, 175, 55, 0.05);
-                border: 1px solid rgba(212, 175, 55, 0.2);
+                background: rgba(239, 68, 68, 0.03);
+                border: 1px solid rgba(239, 68, 68, 0.1);
                 border-radius: 32px;
                 display: flex; align-items: center; justify-content: center;
             ">
                 <span style="font-size: 3.5rem;">🛡️</span>
             </div>
-            <h2 style="color:{GOLD}; margin:0; font-weight:900; font-size:2.4rem; letter-spacing: 1px;">تأمين الهوية الرقمية</h2>
+            <h2 style="color:{T}; margin:0; font-weight:900; font-size:2.4rem; letter-spacing: 1px;">تأمين الهوية الرقمية</h2>
             <p style="color:{S}; margin-top:0.8rem; font-size:1.05rem; letter-spacing: 0.5px;">يرجى تحديث رمز الحماية الخاص بك للمتابعة</p>
         </div>
         """, unsafe_allow_html=True)
@@ -238,7 +214,7 @@ def login_form():
     
     st.markdown(f"""
     <div style="text-align:center; margin-top: 5rem; margin-bottom: 1rem;">
-        <p style="color: rgba(212,175,55,0.3); font-size: 0.82rem; letter-spacing: 2px; font-weight: 400;">
+        <p style="color: rgba(255,255,255,0.15); font-size: 0.82rem; letter-spacing: 2px; font-weight: 400;">
             حوكمة ERP • نظام محاسبي متكامل
         </p>
     </div>
