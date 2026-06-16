@@ -58,7 +58,7 @@ from ui.cash_ui import show as cash_show  # 🆕 وحدة الصندوق
 
 st.set_page_config(page_title="حوكمة ERP", layout="wide")
 
-# ========== تصميم القائمة الجانبية الفاخرة ==========
+# ========== تصميم القائمة الجانبية الفاخرة مع الأزرار الذهبية ==========
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap');
@@ -98,6 +98,31 @@ st.markdown("""
         color: white;
         transform: translateX(-5px);
     }
+    
+    /* 🟡 الزر الذهبي المضيء للداشبورد والتقارير */
+    .gold-button button {
+        background: linear-gradient(135deg, #D4AF37 0%, #FFD700 100%) !important;
+        border: 2px solid #FFF8DC !important;
+        color: #1A1A2E !important;
+        font-weight: 800 !important;
+        text-shadow: 0 0 5px rgba(255,255,255,0.5) !important;
+        box-shadow: 0 0 20px rgba(212,175,55,0.3), 0 0 40px rgba(212,175,55,0.1) !important;
+        animation: goldenGlow 2s ease-in-out infinite alternate !important;
+    }
+    
+    .gold-button button:hover {
+        background: linear-gradient(135deg, #FFD700 0%, #FFF8DC 100%) !important;
+        border-color: #FFFFFF !important;
+        color: #000000 !important;
+        box-shadow: 0 0 30px rgba(212,175,55,0.6), 0 0 60px rgba(212,175,55,0.3) !important;
+        transform: translateX(-5px) scale(1.02) !important;
+    }
+    
+    @keyframes goldenGlow {
+        0% { box-shadow: 0 0 20px rgba(212,175,55,0.3), 0 0 40px rgba(212,175,55,0.1); }
+        100% { box-shadow: 0 0 30px rgba(212,175,55,0.5), 0 0 60px rgba(212,175,55,0.2); }
+    }
+    
     .logout-btn > button {
         background: rgba(239, 68, 68, 0.2);
         border-color: rgba(239, 68, 68, 0.4);
@@ -161,8 +186,11 @@ else:
 
         # المجموعة 1: الرئيسية
         st.markdown('<div class="menu-section">🏠 الرئيسية</div>', unsafe_allow_html=True)
-        if st.button("📊 لوحة المعلومات", key="dashboard"):
+        # 🟡 زر الداشبورد الذهبي المضيء
+        st.markdown('<div class="gold-button">', unsafe_allow_html=True)
+        if st.button("👑 لوحة المعلومات", key="dashboard"):
             st.session_state.current_page = "لوحة المعلومات"
+        st.markdown('</div>', unsafe_allow_html=True)
 
         # المجموعة 2: العمليات
         st.markdown('<div class="menu-section">📦 العمليات</div>', unsafe_allow_html=True)
@@ -196,7 +224,12 @@ else:
             if can_access("إغلاق الفترات") and st.button("📅 إغلاق فترات", key="period"): st.session_state.current_page = "إغلاق الفترات"
             if can_access("FIFO المخزون") and st.button("📊 FIFO", key="fifo"): st.session_state.current_page = "FIFO المخزون"
             if can_access("تقييم العملات") and st.button("💱 تقييم عملات", key="revaluation"): st.session_state.current_page = "تقييم العملات"
-            if can_access("التقارير المالية XBRL") and st.button("🌐 تقارير XBRL", key="pdf"): st.session_state.current_page = "التقارير المالية XBRL"
+            # 🟡 زر التقارير الذهبي المضيء
+            if can_access("التقارير المالية XBRL"):
+                st.markdown('<div class="gold-button">', unsafe_allow_html=True)
+                if st.button("🌐 تقارير XBRL", key="pdf"):
+                    st.session_state.current_page = "التقارير المالية XBRL"
+                st.markdown('</div>', unsafe_allow_html=True)
 
         # المجموعة 4: إدارة الأعمال
         st.markdown('<div class="menu-section">👥 إدارة الأعمال</div>', unsafe_allow_html=True)
