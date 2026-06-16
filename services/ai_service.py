@@ -661,3 +661,100 @@ def generate_entry(text, model="llama-3.3-70b-versatile"):
     display = format_entry_display(entry)
     
     return entry, display
+
+# ===================== نظام الثقة في القيود (Entry Confidence System) =====================
+def calculate_confidence(extracted_data, balanced_entry):
+    """
+    تحسب نسبة الثقة في القيد المُولَّد بناءً على عدة عوامل:
+    - هل تم استخراج البيانات بنجاح؟
+    - هل احتاج المحرك إلى إضافة تسوية تلقائية؟
+    - كم كان الفرق الذي تمت تسويته؟
+    
+    ترجع نسبة مئوية (0-100).
+    """
+    if not extracted_data or not balanced_entry:
+        return 0
+    
+    lines = balanced_entry.get('lines', [])
+    if not lines:
+        return 0
+    
+    has_correction = balanced_entry.get('has_auto_correction', False)
+    
+    if not has_correction:
+        # لا توجد تسوية = ثقة 100%
+        return 100
+    
+    # حساب الفرق الذي تمت تسويته
+    correction_amount = 0
+    total_before_correction = 0
+    
+    for line in lines:
+        amount = line.get('amount', 0)
+        if line.get('auto_correction'):
+            correction_amount = amount
+        else:
+            total_before_correction += amount
+    
+    if total_before_correction == 0:
+        return 0
+    
+    # حساب نسبة الفرق
+    correction_pct = correction_amount / total_before_correction * 100
+    
+    if correction_pct < 2:
+        return 90
+    elif correction_pct < 5:
+        return 70
+    elif correction_pct < 10:
+        return 50
+    else:
+        return 30
+
+
+def get_confidence_level(confidence):
+    """
+    ترجع (label, color) بناءً على نسبة الثقة.
+    """
+    if confidence >= 90:
+        return "موثوق", "#10B981"  # أخضر
+    elif confidence >= 70:
+        return "شبه موثوق", "#F59E0B"  # برتقالي
+    elif confidence >= 40:
+        return "مشكوك فيه", "#EF4444"  # أحمر
+    else:
+        return "غير موثوق", "#EF4444"  # أحمر غامق
+
+
+def generate_entry_safe(text, model="llama-3.3-70b-versatile"):
+    """
+    الدالة الرئيسية لتوليد قيد محاسبي آمن مع نسبة ثقة.
+    ترجع:
+    - entry_data: بيانات القيد المتوازن
+    - display_text: نص منسق للعرض
+    - confidence: نسبة الثقة (0-100)
+    - confidence_label: وصف الثقة (موثوق، شبه موثوق...)
+    - confidence_color: لون العرض
+    """
+    # الخطوة 1: استخراج البيانات من النص
+    extracted = extract_entry_data(text, model=model)
+    if not extracted:
+        return None, "❌ فشل استخراج بيانات العملية. حاول صياغة العملية بشكل أوضح.", 0, "غير موثوق", "#EF4444"
+    
+    # الخطوة 2: بناء القيد المتوازن
+    entry = build_balanced_entry(extracted)
+    if not entry:
+        return None, "❌ فشل بناء القيد من البيانات المستخرجة.", 0, "غير موثوق", "#EF4444"
+    
+    # الخطوة 3: حساب نسبة الثقة
+    confidence = calculate_confidence(extracted, entry)
+    confidence_label, confidence_color = get_confidence_level(confidence)
+    
+    # الخطوة 4: تنسيق القيد للعرض
+    display = format_entry_display(entry)
+    
+    # إضافة سطر الثقة
+    confidence_line = f"\n📊 نسبة الثقة: {confidence}% ({confidence_label})"
+    display += confidence_line
+    
+    return entry, display, confidence, confidence_label, confidence_color
