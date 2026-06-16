@@ -510,3 +510,154 @@ def get_cost_center_budget_analysis(center_id, fiscal_year):
 4. توصيات لتحسين دقة الموازنات المستقبلية
 الرد بالعربية مع التركيز على الانحرافات الجوهرية."""
     return query_groq(system_prompt, data_text, max_tokens=1500)
+
+# ===================== محرك القيود الآلي (Automated Entry Engine) =====================
+def extract_entry_data(text, model="llama-3.3-70b-versatile"):
+    """
+    تستخدم الذكاء الاصطناعي لفهم العملية واستخراج البيانات منها فقط (بدون بناء القيد).
+    ترجع قاموساً يحتوي على المفاتيح التالية:
+    - operation_type: نوع العملية
+    - lines: قائمة من الأسطر، كل سطر يحتوي على:
+        - account: اسم الحساب
+        - amount: المبلغ
+        - side: 'debit' أو 'credit'
+    """
+    system_prompt = """أنت مساعد محاسبي دقيق. مهمتك هي تحويل العملية المالية التالية إلى بيانات منظمة فقط، ولا تقم ببناء القيد.
+    
+المطلوب هو استخراج البيانات التالية بصيغة JSON:
+{
+    "operation_type": "نوع العملية (شراء، بيع، دفع راتب، إلخ)",
+    "lines": [
+        {
+            "account": "اسم الحساب بالعربية",
+            "amount": المبلغ (رقم فقط بدون رموز),
+            "side": "debit أو credit"
+        }
+    ]
+}
+
+قواعد مهمة:
+1. استخرج الأرقام والمبالغ بدقة من النص.
+2. حدد لكل حساب الجانب الصحيح (مدين أو دائن).
+3. لا تقم بدمج الحسابات أو طرحها من بعضها.
+4. أعد JSON صالحاً فقط، بدون أي نص إضافي خارج الأقواس.
+"""
+    
+    response = query_groq(system_prompt, text, model=model, max_tokens=800, temperature=0.1)
+    
+    try:
+        # محاولة استخراج JSON من الرد
+        start = response.find('{')
+        end = response.rfind('}') + 1
+        if start != -1 and end > start:
+            json_str = response[start:end]
+            data = json.loads(json_str)
+            return data
+        else:
+            return None
+    except json.JSONDecodeError:
+        return None
+
+def build_balanced_entry(extracted_data):
+    """
+    تبني قيداً متوازناً من البيانات المستخرجة باستخدام Python فقط.
+    تضمن أن مجموع المدين يساوي مجموع الدائن.
+    """
+    if not extracted_data:
+        return None, "فشل استخراج البيانات من العملية"
+    
+    lines = extracted_data.get('lines', [])
+    if not lines:
+        return None, "لم يتم العثور على أسطر قيد"
+    
+    total_debit = 0
+    total_credit = 0
+    entry_lines = []
+    
+    # حساب المجاميع
+    for line in lines:
+        try:
+            amount = float(line.get('amount', 0))
+        except (ValueError, TypeError):
+            amount = 0
+        
+        if line.get('side') == 'debit':
+            total_debit += amount
+        else:
+            total_credit += amount
+        
+        entry_lines.append(line)
+    
+    # التحقق من التوازن ومحاولة إصلاحه إن أمكن
+    if abs(total_debit - total_credit) > 0.01:
+        difference = total_debit - total_credit
+        if difference > 0:
+            # المدين أكبر: أضف فرق للدائن
+            entry_lines.append({
+                'account': 'حساب تسوية',
+                'amount': round(difference, 2),
+                'side': 'credit',
+                'auto_correction': True
+            })
+            total_credit += difference
+        else:
+            # الدائن أكبر: أضف فرق للمدين
+            entry_lines.append({
+                'account': 'حساب تسوية',
+                'amount': round(abs(difference), 2),
+                'side': 'debit',
+                'auto_correction': True
+            })
+            total_debit += abs(difference)
+    
+    return {
+        'lines': entry_lines,
+        'total_debit': round(total_debit, 2),
+        'total_credit': round(total_credit, 2),
+        'is_balanced': abs(total_debit - total_credit) < 0.01,
+        'has_auto_correction': any(line.get('auto_correction') for line in entry_lines)
+    }
+
+def format_entry_display(entry_data):
+    """
+    تنسيق القيد للعرض على المستخدم.
+    """
+    if not entry_data:
+        return "لا توجد بيانات لعرضها"
+    
+    lines = entry_data.get('lines', [])
+    result = ""
+    
+    for line in lines:
+        side = "مدين" if line.get('side') == 'debit' else "دائن"
+        account = line.get('account', 'غير معروف')
+        amount = line.get('amount', 0)
+        auto = " (تسوية تلقائية)" if line.get('auto_correction') else ""
+        result += f"{side} | {account} | {amount:,.2f}{auto}\n"
+    
+    result += f"\n✅ القيد متوازن: مدين {entry_data['total_debit']:,.2f} = دائن {entry_data['total_credit']:,.2f}"
+    
+    if entry_data.get('has_auto_correction'):
+        result += "\n⚠️ تمت إضافة تسوية تلقائية لضمان التوازن."
+    
+    return result
+
+def generate_entry(text, model="llama-3.3-70b-versatile"):
+    """
+    الدالة الرئيسية لتوليد قيد محاسبي متوازن.
+    تجمع بين استخراج البيانات (AI) وبناء القيد المتوازن (Python).
+    """
+    # الخطوة 1: استخراج البيانات من النص
+    extracted = extract_entry_data(text, model=model)
+    if not extracted:
+        return None, "فشل استخراج بيانات العملية. حاول صياغة العملية بشكل أوضح."
+    
+    # الخطوة 2: بناء القيد المتوازن
+    entry = build_balanced_entry(extracted)
+    if not entry:
+        return None, "فشل بناء القيد من البيانات المستخرجة."
+    
+    # الخطوة 3: تنسيق القيد للعرض
+    display = format_entry_display(entry)
+    
+    return entry, display
