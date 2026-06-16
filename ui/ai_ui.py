@@ -10,7 +10,8 @@ from services.ai_service import (
     get_financial_ratios, get_trend_analysis, get_top_customers, get_top_suppliers,
     analyze_cost_center_performance, compare_cost_centers,
     predict_cost_center_expenses, get_cost_center_budget_analysis,
-    get_cost_centers_summary_for_ai
+    get_cost_centers_summary_for_ai,
+    generate_entry_safe  # 🆕 استيراد دالة القيد الآمن
 )
 from services import cost_center_service as ccs
 
@@ -146,64 +147,26 @@ def show():
         h3("توليد قيود محاسبية ذكية", RD)
         txt = st.text_area("اكتب العملية:", key="etxt")
         if st.button("📝 توليد القيد") and txt:
-            accs = get_all_accounts()
-            if accs:
-                alist = "\n".join([f"{a['code']} - {a['name']}" for a in accs])
-            else:
-                alist = "لا توجد حسابات مسجلة"
-            
-            # ✅ تم تحسين التعليمة بشكل كبير لضمان التوازن والدقة
-            prompt = f"""أنت محاسب محترف ومدقق حسابات. مهمتك تحويل العملية التالية إلى قيد محاسبي صحيح ومتوازن 100%.
-
-الحسابات المتاحة في النظام:
-{alist}
-
-**قواعد صارمة يجب الالتزام بها:**
-1. **مجموع المدين يجب أن يساوي مجموع الدائن تماماً.**
-2. استخدم فقط الحسابات المتاحة أعلاه. إذا لم تجد الحساب المناسب، استخدم اسم حساب دقيقاً.
-3. **عند بيع بضاعة:** يجب أن تشمل القيد:
-   - مدين: النقدية أو العميل (بقيمة البيع)
-   - دائن: المبيعات (بقيمة البيع)
-   - مدين: تكلفة البضاعة المباعة (بتكلفة الشراء)
-   - دائن: المخزون (بتكلفة الشراء)
-4. أعد القيد بالسطر التالي بالضبط (لا تخرج عن هذا التنسيق):
-مدين | اسم الحساب | المبلغ
-دائن | اسم الحساب | المبلغ
-
-**مثال لقيد شراء أصل ثابت:**
-مدين | الأصول الثابتة | 100,000
-دائن | النقدية | 100,000
-
-**العملية المراد تحويلها:**
-{txt}"""
             with st.spinner("📝 جاري توليد قيد متوازن..."):
-                ans = query_groq(prompt, txt, model=model, max_tokens=1500)
+                # 🆕 استخدام المحرك الآلي الجديد
+                entry, display, confidence, confidence_label, confidence_color = generate_entry_safe(txt, model=model)
             
-            # ✅ إضافة تحقق سريع من التوازن وعرض تحذير إن وجد
-            st.code(ans)
-            
-            # محاولة حساب التوازن بشكل مبدئي
-            total_debit = 0
-            total_credit = 0
-            for line in ans.split('\n'):
-                line = line.strip()
-                if line.startswith('مدين') or line.startswith('دائن'):
-                    parts = line.split('|')
-                    if len(parts) >= 3:
-                        try:
-                            amount = float(parts[2].strip().replace(',', ''))
-                            if line.startswith('مدين'):
-                                total_debit += amount
-                            else:
-                                total_credit += amount
-                        except:
-                            pass
-            
-            if total_debit > 0 and total_credit > 0:
-                if abs(total_debit - total_credit) < 0.01:
-                    st.success(f"✅ القيد متوازن: مدين {total_debit:,.2f} = دائن {total_credit:,.2f}")
-                else:
-                    st.error(f"⚠️ القيد غير متوازن: مدين {total_debit:,.2f} ≠ دائن {total_credit:,.2f}. حاول إعادة الصياغة أو استخدم حسابات أوضح.")
+            if entry:
+                st.code(display)
+                
+                # 🆕 عرض مؤشر الثقة
+                st.markdown(f"""
+                <div style="background:rgba(255,255,255,0.05); border:1px solid {confidence_color}; border-radius:12px; padding:12px 16px; margin-top:12px; display:flex; align-items:center; gap:12px;">
+                    <div style="background:{confidence_color}; width:12px; height:12px; border-radius:50%; box-shadow:0 0 10px {confidence_color};"></div>
+                    <span style="color:#F8FAFC; font-weight:600;">📊 نسبة الثقة: {confidence}%</span>
+                    <span style="background:{confidence_color}20; color:{confidence_color}; padding:4px 12px; border-radius:8px; font-weight:700; font-size:0.85rem;">{confidence_label}</span>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                if confidence < 70:
+                    st.warning("⚠️ الثقة منخفضة في هذا القيد. يرجى مراجعة القيد يدوياً قبل الاعتماد عليه.")
+            else:
+                st.error(display)
 
     with t6:
         h3("تدقيق وكشف الاحتيال", RD)
