@@ -279,9 +279,11 @@ def password_change_form():
                             except:
                                 pass
                             
+                            # 🆕 إظهار مربع نجاح مع زر للعودة (بدون st.rerun فوري)
                             st.success(f"✨ {message}")
-                            st.session_state.show_password_change = False
-                            st.rerun()
+                            if st.button("🔙 العودة إلى صفحة الدخول", key="goto_login_after_change"):
+                                st.session_state.show_password_change = False
+                                st.rerun()
                         else:
                             st.error(f"❌ {message}")
                     elif not old_password or not new_password:
