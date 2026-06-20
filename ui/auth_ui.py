@@ -194,13 +194,64 @@ def login_form():
                     st.rerun()
             
             if login_btn:
+                # --- 🆕 تشخيص عملية تسجيل الدخول ---
+                st.write("---")
+                st.write("### 🩺 تشخيص عملية تسجيل الدخول")
+                
+                # 1. عرض المدخلات
+                st.write(f"👤 **اسم المستخدم المدخل:** `{username}`")
+                st.write(f"🔒 **طول كلمة المرور المدخلة:** `{len(password) if password else 0}` حرف")
+                
+                # 2. التحقق من وجود المستخدم في قاعدة البيانات
+                try:
+                    conn = get_connection()
+                    conn.row_factory = __import__('sqlite3').Row
+                    c = conn.cursor()
+                    c.execute("SELECT username, password FROM users WHERE username=?", (username,))
+                    user_row = c.fetchone()
+                    conn.close()
+                    
+                    if user_row:
+                        st.write(f"✅ **المستخدم موجود:** `{user_row['username']}`")
+                        stored_hash = user_row['password']
+                        st.write(f"🔑 **البصمة المخزنة تبدأ بـ:** `{stored_hash[:15]}...`")
+                        
+                        # 3. التحقق من تطابق كلمة المرور يدويًا
+                        import bcrypt
+                        # تحويل كلمة المرور المدخلة إلى bytes
+                        input_password_bytes = password.encode('utf-8')
+                        
+                        # تحويل البصمة المخزنة إلى bytes (إذا كانت str)
+                        if isinstance(stored_hash, str):
+                            stored_hash_bytes = stored_hash.encode('utf-8')
+                        else:
+                            stored_hash_bytes = stored_hash
+                        
+                        # فحص التوافق
+                        try:
+                            is_match = bcrypt.checkpw(input_password_bytes, stored_hash_bytes)
+                            if is_match:
+                                st.success(f"✅ **كلمة المرور صحيحة!** سيتم تسجيل الدخول.")
+                            else:
+                                st.error(f"❌ **كلمة المرور غير متطابقة مع البصمة المخزنة!**")
+                        except Exception as bcrypt_error:
+                            st.error(f"❌ **خطأ في bcrypt:** `{bcrypt_error}`")
+                    else:
+                        st.error(f"❌ **المستخدم `{username}` غير موجود في قاعدة البيانات!**")
+                except Exception as db_error:
+                    st.error(f"❌ **خطأ في قراءة قاعدة البيانات:** `{db_error}`")
+                
+                # 4. استدعاء verify_user الأصلي للمقارنة
+                st.write("---")
+                st.write("**🔍 نتيجة `verify_user` الأصلية:**")
                 user = verify_user(username, password)
                 if user:
+                    st.write("✅ **`verify_user` نجح!**")
                     st.session_state.logged_in = True
                     st.session_state.user = user
                     st.rerun()
                 else:
-                    st.error("❌ فشلت المصادقة المباشرة. يرجى مراجعة البيانات المدخلة.")
+                    st.error("❌ **`verify_user` فشل.**")
     
     st.markdown(f"""
     <div style="text-align:center; margin-top: 5rem; margin-bottom: 1rem;">
