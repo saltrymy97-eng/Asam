@@ -1,4 +1,4 @@
-# ui/roles_ui.py – واجهة الصلاحيات والأدوار (تصميم زجاجي فخم + إدارة المستخدمين)
+# ui/roles_ui.py – واجهة الصلاحيات والأدوار (تصميم زجاجي فخم + إدارة المستخدمين + تغيير كلمة المرور)
 import streamlit as st
 import pandas as pd
 from services.roles_service import (
@@ -8,7 +8,7 @@ from services.roles_service import (
     get_all_users_with_roles,
     assign_role_to_user
 )
-from services.auth_service import create_user
+from services.auth_service import create_user, change_password  # 🆕 استيراد دالة تغيير كلمة المرور
 
 # ========== ألوان التصميم ==========
 GLASS_BG = "rgba(255, 255, 255, 0.12)"
@@ -31,9 +31,10 @@ def show():
     """, unsafe_allow_html=True)
 
     create_roles_tables()
-    # تم نقل seed_default_roles() إلى app.py ليتم استدعاؤه مرة واحدة فقط
 
-    tab1, tab2, tab3, tab4 = st.tabs(["🔑 الأدوار والصلاحيات", "👥 المستخدمين", "⚙️ تعيين دور", "➕ إضافة مستخدم"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "🔑 الأدوار والصلاحيات", "👥 المستخدمين", "⚙️ تعيين دور", "➕ إضافة مستخدم", "🔒 تغيير كلمة المرور"
+    ])
 
     with tab1:
         st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>الأدوار والصلاحيات</h3>", unsafe_allow_html=True)
@@ -116,6 +117,34 @@ def show():
                         success, message = create_user(new_username, new_password, new_fullname, role_id)
                         if success:
                             st.success(message)
-                            st.rerun()      # إعادة تشغيل التطبيق لتحديث قائمة المستخدمين
+                            st.rerun()
                         else:
                             st.error(message)
+
+    # 🆕 تبويب تغيير كلمة المرور
+    with tab5:
+        st.markdown(f"<h3 style='color:{ACCENT_RED};'>🔒 تغيير كلمة المرور</h3>", unsafe_allow_html=True)
+        
+        current_user = st.session_state.user.get('username', '')
+        
+        with st.form("change_password_form"):
+            st.write(f"المستخدم الحالي: **{current_user}**")
+            old_password = st.text_input("كلمة المرور الحالية", type="password")
+            new_password = st.text_input("كلمة المرور الجديدة", type="password")
+            confirm_password = st.text_input("تأكيد كلمة المرور الجديدة", type="password")
+            
+            submitted = st.form_submit_button("🔒 تغيير كلمة المرور")
+            
+            if submitted:
+                if not old_password or not new_password or not confirm_password:
+                    st.error("جميع الحقول مطلوبة")
+                elif new_password != confirm_password:
+                    st.error("كلمة المرور الجديدة وتأكيدها غير متطابقين")
+                elif len(new_password) < 6:
+                    st.error("يجب أن تكون كلمة المرور 6 أحرف على الأقل")
+                else:
+                    success, message = change_password(current_user, old_password, new_password)
+                    if success:
+                        st.success(message)
+                    else:
+                        st.error(message)
