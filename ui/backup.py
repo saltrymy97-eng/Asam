@@ -174,14 +174,23 @@ def show():
         
         filepath = os.path.join(BACKUP_DIR, selected_download)
         if os.path.exists(filepath):
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-                zf.write(filepath, selected_download)
+            # تحميل الملف مباشرة بصيغته الأصلية دون إعادة ضغط
+            with open(filepath, "rb") as f:
+                file_data = f.read()
+            
+            # تحديد نوع MIME المناسب
+            if selected_download.endswith('.zip'):
+                mime_type = "application/zip"
+            elif selected_download.endswith('.enc'):
+                mime_type = "application/octet-stream"
+            else:
+                mime_type = "application/octet-stream"
+            
             st.download_button(
                 label=f"📥 تحميل {selected_download}",
-                data=zip_buffer.getvalue(),
-                file_name=selected_download.replace(".db", ".zip"),
-                mime="application/zip",
+                data=file_data,
+                file_name=selected_download,
+                mime=mime_type,
                 key="download_btn"
             )
         else:
@@ -190,35 +199,42 @@ def show():
         # ---------- رفع نسخة من الجهاز ----------
         st.markdown("---")
         st.markdown(f"<h3 style='color:{ACCENT_ORANGE}'>📤 استيراد نسخة احتياطية</h3>", unsafe_allow_html=True)
-        uploaded_file = st.file_uploader("ارفع ملف قاعدة البيانات (.db أو .zip)", type=["db", "zip"], key="upload_backup")
+        uploaded_file = st.file_uploader("ارفع ملف قاعدة البيانات (.db أو .zip)", type=["db", "zip", "enc"], key="upload_backup")
         if uploaded_file:
-            if uploaded_file.name.endswith(".zip"):
-                with zipfile.ZipFile(uploaded_file) as zf:
-                    db_files = [f for f in zf.namelist() if f.endswith(".db")]
-                    if not db_files:
-                        st.error("لم يتم العثور على ملف .db داخل الأرشيف.")
-                    else:
-                        extracted_name = db_files[0]
-                        zf.extract(extracted_name, BACKUP_DIR)
-                        st.success(f"✅ تم استيراد: {extracted_name}")
-                        if st.button("🔄 استعادة النسخة المستوردة", key="restore_zip"):
-                            success, msg = restore_backup(extracted_name)
-                            if success:
-                                st.success(msg)
-                                st.rerun()
-                            else:
-                                st.error(msg)
-            else:
-                save_path = os.path.join(BACKUP_DIR, uploaded_file.name)
-                with open(save_path, "wb") as f:
-                    f.write(uploaded_file.getvalue())
-                st.success(f"✅ تم رفع النسخة: {uploaded_file.name}")
-                if st.button("🔄 استعادة النسخة المرفوعة", key="restore_db"):
-                    success, msg = restore_backup(uploaded_file.name)
+            save_path = os.path.join(BACKUP_DIR, uploaded_file.name)
+            with open(save_path, "wb") as f:
+                f.write(uploaded_file.getvalue())
+            st.success(f"✅ تم رفع الملف: {uploaded_file.name}")
+            
+            # --- منطق ذكي للتعامل مع الملف المرفوع ---
+            file_to_restore = None
+
+            # 1. إذا كان الملف .db مباشرة
+            if uploaded_file.name.endswith('.db'):
+                file_to_restore = uploaded_file.name
+
+            # 2. إذا كان الملف .zip، نبحث داخله عن .db
+            elif uploaded_file.name.endswith('.zip'):
+                with zipfile.ZipFile(save_path, 'r') as zf:
+                    db_files = [f for f in zf.namelist() if f.endswith('.db')]
+                    if db_files:
+                        zf.extract(db_files[0], BACKUP_DIR)
+                        file_to_restore = db_files[0]
+                        st.success(f"✅ تم استخراج: {file_to_restore}")
+
+            # 3. إذا كان الملف .enc (مشفر)، نعتمد على restore_backup لفك التشفير
+            elif uploaded_file.name.endswith('.enc'):
+                file_to_restore = uploaded_file.name
+
+            if file_to_restore:
+                if st.button("🔄 استعادة النسخة المستوردة", key="restore_uploaded"):
+                    success, msg = restore_backup(file_to_restore)
                     if success:
                         st.success(msg)
                         st.rerun()
                     else:
-                        st.error(msg)
+                        st.error(f"❌ فشلت الاستعادة: {msg}")
+            else:
+                st.error("لم يتم العثور على ملف قاعدة بيانات (.db) صالح في الملف المرفوع.")
     else:
         st.info("ℹ️ لا توجد نسخ احتياطية بعد. قم بإنشاء أول نسخة الآن.")
