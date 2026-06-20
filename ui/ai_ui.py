@@ -106,7 +106,6 @@ def show():
     with t1:
         h3("اسأل عن أي شيء في نظامك", BL)
         
-        # صف واحد: زر الميكروفون + حقل الكتابة
         mic_col, chat_col = st.columns([1, 11])
         
         with mic_col:
@@ -115,7 +114,6 @@ def show():
         with chat_col:
             q = st.chat_input("اكتب سؤالك هنا...", key="ai-chat-input")
         
-        # إذا تم التسجيل صوتياً، حوله إلى نص وأرسله
         if voice_text:
             q = voice_text
         
@@ -199,250 +197,152 @@ def show():
             else:
                 st.error("غير موجود")
 
-    # ====== تبويب 5: القيود - قالب ذهبي (تصميم فاخر) ======
+    # ====== تبويب 5: القيود - تصميم زجاجي ملكي فاخر ======
     with t5:
-        st.markdown("""
-        <div style="margin-bottom:1.5rem; text-align:right;">
-            <h3 style="color:#D4AF37; font-weight:800; font-size:1.5rem; margin:0;">📝 مركز توليد القيود المحاسبية</h3>
-            <p style="color:#FCF6BA; font-size:0.9rem; margin:0;">قوالب ذهبية جاهزة بدقة 100% - اختر العملية وأدخل المبلغ</p>
+        # --- هيدر ذهبي ---
+        st.markdown(f"""
+        <div style="text-align:right; margin-bottom:1.5rem;">
+            <h3 style="color:{GOLD}; font-weight:800; font-size:1.6rem; margin:0; text-shadow:0 0 15px {GOLD}40;">
+                📝 مركز توليد القيود المحاسبية
+            </h3>
+            <p style="color:{GOLD_LIGHT}; font-size:0.9rem; margin:0;">قوالب ذهبية جاهزة بدقة 100%</p>
+            <div style="width:60px; height:2px; background:linear-gradient(90deg, {GOLD}, transparent); margin-top:8px;"></div>
         </div>
         """, unsafe_allow_html=True)
-        
-        # --- حاوية زجاجية فاخرة ---
+
+        # --- الحاوية الزجاجية الرئيسية ---
         with st.container():
+            # حقن CSS للبطاقة الزجاجية
             st.markdown("""
             <style>
-                div[data-testid="stVerticalBlock"] > div:has(div.stSelectbox) {
-                    background: linear-gradient(145deg, rgba(20, 20, 10, 0.7), rgba(10, 10, 5, 0.85));
-                    backdrop-filter: blur(30px);
-                    border: 1px solid rgba(212, 175, 55, 0.2);
-                    border-radius: 24px;
-                    padding: 2rem;
-                    box-shadow: 0 30px 60px rgba(0, 0, 0, 0.4), 0 0 20px rgba(212,175,55,0.1);
-                }
+            .golden-glass {
+                background: linear-gradient(145deg, rgba(20, 20, 10, 0.7), rgba(10, 10, 5, 0.85));
+                backdrop-filter: blur(30px);
+                -webkit-backdrop-filter: blur(30px);
+                border: 1px solid rgba(212, 175, 55, 0.2);
+                border-top: 1px solid rgba(212, 175, 55, 0.35);
+                border-radius: 24px;
+                padding: 2rem;
+                box-shadow: 0 30px 60px rgba(0, 0, 0, 0.5), 0 0 20px rgba(212,175,55,0.08);
+                margin-bottom: 1.5rem;
+            }
+            .golden-glass .stSelectbox label,
+            .golden-glass .stNumberInput label,
+            .golden-glass .stTextInput label {
+                color: #FCF6BA !important;
+                font-weight: 600 !important;
+            }
             </style>
             """, unsafe_allow_html=True)
             
-            # --- اختيار نوع العملية ---
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                operations = get_available_operations()
-                default_op = operations[0] if operations else "بيع نقداً"
-                selected_op = st.selectbox(
-                    "🎯 اختر نوع العملية المالية",
-                    options=operations,
-                    format_func=lambda x: f"⭐ {x} - {get_operation_description(x)}",
-                    key="template_op"
-                )
-                
-                # عرض وصف العملية
-                desc = get_operation_description(selected_op)
-                st.caption(f"📌 {desc}")
+            st.markdown('<div class="golden-glass">', unsafe_allow_html=True)
             
-            with col2:
-                st.markdown("<br>", unsafe_allow_html=True)
-            
-            # --- حقول الإدخال حسب نوع العملية ---
+            # --- القائمة المنسدلة ---
+            operations = get_available_operations()
+            selected_op = st.selectbox(
+                "🎯 اختر نوع العملية المالية",
+                options=operations,
+                format_func=lambda x: f"⭐ {x}",
+                key="template_op"
+            )
+            desc = get_operation_description(selected_op)
+            st.caption(f"📌 {desc}")
             st.markdown("---")
             
+            # --- حقول الإدخال ---
             if is_mixed_operation(selected_op):
-                # عمليات مختلطة (نقداً + آجلاً)
-                col_m1, col_m2, col_m3 = st.columns(3)
-                with col_m1:
-                    total_amount = st.number_input(
-                        "💰 المبلغ الإجمالي",
-                        min_value=0.0,
-                        step=100.0,
-                        format="%.2f",
-                        key="total_amount"
-                    )
-                with col_m2:
-                    cash_amount = st.number_input(
-                        "💵 الجزء النقدي",
-                        min_value=0.0,
-                        step=100.0,
-                        format="%.2f",
-                        key="cash_amount"
-                    )
-                with col_m3:
-                    credit_amount = st.number_input(
-                        "📋 الجزء الآجل",
-                        min_value=0.0,
-                        step=100.0,
-                        format="%.2f",
-                        key="credit_amount"
-                    )
-                vat_rate = None
-                expense_name = None
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    total_amount = st.number_input("💰 المبلغ الإجمالي", min_value=0.0, step=100.0, format="%.2f", key="total_amount")
+                with col2:
+                    cash_amount = st.number_input("💵 الجزء النقدي", min_value=0.0, step=100.0, format="%.2f", key="cash_amount")
+                with col3:
+                    credit_amount = st.number_input("📋 الجزء الآجل", min_value=0.0, step=100.0, format="%.2f", key="credit_amount")
+                vat_rate = expense_name = None
                 
             elif is_vat_operation(selected_op):
-                # عمليات شامل الضريبة
-                col_v1, col_v2 = st.columns(2)
-                with col_v1:
-                    total_amount = st.number_input(
-                        "💰 المبلغ شامل الضريبة",
-                        min_value=0.0,
-                        step=100.0,
-                        format="%.2f",
-                        key="total_amount"
-                    )
-                with col_v2:
-                    vat_rate = st.number_input(
-                        "📊 نسبة الضريبة (%)",
-                        min_value=0.0,
-                        max_value=100.0,
-                        value=15.0,
-                        step=1.0,
-                        key="vat_rate"
-                    ) / 100
-                cash_amount = None
-                credit_amount = None
-                expense_name = None
+                col1, col2 = st.columns(2)
+                with col1:
+                    total_amount = st.number_input("💰 المبلغ شامل الضريبة", min_value=0.0, step=100.0, format="%.2f", key="total_amount")
+                with col2:
+                    vat_rate = st.number_input("📊 نسبة الضريبة (%)", min_value=0.0, max_value=100.0, value=15.0, step=1.0, key="vat_rate") / 100
+                cash_amount = credit_amount = expense_name = None
                 
             elif selected_op == "سداد مصروف":
-                # سداد مصروف - مع اسم المصروف
-                col_e1, col_e2 = st.columns(2)
-                with col_e1:
-                    total_amount = st.number_input(
-                        "💰 المبلغ",
-                        min_value=0.0,
-                        step=100.0,
-                        format="%.2f",
-                        key="total_amount"
-                    )
-                with col_e2:
-                    expense_name = st.text_input(
-                        "📝 اسم المصروف",
-                        value="كهرباء",
-                        key="expense_name"
-                    )
-                cash_amount = None
-                credit_amount = None
-                vat_rate = None
+                col1, col2 = st.columns(2)
+                with col1:
+                    total_amount = st.number_input("💰 المبلغ", min_value=0.0, step=100.0, format="%.2f", key="total_amount")
+                with col2:
+                    expense_name = st.text_input("📝 اسم المصروف", value="كهرباء", key="expense_name")
+                cash_amount = credit_amount = vat_rate = None
                 
             elif is_inventory_adjustment(selected_op):
-                # تسوية مخزنية
-                col_i1, col_i2, col_i3 = st.columns(3)
-                with col_i1:
-                    total_amount = st.number_input(
-                        "💰 قيمة التسوية",
-                        min_value=0.0,
-                        step=100.0,
-                        format="%.2f",
-                        key="total_amount"
-                    )
-                with col_i2:
-                    adj_type = st.selectbox(
-                        "📈 نوع التسوية",
-                        ["عجز (نقص)", "فائض (زيادة)"],
-                        key="adj_type"
-                    )
-                with col_i3:
-                    st.markdown("<br>", unsafe_allow_html=True)
+                col1, col2 = st.columns(2)
+                with col1:
+                    total_amount = st.number_input("💰 قيمة التسوية", min_value=0.0, step=100.0, format="%.2f", key="total_amount")
+                with col2:
+                    adj_type = st.selectbox("📈 نوع التسوية", ["عجز (نقص)", "فائض (زيادة)"], key="adj_type")
                     if adj_type == "عجز (نقص)":
-                        adjustment_side = "debit"
-                        inventory_side = "credit"
-                        st.info("عجز: تسوية مدين، مخزون دائن")
+                        adjustment_side, inventory_side = "debit", "credit"
+                        st.info("📉 عجز: تسوية مدين، مخزون دائن")
                     else:
-                        adjustment_side = "credit"
-                        inventory_side = "debit"
-                        st.info("فائض: تسوية دائن، مخزون مدين")
-                cash_amount = None
-                credit_amount = None
-                vat_rate = None
-                expense_name = None
+                        adjustment_side, inventory_side = "credit", "debit"
+                        st.info("📈 فائض: تسوية دائن، مخزون مدين")
+                cash_amount = credit_amount = vat_rate = expense_name = None
                 
             else:
-                # العمليات البسيطة - مبلغ واحد فقط
-                total_amount = st.number_input(
-                    "💰 المبلغ",
-                    min_value=0.0,
-                    step=100.0,
-                    format="%.2f",
-                    key="total_amount"
-                )
-                cash_amount = None
-                credit_amount = None
-                vat_rate = None
-                expense_name = None
-                adjustment_side = None
-                inventory_side = None
+                total_amount = st.number_input("💰 المبلغ", min_value=0.0, step=100.0, format="%.2f", key="total_amount")
+                cash_amount = credit_amount = vat_rate = expense_name = None
+                adjustment_side = inventory_side = None
             
-            # --- زر التوليد الذهبي ---
             st.markdown("<br>", unsafe_allow_html=True)
             
-            col_btn1, col_btn2 = st.columns([2, 1])
-            with col_btn1:
-                if st.button("🪄 توليد القيد المحاسبي", use_container_width=True, type="primary"):
-                    if total_amount > 0:
-                        with st.spinner("✨ جاري توليد القيد..."):
-                            entry, display, confidence, confidence_label, confidence_color = generate_template_entry(
-                                operation_type=selected_op,
-                                amount=total_amount,
-                                cash_amount=cash_amount if is_mixed_operation(selected_op) else None,
-                                credit_amount=credit_amount if is_mixed_operation(selected_op) else None,
-                                expense_name=expense_name if selected_op == "سداد مصروف" else None,
-                                vat_rate=vat_rate if is_vat_operation(selected_op) else None,
-                                adjustment_side=adjustment_side if is_inventory_adjustment(selected_op) else None,
-                                inventory_side=inventory_side if is_inventory_adjustment(selected_op) else None
-                            )
+            # --- زر التوليد ---
+            if st.button("🪄 توليد القيد المحاسبي", use_container_width=True, type="primary"):
+                if total_amount > 0:
+                    with st.spinner("✨ جاري توليد القيد..."):
+                        entry, display, confidence, confidence_label, confidence_color = generate_template_entry(
+                            operation_type=selected_op,
+                            amount=total_amount,
+                            cash_amount=cash_amount if is_mixed_operation(selected_op) else None,
+                            credit_amount=credit_amount if is_mixed_operation(selected_op) else None,
+                            expense_name=expense_name if selected_op == "سداد مصروف" else None,
+                            vat_rate=vat_rate if is_vat_operation(selected_op) else None,
+                            adjustment_side=adjustment_side if is_inventory_adjustment(selected_op) else None,
+                            inventory_side=inventory_side if is_inventory_adjustment(selected_op) else None
+                        )
+                    
+                    if entry:
+                        st.markdown("---")
+                        st.markdown("### ✨ القيد المحاسبي")
+                        st.code(display, language="text")
                         
-                        if entry:
-                            # --- عرض القيد في حاوية ذهبية ---
-                            st.markdown("---")
-                            st.markdown("### ✨ القيد المحاسبي")
-                            st.code(display, language="text")
-                            
-                            # --- بطاقة الثقة الذهبية ---
-                            st.markdown(f"""
-                            <div style="
-                                background: linear-gradient(145deg, rgba(212, 175, 55, 0.15), rgba(212, 175, 55, 0.05));
-                                border: 1px solid {confidence_color};
-                                border-radius: 16px;
-                                padding: 16px 20px;
-                                margin-top: 16px;
-                                display: flex;
-                                align-items: center;
-                                gap: 16px;
-                                box-shadow: 0 0 20px rgba(212, 175, 55, 0.1);
-                            ">
-                                <div style="
-                                    background: {confidence_color};
-                                    width: 16px;
-                                    height: 16px;
-                                    border-radius: 50%;
-                                    box-shadow: 0 0 15px {confidence_color};
-                                    animation: pulse 2s infinite;
-                                "></div>
-                                <div>
-                                    <span style="color:#F8FAFC; font-weight:700; font-size:1.1rem;">📊 نسبة الثقة: {confidence}%</span>
-                                    <span style="
-                                        background: {confidence_color}20;
-                                        color: {confidence_color};
-                                        padding: 6px 14px;
-                                        border-radius: 20px;
-                                        font-weight: 700;
-                                        font-size: 0.9rem;
-                                        margin-right: 12px;
-                                    ">{confidence_label} - قالب جاهز</span>
-                                </div>
+                        # بطاقة الثقة
+                        st.markdown(f"""
+                        <div style="background:linear-gradient(145deg, rgba(212,175,55,0.15), rgba(212,175,55,0.05)); 
+                                    border:1px solid {confidence_color}; border-radius:16px; 
+                                    padding:16px 20px; margin-top:16px; display:flex; align-items:center; gap:16px;
+                                    box-shadow:0 0 20px rgba(212,175,55,0.1);">
+                            <div style="background:{confidence_color}; width:16px; height:16px; border-radius:50%; 
+                                        box-shadow:0 0 15px {confidence_color}; animation:pulse 2s infinite;"></div>
+                            <div>
+                                <span style="color:#F8FAFC; font-weight:700; font-size:1.1rem;">📊 نسبة الثقة: {confidence}%</span>
+                                <span style="background:{confidence_color}20; color:{confidence_color}; padding:6px 14px; 
+                                             border-radius:20px; font-weight:700; font-size:0.9rem; margin-right:12px;">
+                                    {confidence_label} - قالب جاهز
+                                </span>
                             </div>
-                            <style>
-                                @keyframes pulse {{
-                                    0% {{ box-shadow: 0 0 15px {confidence_color}; }}
-                                    50% {{ box-shadow: 0 0 25px {confidence_color}, 0 0 35px {confidence_color}40; }}
-                                    100% {{ box-shadow: 0 0 15px {confidence_color}; }}
-                                }}
-                            </style>
-                            """, unsafe_allow_html=True)
-                        else:
-                            st.error(display)
+                        </div>
+                        <style>@keyframes pulse {{ 0% {{ box-shadow: 0 0 15px {confidence_color}; }} 
+                                             50% {{ box-shadow: 0 0 25px {confidence_color}, 0 0 35px {confidence_color}40; }} 
+                                             100% {{ box-shadow: 0 0 15px {confidence_color}; }}}}</style>
+                        """, unsafe_allow_html=True)
                     else:
-                        st.warning("⚠️ الرجاء إدخال المبلغ")
+                        st.error(display)
+                else:
+                    st.warning("⚠️ الرجاء إدخال المبلغ")
             
-            with col_btn2:
-                if st.button("🗑️ مسح", use_container_width=True):
-                    st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
 
     # ====== تبويب 6: الاحتيال (بدون تسجيل صوتي) ======
     with t6:
