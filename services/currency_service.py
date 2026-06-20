@@ -15,7 +15,6 @@ def create_currency(code, name, symbol="", is_base=False):
     conn = get_conn()
     try:
         conn.execute("BEGIN")
-        # إذا كانت هذه هي العملة الأساسية الجديدة، إلغاء الأساسية عن البقية
         if is_base:
             conn.execute("UPDATE currencies SET is_base = 0")
         conn.execute(
@@ -26,7 +25,7 @@ def create_currency(code, name, symbol="", is_base=False):
         return True
     except sqlite3.IntegrityError:
         conn.rollback()
-        raise ValueError(f"العملة {code} موجودة مسبقاً")
+        return False
     except Exception as e:
         conn.rollback()
         raise e
@@ -79,9 +78,18 @@ def create_default_currencies():
     count = conn.execute("SELECT COUNT(*) FROM currencies").fetchone()[0]
     conn.close()
     if count == 0:
-        create_currency("YER", "ريال يمني", "﷼", is_base=True)
-        create_currency("USD", "دولار أمريكي", "$")
-        create_currency("SAR", "ريال سعودي", "﷼")
+        try:
+            create_currency("YER", "ريال يمني", "﷼", is_base=True)
+        except:
+            pass  # تجاهل الخطأ إذا كانت العملة موجودة
+        try:
+            create_currency("USD", "دولار أمريكي", "$")
+        except:
+            pass
+        try:
+            create_currency("SAR", "ريال سعودي", "﷼")
+        except:
+            pass
 
 # ===================== أسعار الصرف =====================
 
@@ -111,13 +119,11 @@ def get_exchange_rate(from_currency, to_currency, rate_date=None):
     if rate_date is None:
         rate_date = date.today().strftime("%Y-%m-%d")
     conn = get_conn()
-    # البحث بسعر اليوم أولاً
     row = conn.execute(
         "SELECT rate FROM exchange_rates WHERE from_currency = ? AND to_currency = ? AND date = ?",
         (from_currency.upper(), to_currency.upper(), rate_date)
     ).fetchone()
     if not row:
-        # آخر سعر متاح
         row = conn.execute(
             "SELECT rate FROM exchange_rates WHERE from_currency = ? AND to_currency = ? ORDER BY date DESC LIMIT 1",
             (from_currency.upper(), to_currency.upper())
