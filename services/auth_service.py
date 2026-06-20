@@ -15,8 +15,8 @@ def verify_user(username, password):
     if row:
         stored_password = row["password"]
         if isinstance(stored_password, str):
-            stored_password = stored_password.encode()
-        if bcrypt.checkpw(password.encode(), stored_password):
+            stored_password = stored_password.encode('utf-8')
+        if bcrypt.checkpw(password.encode('utf-8'), stored_password):
             return {"username": username, "full_name": row["full_name"], "role_id": row["role_id"]}
     return None
 
@@ -25,26 +25,32 @@ def change_password(username, old_password, new_password):
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     c = conn.cursor()
+    
+    # 1. التحقق من وجود المستخدم
     c.execute("SELECT password FROM users WHERE username=?", (username,))
     row = c.fetchone()
     if not row:
         conn.close()
         return False, "المستخدم غير موجود"
 
+    # 2. التحقق من كلمة المرور القديمة
     stored_password = row["password"]
+    # التأكد من أن كلمة المرور المخزنة هي bytes
     if isinstance(stored_password, str):
-        stored_password = stored_password.encode()
+        stored_password = stored_password.encode('utf-8')
 
-    if not bcrypt.checkpw(old_password.encode(), stored_password):
+    if not bcrypt.checkpw(old_password.encode('utf-8'), stored_password):
         conn.close()
         return False, "كلمة المرور الحالية غير صحيحة"
 
-    hashed = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt())
-    c.execute("UPDATE users SET password=? WHERE username=?", (hashed.decode(), username))
+    # 3. تشفير كلمة المرور الجديدة وحفظها
+    hashed = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt())
+    # التأكد من حفظها بشكل صحيح كـ string
+    c.execute("UPDATE users SET password=? WHERE username=?", (hashed.decode('utf-8'), username))
     conn.commit()
     conn.close()
     
-    # تسجيل تغيير كلمة المرور
+    # 4. تسجيل تغيير كلمة المرور في سجل التدقيق
     log_action(
         username=username,
         action="تغيير كلمة المرور",
@@ -52,13 +58,13 @@ def change_password(username, old_password, new_password):
         new_value=f"تم تغيير كلمة المرور للمستخدم: {username}"
     )
     
-    return True, "تم تغيير كلمة المرور بنجاح"
+    return True, "تم تغيير كلمة المرور بنجاح. يرجى تسجيل الخروج وإعادة الدخول."
 
 def create_user(username, password, full_name, role_id=None):
     """إنشاء مستخدم جديد"""
     conn = get_connection()
     try:
-        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+        hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         conn.execute(
             "INSERT INTO users (username, password, full_name, role_id) VALUES (?, ?, ?, ?)",
             (username, hashed, full_name, role_id)
