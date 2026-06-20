@@ -1,6 +1,6 @@
 # ui/auth_ui.py
 import streamlit as st
-from database import init_db
+from database import init_db, get_connection
 from services.auth_service import (
     verify_user,
     change_password,
@@ -8,17 +8,16 @@ from services.auth_service import (
 )
 
 # ========== لوحة ألوان النخبة والفخامة المطلقة ==========
-T = "#F8FAFC"        # أبيض بلاتيني ناصع للنصوص القيادية
-S = "#64748B"        # رمادي فضي خافت للنصوص الثانوية
-PR = "#7C3AED"       # بنفسجي ملكي عميق (Royal Violet)
-BL = "#2563EB"       # أزرق سيادي (Sovereign Blue)
-BG_CORE = "#020617"  # أسود بركاني عميق للخلفية الأساسية
+T = "#F8FAFC"
+S = "#64748B"
+PR = "#7C3AED"
+BL = "#2563EB"
+BG_CORE = "#020617"
 
 def apply_ultra_premium_css():
     """حقن نظام التصميم السيادي والـ Obsidian Glassmorphism لصفحة الدخول"""
     st.markdown(f"""
     <style>
-        /* 1. خلفية كونية متحركة بنعومة متناهية دون تشتيت */
         @keyframes subtleOrbit {{
             0% {{ background-position: 0% 50%; }}
             50% {{ background-position: 100% 50%; }}
@@ -31,7 +30,6 @@ def apply_ultra_premium_css():
             background-attachment: fixed !important;
         }}
 
-        /* 🧹 تطهير تام للواجهة لمنع قفزات العناصر أو الفراغات الهيكلية */
         div[data-testid="stVerticalBlock"] > div:empty,
         div[data-testid="stHorizontalBlock"] > div:empty,
         div[data-testid="element-container"]:empty,
@@ -42,7 +40,6 @@ def apply_ultra_premium_css():
             padding: 0px !important;
         }}
 
-        /* 2. حاوية الزجاج البركاني (Obsidian Luxury Card) */
         div[data-testid="stVerticalBlock"] > div > div > div[data-testid="stVerticalBlock"] {{
             background: linear-gradient(145deg, rgba(15, 23, 42, 0.55) 0%, rgba(8, 13, 24, 0.75) 100%) !important;
             backdrop-filter: blur(50px) saturate(160%) !important;
@@ -54,7 +51,6 @@ def apply_ultra_premium_css():
             box-shadow: 0 50px 100px rgba(0, 0, 0, 0.85), inset 0 1px 0 rgba(255,255,255,0.02) !important;
         }}
 
-        /* 3. حقول الإدخال الأنيقة والذكية */
         div[data-baseweb="input"] {{
             background: rgba(3, 7, 18, 0.5) !important;
             border: 1px solid rgba(255, 255, 255, 0.06) !important;
@@ -78,7 +74,6 @@ def apply_ultra_premium_css():
             color: rgba(255, 255, 255, 0.15) !important;
         }}
 
-        /* عناوين الحقول السلوكية */
         .stTextInput label p {{
             color: {S} !important;
             font-size: 0.92rem !important;
@@ -88,7 +83,6 @@ def apply_ultra_premium_css():
             text-transform: uppercase;
         }}
 
-        /* 4. زر الدخول التنفيذي المتدرج (Executive Call-to-Action) */
         button[kind="primary"] {{
             background: linear-gradient(135deg, {PR} 0%, {BL} 100%) !important;
             border: none !important;
@@ -107,7 +101,6 @@ def apply_ultra_premium_css():
             filter: brightness(1.1) !important;
         }}
 
-        /* 5. الزر الثانوي المحيد والمعزز */
         button[kind="secondary"] {{
             background: rgba(255, 255, 255, 0.02) !important;
             border: 1px solid rgba(255, 255, 255, 0.05) !important;
@@ -125,7 +118,6 @@ def apply_ultra_premium_css():
             transform: translateY(-2px);
         }}
 
-        /* 6. تأثير النبض الضوئي المستقر للشعار */
         @keyframes executiveGlow {{
             0%, 100% {{ filter: drop-shadow(0 0 30px rgba(124, 58, 237, 0.3)); transform: translateY(0); }}
             50% {{ filter: drop-shadow(0 0 50px rgba(37, 99, 219, 0.45)); transform: translateY(-4px); }}
@@ -141,7 +133,6 @@ def render_premium_header(is_change_password=False):
     if not is_change_password:
         st.markdown(f"""
         <div style="text-align:center; margin-bottom: 3rem; margin-top: 0.5rem;">
-            <!-- أيقونة حوكمة ERP الفاخرة -->
             <div class="executive-logo-box" style="
                 width: 160px; height: 160px; margin: 0 auto 2rem auto;
                 background: linear-gradient(135deg, rgba(124,58,237,0.1) 0%, rgba(37,99,235,0.05) 100%);
@@ -158,7 +149,6 @@ def render_premium_header(is_change_password=False):
                     letter-spacing: 2px; display: inline-block;
                 ">حوكمة</span>
             </div>
-            <!-- الشعار الفرعي الجذاب بتصميم مميز -->
             <p style="color:{S}; margin-top: 0.9rem; font-size: 1.2rem; letter-spacing: 2px; font-weight: 600;">
                 إدارة <span style="color:#A78BFA; font-weight:700;">ذكية</span> .. قرارات <span style="color:#60A5FA; font-weight:700;">واثقة</span>
             </p>
@@ -242,20 +232,66 @@ def password_change_form():
             col1, col2 = st.columns([1.6, 1])
             with col1:
                 if st.button("💾 حفظ البيانات وتحديث", use_container_width=True, type="primary"):
-                    if not username or not old_password or not new_password:
+                    # --- 🆕 قسم التشخيص ---
+                    st.write("---")
+                    st.write("### 🩺 تشخيص عملية تغيير كلمة المرور")
+                    
+                    # 1. عرض المدخلات (بدون كشف كلمة المرور)
+                    st.write(f"👤 **اسم المستخدم:** `{username}`")
+                    st.write(f"🔓 **طول كلمة المرور القديمة:** `{len(old_password) if old_password else 0}` حرف")
+                    st.write(f"✨ **طول كلمة المرور الجديدة:** `{len(new_password) if new_password else 0}` حرف")
+                    st.write(f"🔑 **التطابق:** {'✅ متطابقة' if new_password == confirm_password else '❌ غير متطابقة'}")
+                    
+                    # 2. التحقق من وجود المستخدم في قاعدة البيانات
+                    try:
+                        conn = get_connection()
+                        conn.row_factory = __import__('sqlite3').Row
+                        c = conn.cursor()
+                        c.execute("SELECT username, password FROM users WHERE username=?", (username,))
+                        user_row = c.fetchone()
+                        conn.close()
+                        
+                        if user_row:
+                            st.write(f"✅ **المستخدم موجود في قاعدة البيانات:** `{user_row['username']}`")
+                            st.write(f"🔑 **كلمة المرور المخزنة تبدأ بـ:** `{user_row['password'][:10]}...`")
+                        else:
+                            st.error(f"❌ **المستخدم `{username}` غير موجود في قاعدة البيانات!**")
+                    except Exception as db_error:
+                        st.error(f"❌ **خطأ في قراءة قاعدة البيانات:** `{db_error}`")
+                    
+                    # 3. استدعاء دالة التغيير
+                    if new_password == confirm_password and len(new_password) >= 4:
+                        st.write("⏳ **جاري استدعاء `change_password`...**")
+                        success, message = change_password(username, old_password, new_password)
+                        
+                        if success:
+                            # التحقق من أن التغيير تم فعلاً
+                            try:
+                                conn2 = get_connection()
+                                conn2.row_factory = __import__('sqlite3').Row
+                                c2 = conn2.cursor()
+                                c2.execute("SELECT password FROM users WHERE username=?", (username,))
+                                updated_row = c2.fetchone()
+                                conn2.close()
+                                
+                                if updated_row:
+                                    st.write(f"🔑 **كلمة المرور الجديدة المخزنة تبدأ بـ:** `{updated_row['password'][:10]}...`")
+                            except:
+                                pass
+                            
+                            st.success(f"✨ {message}")
+                            st.session_state.show_password_change = False
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {message}")
+                    elif not old_password or not new_password:
                         st.warning("⚠️ جميع الحقول مطلوبة.")
                     elif new_password != confirm_password:
                         st.error("❌ عدم تطابق في تأكيد رمز المرور الجديد.")
                     elif len(new_password) < 4:
                         st.error("⚠️ رمز المرور ضعيف (يجب ألا يقل عن 4 خانات).")
                     else:
-                        success, message = change_password(username, old_password, new_password)
-                        if success:
-                            st.success(f"✨ {message}")
-                            st.session_state.show_password_change = False
-                            st.rerun()
-                        else:
-                            st.error(f"❌ {message}")
+                        st.error("❌ حالة غير معروفة.")
             with col2:
                 if st.button("↩️ إلغاء العملية", use_container_width=True):
                     st.session_state.show_password_change = False
