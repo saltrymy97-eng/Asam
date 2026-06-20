@@ -1,4 +1,4 @@
-# ui/ai_ui.py – واجهة المساعد الذكي المطورة مع التسجيل الصوتي (st.audio_input)
+# ui/ai_ui.py – واجهة المساعد الذكي المطورة مع التسجيل الصوتي (WhatsApp Style)
 import streamlit as st
 import pandas as pd
 import json
@@ -41,7 +41,6 @@ def audio_to_text(audio_file):
         return ""
     try:
         client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-        # حفظ الملف المؤقت
         with open("temp_audio.wav", "wb") as f:
             f.write(audio_file.getbuffer())
         with open("temp_audio.wav", "rb") as f:
@@ -57,12 +56,12 @@ def audio_to_text(audio_file):
 
 def audio_input_widget(key="audio"):
     """عنصر إدخال صوتي أنيق مع استخراج النص"""
-    audio_value = st.audio_input("🎤 تحدث الآن", key=key, label_visibility="collapsed")
+    audio_value = st.audio_input("🎤", key=key, label_visibility="collapsed")
     if audio_value:
         with st.spinner("🎙️ جاري تحويل الصوت إلى نص..."):
             text = audio_to_text(audio_value)
             if text and not text.startswith("❌"):
-                st.success(f"✅ النص المستخرج: {text}")
+                st.success(f"✅ {text}")
                 return text
             else:
                 st.error(text)
@@ -101,33 +100,36 @@ def show():
         "🎯 مراكز تكلفة"
     ])
 
-    # ====== تبويب 1: المساعد (تسجيل صوتي) ======
+    # ====== تبويب 1: المساعد (WhatsApp Style) ======
     with t1:
         h3("اسأل عن أي شيء في نظامك", BL)
-        col1, col2 = st.columns([1, 5])
-        with col1:
-            voice_text = audio_input_widget("assistant_audio")
-        with col2:
-            manual_text = st.text_area("أو اكتب سؤالك هنا", height=68, key="assistant_text", label_visibility="collapsed", placeholder="اكتب سؤالك هنا...")
         
-        submit = st.button("إرسال", key="assistant_submit", type="primary")
-        if submit:
-            q = voice_text or manual_text
-            if q:
-                st.chat_message("user").write(q)
-                data = get_comprehensive_data()
-                d = json.dumps(data, ensure_ascii=False, default=str)
-                prompt = f"""أنت خبير مالي ومحلل أعمال في نظام ERP. لديك البيانات التالية عن الشركة:
+        # صف واحد: زر الميكروفون + حقل الكتابة
+        mic_col, chat_col = st.columns([1, 11])
+        
+        with mic_col:
+            voice_text = audio_input_widget("assistant_audio")
+        
+        with chat_col:
+            q = st.chat_input("اكتب سؤالك هنا...", key="ai-chat-input")
+        
+        # إذا تم التسجيل صوتياً، حوله إلى نص وأرسله
+        if voice_text:
+            q = voice_text
+        
+        if q:
+            st.chat_message("user").write(q)
+            data = get_comprehensive_data()
+            d = json.dumps(data, ensure_ascii=False, default=str)
+            prompt = f"""أنت خبير مالي ومحلل أعمال في نظام ERP. لديك البيانات التالية عن الشركة:
 {d}
 
 أجب عن السؤال التالي بالعربية بشكل مفصل وعميق. قدم أرقاماً محددة، وحلل الاتجاهات، وقدم توصيات قابلة للتنفيذ. إذا كانت البيانات غير كافية، اشرح ما هي البيانات الإضافية المطلوبة. لا تختلق معلومات غير موجودة."""
-                with st.spinner("🧠 تحليل عميق..."):
-                    ans = query_groq(prompt, q, model=model, max_tokens=1500)
-                st.chat_message("assistant").write(ans)
-                save_chat_history(st.session_state.active_session, "user", q, model, "مساعد")
-                save_chat_history(st.session_state.active_session, "assistant", ans, model, "مساعد")
-            else:
-                st.warning("الرجاء إدخال سؤال")
+            with st.spinner("🧠 تحليل عميق..."):
+                ans = query_groq(prompt, q, model=model, max_tokens=1500)
+            st.chat_message("assistant").write(ans)
+            save_chat_history(st.session_state.active_session, "user", q, model, "مساعد")
+            save_chat_history(st.session_state.active_session, "assistant", ans, model, "مساعد")
 
     # ====== تبويب 2: المحلل (بدون تسجيل صوتي) ======
     with t2:
@@ -178,13 +180,13 @@ def show():
             st.warning("⚠️ منتجات تحت الحد الأدنى:")
             st.dataframe(pd.DataFrame(low))
 
-    # ====== تبويب 4: الموظفين (تسجيل صوتي) ======
+    # ====== تبويب 4: الموظفين (WhatsApp Style) ======
     with t4:
         h3("استفسارات الموظفين", PR)
-        col1, col2 = st.columns([1, 5])
-        with col1:
+        mic_col, name_col = st.columns([1, 5])
+        with mic_col:
             voice_name = audio_input_widget("employee_name_audio")
-        with col2:
+        with name_col:
             nm = st.text_input("اسمك:", key="ename", value=voice_name)
         eq = st.text_input("سؤالك:", key="eq")
         if st.button("💬 اسأل") and nm and eq:
@@ -199,13 +201,13 @@ def show():
             else:
                 st.error("غير موجود")
 
-    # ====== تبويب 5: القيود (تسجيل صوتي) ======
+    # ====== تبويب 5: القيود (WhatsApp Style) ======
     with t5:
         h3("توليد قيود محاسبية ذكية", RD)
-        col1, col2 = st.columns([1, 5])
-        with col1:
+        mic_col, entry_col = st.columns([1, 5])
+        with mic_col:
             voice_entry = audio_input_widget("entry_audio")
-        with col2:
+        with entry_col:
             txt = st.text_area("اكتب العملية:", key="etxt", value=voice_entry, height=100)
         if st.button("📝 توليد القيد") and txt:
             with st.spinner("📝 جاري توليد قيد متوازن..."):
