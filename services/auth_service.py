@@ -14,6 +14,7 @@ def verify_user(username, password):
     conn.close()
     if row:
         stored_password = row["password"]
+        # تحويل إلى bytes إذا كانت str
         if isinstance(stored_password, str):
             stored_password = stored_password.encode('utf-8')
         if bcrypt.checkpw(password.encode('utf-8'), stored_password):
@@ -35,7 +36,6 @@ def change_password(username, old_password, new_password):
 
     # 2. التحقق من كلمة المرور القديمة
     stored_password = row["password"]
-    # التأكد من أن كلمة المرور المخزنة هي bytes
     if isinstance(stored_password, str):
         stored_password = stored_password.encode('utf-8')
 
@@ -45,8 +45,8 @@ def change_password(username, old_password, new_password):
 
     # 3. تشفير كلمة المرور الجديدة وحفظها
     hashed = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt())
-    # التأكد من حفظها بشكل صحيح كـ string
-    c.execute("UPDATE users SET password=? WHERE username=?", (hashed.decode('utf-8'), username))
+    # 🆕 تخزين كـ bytes مباشرة، دون فك تشفير
+    c.execute("UPDATE users SET password=? WHERE username=?", (hashed, username))
     conn.commit()
     conn.close()
     
@@ -64,14 +64,14 @@ def create_user(username, password, full_name, role_id=None):
     """إنشاء مستخدم جديد"""
     conn = get_connection()
     try:
-        hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+        # 🆕 تخزين كـ bytes مباشرة
         conn.execute(
             "INSERT INTO users (username, password, full_name, role_id) VALUES (?, ?, ?, ?)",
             (username, hashed, full_name, role_id)
         )
         conn.commit()
         
-        # جلب ID المستخدم الجديد للتسجيل
         conn.row_factory = sqlite3.Row
         user = conn.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()
         if user:
