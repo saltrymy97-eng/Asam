@@ -1,7 +1,8 @@
-# ui/ai_ui.py – واجهة المساعد الذكي المطورة مع التسجيل الصوتي الفاخر
+# ui/ai_ui.py – واجهة المساعد الذكي المطورة مع التسجيل الصوتي (st.audio_input)
 import streamlit as st
 import pandas as pd
 import json
+import os
 from datetime import date, datetime
 from services.ai_service import (
     create_ai_tables, query_groq, save_chat_history, get_chat_history,
@@ -14,6 +15,7 @@ from services.ai_service import (
     generate_entry_safe
 )
 from services import cost_center_service as ccs
+from groq import Groq
 
 # ========== ألوان التصميم ==========
 T = "#F8FAFC"
@@ -32,126 +34,39 @@ AVAILABLE_MODELS = {
     "Llama 3.1 8B (أسرع)": "llama-3.1-8b-instant",
 }
 
-# ========== 🎤 مكون التسجيل الصوتي الفاخر ==========
-VOICE_INPUT_HTML = """
-<div id="voice-container" style="display: flex; align-items: center; gap: 12px; margin: 10px 0;">
-    <button id="voice-btn" onclick="toggleRecording()" type="button" style="
-        background: linear-gradient(135deg, rgba(212,175,55,0.2), rgba(212,175,55,0.05));
-        border: 1px solid rgba(212,175,55,0.4);
-        border-radius: 50%;
-        width: 48px;
-        height: 48px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        transition: all 0.3s ease;
-        box-shadow: 0 0 15px rgba(212,175,55,0.15);
-    " onmouseover="this.style.background='linear-gradient(135deg, #D4AF37, #AA771C)'; this.style.boxShadow='0 0 25px rgba(212,175,55,0.5)';" onmouseout="this.style.background='linear-gradient(135deg, rgba(212,175,55,0.2), rgba(212,175,55,0.05))'; this.style.boxShadow='0 0 15px rgba(212,175,55,0.15)';">
-        <span id="voice-icon" style="font-size: 1.5rem;">🎤</span>
-    </button>
-    <span id="voice-status" style="color: #CBD5E1; font-size: 0.85rem;">اضغط للتحدث</span>
-</div>
-<script>
-    let recognition = null;
-    let isRecording = false;
-    
-    function initRecognition() {
-        if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-            document.getElementById('voice-status').textContent = '⚠️ متصفحك لا يدعم التسجيل الصوتي';
-            document.getElementById('voice-btn').style.display = 'none';
-            return;
-        }
-        
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        recognition = new SpeechRecognition();
-        recognition.lang = 'ar-SA';
-        recognition.interimResults = false;
-        recognition.continuous = false;
-        
-        recognition.onresult = function(event) {
-            const text = event.results[0][0].transcript;
-            const targetId = document.getElementById('voice-btn').getAttribute('data-target');
-            
-            // البحث عن الحقل المستهدف بطرق مختلفة
-            let target = null;
-            
-            // البحث بالـ ID المباشر
-            if (targetId) {
-                target = document.querySelector(targetId);
-            }
-            
-            // إذا لم ينجح، نحاول إيجاد chat_input
-            if (!target && window.parent) {
-                const chatInput = window.parent.document.querySelector('[data-testid="stChatInput"]');
-                if (chatInput) {
-                    target = chatInput;
-                }
-            }
-            
-            if (target) {
-                // محاولة تعبئة الحقل
-                if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') {
-                    target.value = text;
-                    target.dispatchEvent(new Event('input', { bubbles: true }));
-                }
-                // إذا كان chat_input، نبحث عن textarea بداخله
-                const textarea = target.querySelector('textarea');
-                if (textarea) {
-                    textarea.value = text;
-                    textarea.dispatchEvent(new Event('input', { bubbles: true }));
-                }
-            }
-            
-            document.getElementById('voice-icon').textContent = '🎤';
-            document.getElementById('voice-status').textContent = 'تم التسجيل! اضغط للإرسال';
-            isRecording = false;
-        };
-        
-        recognition.onerror = function(event) {
-            document.getElementById('voice-icon').textContent = '🎤';
-            document.getElementById('voice-status').textContent = '❌ خطأ في التسجيل';
-            isRecording = false;
-        };
-        
-        recognition.onend = function() {
-            document.getElementById('voice-icon').textContent = '🎤';
-            if (isRecording) {
-                document.getElementById('voice-status').textContent = 'اضغط للتحدث';
-            }
-            isRecording = false;
-        };
-    }
-    
-    function toggleRecording() {
-        if (!recognition) {
-            initRecognition();
-        }
-        
-        if (isRecording) {
-            recognition.stop();
-            document.getElementById('voice-icon').textContent = '🎤';
-            document.getElementById('voice-status').textContent = 'اضغط للتحدث';
-            isRecording = false;
-        } else {
-            recognition.start();
-            document.getElementById('voice-icon').textContent = '🔴';
-            document.getElementById('voice-status').textContent = '🎙️ جاري الاستماع...';
-            isRecording = true;
-        }
-    }
-    
-    // تهيئة أولية
-    document.addEventListener('DOMContentLoaded', initRecognition);
-</script>
-"""
+# ========== 🎤 معالجة الصوت ==========
+def audio_to_text(audio_file):
+    """تحويل ملف صوتي إلى نص باستخدام Groq Whisper"""
+    if audio_file is None:
+        return ""
+    try:
+        client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+        # حفظ الملف المؤقت
+        with open("temp_audio.wav", "wb") as f:
+            f.write(audio_file.getbuffer())
+        with open("temp_audio.wav", "rb") as f:
+            transcription = client.audio.transcriptions.create(
+                model="whisper-large-v3",
+                file=("temp_audio.wav", f.read()),
+                language="ar"
+            )
+        os.remove("temp_audio.wav")
+        return transcription.text
+    except Exception as e:
+        return f"❌ خطأ في التعرف على الصوت: {str(e)}"
 
-def voice_button(target_id=""):
-    """عرض زر التسجيل الصوتي الذهبي"""
-    html = VOICE_INPUT_HTML
-    if target_id:
-        html = html.replace('id="voice-btn"', f'id="voice-btn" data-target="{target_id}"')
-    st.components.v1.html(html, height=80)
+def audio_input_widget(key="audio"):
+    """عنصر إدخال صوتي أنيق مع استخراج النص"""
+    audio_value = st.audio_input("🎤 تحدث الآن", key=key, label_visibility="collapsed")
+    if audio_value:
+        with st.spinner("🎙️ جاري تحويل الصوت إلى نص..."):
+            text = audio_to_text(audio_value)
+            if text and not text.startswith("❌"):
+                st.success(f"✅ النص المستخرج: {text}")
+                return text
+            else:
+                st.error(text)
+    return ""
 
 def h1(title, color=PR):
     st.markdown(f"""<div style="text-align:right;margin-bottom:2rem;">
@@ -189,21 +104,30 @@ def show():
     # ====== تبويب 1: المساعد (تسجيل صوتي) ======
     with t1:
         h3("اسأل عن أي شيء في نظامك", BL)
-        voice_button("#ai-chat-input")
-        q = st.chat_input("اكتب سؤالك هنا...", key="ai-chat-input")
-        if q:
-            st.chat_message("user").write(q)
-            data = get_comprehensive_data()
-            d = json.dumps(data, ensure_ascii=False, default=str)
-            prompt = f"""أنت خبير مالي ومحلل أعمال في نظام ERP. لديك البيانات التالية عن الشركة:
+        col1, col2 = st.columns([1, 5])
+        with col1:
+            voice_text = audio_input_widget("assistant_audio")
+        with col2:
+            manual_text = st.text_area("أو اكتب سؤالك هنا", height=68, key="assistant_text", label_visibility="collapsed", placeholder="اكتب سؤالك هنا...")
+        
+        submit = st.button("إرسال", key="assistant_submit", type="primary")
+        if submit:
+            q = voice_text or manual_text
+            if q:
+                st.chat_message("user").write(q)
+                data = get_comprehensive_data()
+                d = json.dumps(data, ensure_ascii=False, default=str)
+                prompt = f"""أنت خبير مالي ومحلل أعمال في نظام ERP. لديك البيانات التالية عن الشركة:
 {d}
 
 أجب عن السؤال التالي بالعربية بشكل مفصل وعميق. قدم أرقاماً محددة، وحلل الاتجاهات، وقدم توصيات قابلة للتنفيذ. إذا كانت البيانات غير كافية، اشرح ما هي البيانات الإضافية المطلوبة. لا تختلق معلومات غير موجودة."""
-            with st.spinner("🧠 تحليل عميق..."):
-                ans = query_groq(prompt, q, model=model, max_tokens=1500)
-            st.chat_message("assistant").write(ans)
-            save_chat_history(st.session_state.active_session, "user", q, model, "مساعد")
-            save_chat_history(st.session_state.active_session, "assistant", ans, model, "مساعد")
+                with st.spinner("🧠 تحليل عميق..."):
+                    ans = query_groq(prompt, q, model=model, max_tokens=1500)
+                st.chat_message("assistant").write(ans)
+                save_chat_history(st.session_state.active_session, "user", q, model, "مساعد")
+                save_chat_history(st.session_state.active_session, "assistant", ans, model, "مساعد")
+            else:
+                st.warning("الرجاء إدخال سؤال")
 
     # ====== تبويب 2: المحلل (بدون تسجيل صوتي) ======
     with t2:
@@ -257,8 +181,11 @@ def show():
     # ====== تبويب 4: الموظفين (تسجيل صوتي) ======
     with t4:
         h3("استفسارات الموظفين", PR)
-        voice_button("#ename")
-        nm = st.text_input("اسمك:", key="ename")
+        col1, col2 = st.columns([1, 5])
+        with col1:
+            voice_name = audio_input_widget("employee_name_audio")
+        with col2:
+            nm = st.text_input("اسمك:", key="ename", value=voice_name)
         eq = st.text_input("سؤالك:", key="eq")
         if st.button("💬 اسأل") and nm and eq:
             emp, sal = get_employee_info(nm)
@@ -275,8 +202,11 @@ def show():
     # ====== تبويب 5: القيود (تسجيل صوتي) ======
     with t5:
         h3("توليد قيود محاسبية ذكية", RD)
-        voice_button("#etxt")
-        txt = st.text_area("اكتب العملية:", key="etxt")
+        col1, col2 = st.columns([1, 5])
+        with col1:
+            voice_entry = audio_input_widget("entry_audio")
+        with col2:
+            txt = st.text_area("اكتب العملية:", key="etxt", value=voice_entry, height=100)
         if st.button("📝 توليد القيد") and txt:
             with st.spinner("📝 جاري توليد قيد متوازن..."):
                 entry, display, confidence, confidence_label, confidence_color = generate_entry_safe(txt, model=model)
