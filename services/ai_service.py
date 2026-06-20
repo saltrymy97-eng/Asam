@@ -547,13 +547,11 @@ def extract_entry_data(text, model="llama-3.3-70b-versatile"):
    المدين = النقدية (بقيمة الجزء النقدي)
    المدين = العملاء (بقيمة الجزء الآجل)
    الدائن = المبيعات (بقيمة البيع الكاملة)
-   مثال: "بعت بضاعة بألف، نصفها نقداً ونصفها آجلاً" → مدين النقدية 500، مدين العملاء 500، دائن المبيعات 1000
 
 6. عند الشراء المختلط (نصف نقداً ونصف آجلاً):
    المدين = المخزون (بقيمة الشراء الكاملة)
    الدائن = النقدية (بقيمة الجزء النقدي)
    الدائن = الموردين (بقيمة الجزء الآجل)
-   مثال: "اشتريت بضاعة بمليون، نصفها نقداً" → مدين المخزون 1,000,000، دائن النقدية 500,000، دائن الموردين 500,000
 
 7. عند قبض مبلغ من عميل:
    المدين = النقدية
@@ -833,3 +831,240 @@ def generate_entry_safe(text, model="llama-3.3-70b-versatile"):
     display += confidence_line
     
     return entry, display, confidence, confidence_label, confidence_color
+
+# ===================== محرك القيود بالقوالب (Template-Based Entry Engine) =====================
+
+# قوالب العمليات المالية - كل قالب يحتوي على اسم العملية والأسطر المحاسبية
+ENTRY_TEMPLATES = {
+    "بيع نقداً": {
+        "description": "بيع بضاعة نقداً",
+        "lines": [
+            {"account": "النقدية", "amount": "{amount}", "side": "debit"},
+            {"account": "المبيعات", "amount": "{amount}", "side": "credit"}
+        ]
+    },
+    "بيع بالآجل": {
+        "description": "بيع بضاعة بالآجل",
+        "lines": [
+            {"account": "العملاء", "amount": "{amount}", "side": "debit"},
+            {"account": "المبيعات", "amount": "{amount}", "side": "credit"}
+        ]
+    },
+    "بيع مختلط": {
+        "description": "بيع بضاعة (نقداً + آجلاً)",
+        "lines": [
+            {"account": "النقدية", "amount": "{cash}", "side": "debit"},
+            {"account": "العملاء", "amount": "{credit}", "side": "debit"},
+            {"account": "المبيعات", "amount": "{amount}", "side": "credit"}
+        ]
+    },
+    "بيع شامل الضريبة": {
+        "description": "بيع بضاعة شامل ضريبة القيمة المضافة",
+        "lines": [
+            {"account": "النقدية", "amount": "{amount}", "side": "debit"},
+            {"account": "المبيعات", "amount": "{net}", "side": "credit"},
+            {"account": "ضريبة القيمة المضافة المستحقة", "amount": "{vat}", "side": "credit"}
+        ]
+    },
+    "شراء نقداً": {
+        "description": "شراء بضاعة نقداً",
+        "lines": [
+            {"account": "المخزون", "amount": "{amount}", "side": "debit"},
+            {"account": "النقدية", "amount": "{amount}", "side": "credit"}
+        ]
+    },
+    "شراء بالآجل": {
+        "description": "شراء بضاعة بالآجل",
+        "lines": [
+            {"account": "المخزون", "amount": "{amount}", "side": "debit"},
+            {"account": "الموردين", "amount": "{amount}", "side": "credit"}
+        ]
+    },
+    "شراء مختلط": {
+        "description": "شراء بضاعة (نقداً + آجلاً)",
+        "lines": [
+            {"account": "المخزون", "amount": "{amount}", "side": "debit"},
+            {"account": "النقدية", "amount": "{cash}", "side": "credit"},
+            {"account": "الموردين", "amount": "{credit}", "side": "credit"}
+        ]
+    },
+    "شراء شامل الضريبة": {
+        "description": "شراء بضاعة شامل ضريبة القيمة المضافة",
+        "lines": [
+            {"account": "المخزون", "amount": "{net}", "side": "debit"},
+            {"account": "ضريبة القيمة المضافة المدخلة", "amount": "{vat}", "side": "debit"},
+            {"account": "النقدية", "amount": "{amount}", "side": "credit"}
+        ]
+    },
+    "قبض من عميل": {
+        "description": "استلام دفعة من عميل",
+        "lines": [
+            {"account": "النقدية", "amount": "{amount}", "side": "debit"},
+            {"account": "العملاء", "amount": "{amount}", "side": "credit"}
+        ]
+    },
+    "دفع لمورد": {
+        "description": "سداد دفعة لمورد",
+        "lines": [
+            {"account": "الموردين", "amount": "{amount}", "side": "debit"},
+            {"account": "النقدية", "amount": "{amount}", "side": "credit"}
+        ]
+    },
+    "سداد مصروف": {
+        "description": "سداد مصروف نقداً",
+        "lines": [
+            {"account": "{expense_name}", "amount": "{amount}", "side": "debit"},
+            {"account": "النقدية", "amount": "{amount}", "side": "credit"}
+        ]
+    },
+    "شراء أصل ثابت": {
+        "description": "شراء أصل ثابت نقداً",
+        "lines": [
+            {"account": "الأصل الثابت", "amount": "{amount}", "side": "debit"},
+            {"account": "النقدية", "amount": "{amount}", "side": "credit"}
+        ]
+    },
+    "شراء أصل ثابت بالآجل": {
+        "description": "شراء أصل ثابت بالآجل",
+        "lines": [
+            {"account": "الأصل الثابت", "amount": "{amount}", "side": "debit"},
+            {"account": "الموردين", "amount": "{amount}", "side": "credit"}
+        ]
+    },
+    "إهلاك أصل": {
+        "description": "احتساب إهلاك أصل ثابت",
+        "lines": [
+            {"account": "مصروف الإهلاك", "amount": "{amount}", "side": "debit"},
+            {"account": "مجمع الإهلاك", "amount": "{amount}", "side": "credit"}
+        ]
+    },
+    "تسوية بنكية": {
+        "description": "رسوم بنكية",
+        "lines": [
+            {"account": "مصروف رسوم بنكية", "amount": "{amount}", "side": "debit"},
+            {"account": "البنك", "amount": "{amount}", "side": "credit"}
+        ]
+    },
+    "إقفال إيرادات": {
+        "description": "إقفال حساب إيرادات في نهاية الفترة",
+        "lines": [
+            {"account": "المبيعات", "amount": "{amount}", "side": "debit"},
+            {"account": "أرباح وخسائر", "amount": "{amount}", "side": "credit"}
+        ]
+    },
+    "إقفال مصروفات": {
+        "description": "إقفال حساب مصروفات في نهاية الفترة",
+        "lines": [
+            {"account": "أرباح وخسائر", "amount": "{amount}", "side": "debit"},
+            {"account": "المصروف", "amount": "{amount}", "side": "credit"}
+        ]
+    },
+    "تسوية مخزنية (جرد)": {
+        "description": "تسوية مخزنية - جرد المخزون",
+        "lines": [
+            {"account": "تسوية مخزنية", "amount": "{amount}", "side": "{adjustment_side}"},
+            {"account": "المخزون", "amount": "{amount}", "side": "{inventory_side}"}
+        ]
+    }
+}
+
+def generate_template_entry(operation_type, amount, cash_amount=None, credit_amount=None, expense_name=None, vat_rate=None, adjustment_side=None, inventory_side=None):
+    """
+    توليد قيد محاسبي متوازن باستخدام القوالب الجاهزة (دقة 100%).
+    
+    Parameters:
+    - operation_type: نوع العملية (مفتاح من ENTRY_TEMPLATES)
+    - amount: المبلغ الإجمالي
+    - cash_amount: الجزء النقدي (للعمليات المختلطة)
+    - credit_amount: الجزء الآجل (للعمليات المختلطة)
+    - expense_name: اسم المصروف (لعملية سداد مصروف)
+    - vat_rate: نسبة الضريبة (للعمليات شامل الضريبة)
+    - adjustment_side: اتجاه التسوية (debit/credit)
+    - inventory_side: اتجاه المخزون (debit/credit)
+    
+    Returns:
+    - entry_data: بيانات القيد المتوازن
+    - display_text: نص منسق للعرض
+    - confidence: 100 دائماً
+    - confidence_label: "موثوق"
+    - confidence_color: أخضر
+    """
+    template = ENTRY_TEMPLATES.get(operation_type)
+    if not template:
+        return None, f"❌ نوع العملية '{operation_type}' غير مدعوم", 0, "غير موثوق", "#EF4444"
+    
+    # بناء الأسطر مع استبدال المتغيرات
+    lines = []
+    for line in template["lines"]:
+        account = line["account"]
+        amount_str = line["amount"]
+        
+        # استبدال المتغيرات بالقيم الفعلية
+        if amount_str == "{amount}":
+            final_amount = amount
+        elif amount_str == "{cash}":
+            final_amount = cash_amount if cash_amount else amount / 2
+        elif amount_str == "{credit}":
+            final_amount = credit_amount if credit_amount else amount / 2
+        elif amount_str == "{expense_name}":
+            account = expense_name if expense_name else "مصروف"
+            final_amount = amount
+        elif amount_str == "{net}":
+            final_amount = amount / (1 + vat_rate) if vat_rate else amount
+        elif amount_str == "{vat}":
+            final_amount = amount - (amount / (1 + vat_rate)) if vat_rate else 0
+        elif amount_str == "{adjustment_side}":
+            final_amount = amount
+        elif amount_str == "{inventory_side}":
+            final_amount = amount
+        else:
+            final_amount = amount
+        
+        # تحديد الطرف (مدين/دائن) - خاص بالتسوية المخزنية
+        side = line["side"]
+        if side == "{adjustment_side}":
+            side = adjustment_side if adjustment_side else "debit"
+        elif side == "{inventory_side}":
+            side = inventory_side if inventory_side else "credit"
+        
+        lines.append({
+            "account": account,
+            "amount": round(final_amount, 2),
+            "side": side
+        })
+    
+    # بناء القيد المتوازن
+    entry = build_balanced_entry({"operation_type": operation_type, "lines": lines})
+    if not entry:
+        return None, "❌ فشل بناء القيد", 0, "غير موثوق", "#EF4444"
+    
+    # تنسيق العرض
+    display = format_entry_display(entry)
+    display += f"\n📊 نسبة الثقة: 100% (موثوق - قالب جاهز)"
+    
+    return entry, display, 100, "موثوق", "#10B981"
+
+def get_available_operations():
+    """ترجع قائمة بأنواع العمليات المتاحة"""
+    return list(ENTRY_TEMPLATES.keys())
+
+def get_operation_description(operation_type):
+    """ترجع وصف العملية"""
+    template = ENTRY_TEMPLATES.get(operation_type)
+    return template["description"] if template else ""
+
+def is_mixed_operation(operation_type):
+    """تتحقق مما إذا كانت العملية مختلطة (تحتاج نقداً وآجلاً)"""
+    return operation_type in ["بيع مختلط", "شراء مختلط"]
+
+def is_vat_operation(operation_type):
+    """تتحقق مما إذا كانت العملية تشمل ضريبة"""
+    return operation_type in ["بيع شامل الضريبة", "شراء شامل الضريبة"]
+
+def is_salary_operation(operation_type):
+    """تتحقق مما إذا كانت العملية متعلقة بالرواتب"""
+    return operation_type == "رواتب موظفين"
+
+def is_inventory_adjustment(operation_type):
+    """تتحقق مما إذا كانت العملية تسوية مخزنية"""
+    return operation_type == "تسوية مخزنية (جرد)"
