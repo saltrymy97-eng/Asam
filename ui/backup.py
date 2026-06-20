@@ -1,108 +1,182 @@
-# ui/backup.py - النسخ الاحتياطي (واجهة زجاجية + تحميل ZIP ورفع)
+# ui/backup.py - واجهة النسخ الاحتياطي الفاخرة (إصدار إنتاجي)
 import streamlit as st
 import pandas as pd
 import os
 import zipfile
 import io
 from services.backup_service import (
-    create_backup,
-    get_backup_list,
-    restore_backup,
-    get_backup_stats,
-    BACKUP_DIR
+    create_backup, get_backup_list, restore_backup, get_backup_stats,
+    delete_old_backups, start_scheduler, stop_scheduler,
+    get_all_tables, BACKUP_DIR, METADATA_DIR
 )
 
-# ========== ألوان التصميم ==========
-GLASS_BG = "rgba(255, 255, 255, 0.12)"
-GLASS_BORDER = "rgba(255, 255, 255, 0.25)"
-GLASS_SHADOW = "0 8px 32px 0 rgba(0,0,0,0.37)"
+# ========== ألوان التصميم الملكي ==========
+GOLD = "#D4AF37"
+GOLD_LIGHT = "#FCF6BA"
+GOLD_DARK = "#AA771C"
+BG_CARD = "rgba(20, 20, 10, 0.7)"
+BORDER_GOLD = "rgba(212, 175, 55, 0.2)"
 TEXT_PRIMARY = "#F8FAFC"
 TEXT_SECONDARY = "#CBD5E1"
-ACCENT_BLUE = "#3B82F6"
 ACCENT_GREEN = "#10B981"
+ACCENT_RED = "#EF4444"
+ACCENT_BLUE = "#3B82F6"
 ACCENT_ORANGE = "#F59E0B"
 ACCENT_PURPLE = "#8B5CF6"
-ACCENT_RED = "#EF4444"
+
+def glass_card(title, value, icon, color, sub_text=""):
+    """بطاقة زجاجية ذهبية"""
+    return f"""
+    <div style="
+        background: linear-gradient(145deg, rgba(20, 20, 10, 0.7), rgba(10, 10, 5, 0.85));
+        backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px);
+        border: 1px solid rgba(212, 175, 55, 0.2); border-top: 1px solid rgba(212, 175, 55, 0.35);
+        border-radius: 24px; padding: 1.5rem; text-align: center; box-shadow: 0 30px 60px rgba(0, 0, 0, 0.4), 0 0 15px rgba(212,175,55,0.05);
+        transition: all 0.5s ease; margin-bottom: 1rem;
+    ">
+        <div style="font-size:2.2rem; margin-bottom:0.3rem;">{icon}</div>
+        <div style="color:{TEXT_SECONDARY}; font-size:0.85rem; margin-bottom:4px;">{title}</div>
+        <div style="color:{color}; font-size:1.8rem; font-weight:800;">{value}</div>
+        <div style="color:{TEXT_SECONDARY}; font-size:0.75rem; margin-top:4px;">{sub_text}</div>
+    </div>
+    """
 
 def show():
     st.markdown(f"""
     <div style="margin-bottom: 2rem; text-align:right;">
-        <h1 style="color:{TEXT_PRIMARY}; font-size:2.8rem; margin:0; text-shadow:0 0 20px {ACCENT_BLUE};">💾 النسخ الاحتياطي</h1>
-        <p style="color:{TEXT_SECONDARY}; font-size:1.2rem;">حماية بيانات النظام من الضياع</p>
+        <h1 style="color:{GOLD}; font-size:2.8rem; margin:0; text-shadow:0 0 20px {GOLD};">💾 مركز النسخ الاحتياطي</h1>
+        <p style="color:{TEXT_SECONDARY}; font-size:1.2rem;">حماية مؤسسية متكاملة مع تشفير وجدولة وتتبع كامل</p>
     </div>
     """, unsafe_allow_html=True)
 
-    # ---------- بطاقات إحصائية ----------
     stats = get_backup_stats()
-    col1, col2, col3 = st.columns(3)
+
+    # ---------- تنبيه هام إذا تأخر النسخ ----------
+    if stats.get('alert'):
+        st.warning(f"⚠️ {stats.get('alert_msg')}")
+
+    # ---------- صف البطاقات الإحصائية ----------
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.markdown(f"""
-        <div style="background:{GLASS_BG}; backdrop-filter:blur(10px); border:1px solid {GLASS_BORDER}; border-radius:16px; padding:1.2rem; text-align:center; box-shadow:{GLASS_SHADOW};">
-            <div style="font-size:2rem; color:{ACCENT_BLUE};">📋</div>
-            <div style="color:{TEXT_SECONDARY}; font-size:0.9rem;">عدد النسخ</div>
-            <div style="color:{ACCENT_BLUE}; font-size:1.8rem; font-weight:800;">{stats['total']}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(glass_card("إجمالي النسخ", str(stats['total']), "📋", ACCENT_BLUE), unsafe_allow_html=True)
     with col2:
-        st.markdown(f"""
-        <div style="background:{GLASS_BG}; backdrop-filter:blur(10px); border:1px solid {GLASS_BORDER}; border-radius:16px; padding:1.2rem; text-align:center; box-shadow:{GLASS_SHADOW};">
-            <div style="font-size:2rem; color:{ACCENT_GREEN};">🕐</div>
-            <div style="color:{TEXT_SECONDARY}; font-size:0.9rem;">آخر نسخة</div>
-            <div style="color:{ACCENT_GREEN}; font-size:1.2rem; font-weight:800;">{stats['latest_time']}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(glass_card("آخر نسخة", stats['latest_time'], "🕐", ACCENT_GREEN), unsafe_allow_html=True)
     with col3:
-        st.markdown(f"""
-        <div style="background:{GLASS_BG}; backdrop-filter:blur(10px); border:1px solid {GLASS_BORDER}; border-radius:16px; padding:1.2rem; text-align:center; box-shadow:{GLASS_SHADOW};">
-            <div style="font-size:2rem; color:{ACCENT_ORANGE};">📦</div>
-            <div style="color:{TEXT_SECONDARY}; font-size:0.9rem;">حجم آخر نسخة</div>
-            <div style="color:{ACCENT_ORANGE}; font-size:1.8rem; font-weight:800;">{stats['latest_size']:.1f} KB</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(glass_card("حجم آخر نسخة", f"{stats['latest_size']:.1f} KB", "📦", ACCENT_ORANGE), unsafe_allow_html=True)
+    with col4:
+        st.markdown(glass_card("آخر مستخدم", stats.get('latest_user', 'غير معروف'), "👤", ACCENT_PURPLE), unsafe_allow_html=True)
 
     st.markdown("---")
 
-    # ---------- إنشاء نسخة احتياطية ----------
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.markdown(f"<h3 style='color:{TEXT_PRIMARY};'>إنشاء نسخة احتياطية جديدة</h3>", unsafe_allow_html=True)
-    with col2:
-        if st.button("💾 إنشاء نسخة الآن", type="primary", use_container_width=True):
-            filename, size = create_backup()
-            st.success(f"✅ تم إنشاء النسخة: {filename} ({size:.1f} KB)")
+    # ---------- إنشاء نسخة جديدة (إعدادات متقدمة) ----------
+    st.markdown(f"<h3 style='color:{GOLD}'>✨ إنشاء نسخة احتياطية جديدة</h3>", unsafe_allow_html=True)
+    
+    with st.expander("⚙️ إعدادات النسخ المتقدمة", expanded=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            backup_user = st.text_input("اسم المستخدم", value="مدير النظام", help="سيتم تسجيل هذا الاسم في سجل النسخة")
+            backup_type = st.selectbox("نوع النسخة", ["يدوي", "تلقائي", "قبل تحديث"])
+        with col2:
+            encrypt = st.checkbox("🔐 تشفير النسخة (AES-256)", value=False)
+            compress = st.checkbox("📦 ضغط النسخة (ZIP)", value=True)
+        
+        # اختيار جداول محددة (اختياري)
+        all_tables = get_all_tables()
+        selected_tables = st.multiselect(
+            "اختر جداول محددة للنسخ (اتركه فارغًا لنسخ الكل)",
+            options=all_tables,
+            default=[],
+            help="إذا تركت الحقل فارغًا، سيتم نسخ جميع الجداول."
+        )
+        notes = st.text_area("ملاحظات", placeholder="أي ملاحظات تود إضافتها لهذه النسخة...")
+
+        if st.button("🚀 إنشاء النسخة الآن", type="primary", use_container_width=True):
+            with st.spinner("جاري إنشاء النسخة..."):
+                try:
+                    filename, size = create_backup(
+                        user=backup_user,
+                        backup_type=backup_type,
+                        tables=selected_tables if selected_tables else None,
+                        encrypt=encrypt,
+                        compress=compress,
+                        notes=notes
+                    )
+                    st.success(f"✅ تم إنشاء النسخة بنجاح: {filename} ({size:.1f} KB)")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ فشل إنشاء النسخة: {e}")
+
+    # ---------- أدوات النظام (جدولة وحذف تلقائي) ----------
+    st.markdown("---")
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        if st.button("⏰ تشغيل النسخ التلقائي اليومي", use_container_width=True):
+            start_scheduler()
+            st.success("✅ تم تشغيل المجدول التلقائي")
+    with col_b:
+        if st.button("⏹️ إيقاف النسخ التلقائي", use_container_width=True):
+            stop_scheduler()
+            st.info("⏹️ تم إيقاف المجدول التلقائي")
+    with col_c:
+        if st.button("🗑️ حذف النسخ القديمة (أقدم من 30 يومًا)", use_container_width=True):
+            delete_old_backups()
+            st.success("✅ تم حذف النسخ القديمة")
             st.rerun()
 
     st.markdown("---")
 
     # ---------- سجل النسخ الاحتياطية ----------
-    st.markdown(f"<h3 style='color:{TEXT_PRIMARY};'>📋 سجل النسخ الاحتياطية</h3>", unsafe_allow_html=True)
+    st.markdown(f"<h3 style='color:{GOLD}'>📋 سجل النسخ الاحتياطية</h3>", unsafe_allow_html=True)
     backups = get_backup_list()
     if backups:
         df = pd.DataFrame(backups)
-        df = df.rename(columns={
+        # تنسيق العرض
+        df_display = df.rename(columns={
             "id": "رقم",
             "filename": "اسم الملف",
             "size_kb": "الحجم (KB)",
             "created_at": "تاريخ الإنشاء",
-            "type": "النوع"
+            "type": "النوع",
+            "user": "المستخدم",
+            "tables_count": "عدد الجداول",
+            "is_encrypted": "مشفر",
+            "is_compressed": "مضغوط",
+            "notes": "ملاحظات"
         })
-        st.dataframe(df[["رقم", "اسم الملف", "الحجم (KB)", "تاريخ الإنشاء", "النوع"]], use_container_width=True, hide_index=True)
+        st.dataframe(
+            df_display[["رقم", "اسم الملف", "تاريخ الإنشاء", "النوع", "المستخدم", "الحجم (KB)", "عدد الجداول", "مشفر", "مضغوط", "ملاحظات"]],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "مشفر": st.column_config.CheckboxColumn(),
+                "مضغوط": st.column_config.CheckboxColumn(),
+            }
+        )
 
-        # ---------- تحميل نسخة كـ ZIP (يعمل على جميع الأجهزة) ----------
+        # ---------- استعادة نسخة ----------
         st.markdown("---")
-        st.markdown(f"<h3 style='color:{TEXT_PRIMARY};'>📥 تحميل نسخة على الجهاز</h3>", unsafe_allow_html=True)
-        st.caption("يتم تحميل النسخة بصيغة ZIP لتجنب مشاكل التوافق مع الجوال.")
+        st.markdown(f"<h3 style='color:{ACCENT_RED}'>🔄 استعادة نسخة احتياطية</h3>", unsafe_allow_html=True)
+        selected_restore = st.selectbox("اختر نسخة للاستعادة", [b['filename'] for b in backups], key="restore_select")
         
-        backup_files = [b['filename'] for b in backups]
-        selected_download = st.selectbox("اختر نسخة للتحميل", backup_files, key="download_select")
+        if st.button("⚠️ استعادة هذه النسخة (سيتم استبدال قاعدة البيانات الحالية)", type="secondary"):
+            with st.spinner("جاري الاستعادة..."):
+                success, msg = restore_backup(selected_restore)
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+        # ---------- تحميل نسخة ----------
+        st.markdown("---")
+        st.markdown(f"<h3 style='color:{ACCENT_BLUE}'>📥 تحميل نسخة</h3>", unsafe_allow_html=True)
+        selected_download = st.selectbox("اختر نسخة للتحميل", [b['filename'] for b in backups], key="download_select")
         
         filepath = os.path.join(BACKUP_DIR, selected_download)
         if os.path.exists(filepath):
-            # ضغط الملف إلى ZIP
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
                 zf.write(filepath, selected_download)
-            
             st.download_button(
                 label=f"📥 تحميل {selected_download}",
                 data=zip_buffer.getvalue(),
@@ -111,65 +185,40 @@ def show():
                 key="download_btn"
             )
         else:
-            st.error("الملف غير موجود على القرص. ربما تم حذفه.")
+            st.error("الملف غير موجود على القرص.")
 
-        # ---------- رفع نسخة من الجهاز (يدعم .db و .zip) ----------
+        # ---------- رفع نسخة من الجهاز ----------
         st.markdown("---")
-        st.markdown(f"<h3 style='color:{TEXT_PRIMARY};'>📤 رفع نسخة من الجهاز</h3>", unsafe_allow_html=True)
-        st.caption("ارفع ملف قاعدة البيانات (.db) أو ملف ZIP مضغوط يحتوي على .db.")
-        
-        uploaded_file = st.file_uploader("اختر الملف", type=["db", "zip"], key="upload_backup")
-        if uploaded_file is not None:
-            # إذا كان الملف ZIP، نستخرج ملف .db منه
+        st.markdown(f"<h3 style='color:{ACCENT_ORANGE}'>📤 استيراد نسخة احتياطية</h3>", unsafe_allow_html=True)
+        uploaded_file = st.file_uploader("ارفع ملف قاعدة البيانات (.db أو .zip)", type=["db", "zip"], key="upload_backup")
+        if uploaded_file:
             if uploaded_file.name.endswith(".zip"):
                 with zipfile.ZipFile(uploaded_file) as zf:
-                    # نبحث عن أول ملف .db داخل الأرشيف
                     db_files = [f for f in zf.namelist() if f.endswith(".db")]
                     if not db_files:
-                        st.error("لم يتم العثور على ملف قاعدة بيانات (.db) داخل الأرشيف.")
+                        st.error("لم يتم العثور على ملف .db داخل الأرشيف.")
                     else:
-                        # استخراج أول ملف .db
                         extracted_name = db_files[0]
                         zf.extract(extracted_name, BACKUP_DIR)
-                        saved_path = os.path.join(BACKUP_DIR, extracted_name)
-                        st.success(f"✅ تم استخراج واستيراد: {extracted_name}")
-                        
-                        if st.button("🔄 استعادة النسخة المستوردة", key="restore_uploaded_zip"):
-                            success = restore_backup(extracted_name)
+                        st.success(f"✅ تم استيراد: {extracted_name}")
+                        if st.button("🔄 استعادة النسخة المستوردة", key="restore_zip"):
+                            success, msg = restore_backup(extracted_name)
                             if success:
-                                st.success("✅ تمت الاستعادة بنجاح!")
+                                st.success(msg)
                                 st.rerun()
                             else:
-                                st.error("❌ فشلت الاستعادة.")
+                                st.error(msg)
             else:
-                # ملف .db مباشر
                 save_path = os.path.join(BACKUP_DIR, uploaded_file.name)
                 with open(save_path, "wb") as f:
                     f.write(uploaded_file.getvalue())
                 st.success(f"✅ تم رفع النسخة: {uploaded_file.name}")
-                
-                if st.button("🔄 استعادة هذه النسخة الآن", key="restore_uploaded_db"):
-                    success = restore_backup(uploaded_file.name)
+                if st.button("🔄 استعادة النسخة المرفوعة", key="restore_db"):
+                    success, msg = restore_backup(uploaded_file.name)
                     if success:
-                        st.success("✅ تمت الاستعادة بنجاح!")
+                        st.success(msg)
                         st.rerun()
                     else:
-                        st.error("❌ فشلت الاستعادة.")
-
-        # ---------- استعادة نسخة من القائمة ----------
-        st.markdown("---")
-        st.markdown(f"<h3 style='color:{TEXT_PRIMARY};'>🔄 استعادة نسخة احتياطية</h3>", unsafe_allow_html=True)
-        
-        selected_backup = st.selectbox("اختر نسخة للاستعادة", backup_files, key="restore_select")
-        
-        if st.button("⚠️ استعادة هذه النسخة", type="secondary"):
-            st.warning("سيتم استبدال قاعدة البيانات الحالية. هل أنت متأكد؟")
-            if st.button("نعم، استعد النسخة", key="confirm_restore"):
-                success = restore_backup(selected_backup)
-                if success:
-                    st.success(f"✅ تم استعادة النسخة: {selected_backup} بنجاح")
-                    st.rerun()
-                else:
-                    st.error("فشل في استعادة النسخة")
+                        st.error(msg)
     else:
-        st.info("ℹ️ لا توجد نسخ احتياطية بعد")
+        st.info("ℹ️ لا توجد نسخ احتياطية بعد. قم بإنشاء أول نسخة الآن.")
