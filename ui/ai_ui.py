@@ -1,4 +1,4 @@
-# ui/ai_ui.py – واجهة المساعد الذكي المطورة 
+# ui/ai_ui.py – واجهة المساعد الذكي المطورة مع التسجيل الصوتي الفاخر
 import streamlit as st
 import pandas as pd
 import json
@@ -11,7 +11,7 @@ from services.ai_service import (
     analyze_cost_center_performance, compare_cost_centers,
     predict_cost_center_expenses, get_cost_center_budget_analysis,
     get_cost_centers_summary_for_ai,
-    generate_entry_safe  # 🆕 استيراد دالة القيد الآمن
+    generate_entry_safe
 )
 from services import cost_center_service as ccs
 
@@ -24,11 +24,134 @@ OR = "#F59E0B"
 RD = "#EF4444"
 PR = "#8B5CF6"
 CY = "#06B6D4"
+GOLD = "#D4AF37"
+GOLD_LIGHT = "#FCF6BA"
 
 AVAILABLE_MODELS = {
     "Llama 3.3 70B": "llama-3.3-70b-versatile",
     "Llama 3.1 8B (أسرع)": "llama-3.1-8b-instant",
 }
+
+# ========== 🎤 مكون التسجيل الصوتي الفاخر ==========
+VOICE_INPUT_HTML = """
+<div id="voice-container" style="display: flex; align-items: center; gap: 12px; margin: 10px 0;">
+    <button id="voice-btn" onclick="toggleRecording()" type="button" style="
+        background: linear-gradient(135deg, rgba(212,175,55,0.2), rgba(212,175,55,0.05));
+        border: 1px solid rgba(212,175,55,0.4);
+        border-radius: 50%;
+        width: 48px;
+        height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        box-shadow: 0 0 15px rgba(212,175,55,0.15);
+    " onmouseover="this.style.background='linear-gradient(135deg, #D4AF37, #AA771C)'; this.style.boxShadow='0 0 25px rgba(212,175,55,0.5)';" onmouseout="this.style.background='linear-gradient(135deg, rgba(212,175,55,0.2), rgba(212,175,55,0.05))'; this.style.boxShadow='0 0 15px rgba(212,175,55,0.15)';">
+        <span id="voice-icon" style="font-size: 1.5rem;">🎤</span>
+    </button>
+    <span id="voice-status" style="color: #CBD5E1; font-size: 0.85rem;">اضغط للتحدث</span>
+</div>
+<script>
+    let recognition = null;
+    let isRecording = false;
+    
+    function initRecognition() {
+        if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+            document.getElementById('voice-status').textContent = '⚠️ متصفحك لا يدعم التسجيل الصوتي';
+            document.getElementById('voice-btn').style.display = 'none';
+            return;
+        }
+        
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        recognition = new SpeechRecognition();
+        recognition.lang = 'ar-SA';
+        recognition.interimResults = false;
+        recognition.continuous = false;
+        
+        recognition.onresult = function(event) {
+            const text = event.results[0][0].transcript;
+            const targetId = document.getElementById('voice-btn').getAttribute('data-target');
+            
+            // البحث عن الحقل المستهدف بطرق مختلفة
+            let target = null;
+            
+            // البحث بالـ ID المباشر
+            if (targetId) {
+                target = document.querySelector(targetId);
+            }
+            
+            // إذا لم ينجح، نحاول إيجاد chat_input
+            if (!target && window.parent) {
+                const chatInput = window.parent.document.querySelector('[data-testid="stChatInput"]');
+                if (chatInput) {
+                    target = chatInput;
+                }
+            }
+            
+            if (target) {
+                // محاولة تعبئة الحقل
+                if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') {
+                    target.value = text;
+                    target.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+                // إذا كان chat_input، نبحث عن textarea بداخله
+                const textarea = target.querySelector('textarea');
+                if (textarea) {
+                    textarea.value = text;
+                    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+            }
+            
+            document.getElementById('voice-icon').textContent = '🎤';
+            document.getElementById('voice-status').textContent = 'تم التسجيل! اضغط للإرسال';
+            isRecording = false;
+        };
+        
+        recognition.onerror = function(event) {
+            document.getElementById('voice-icon').textContent = '🎤';
+            document.getElementById('voice-status').textContent = '❌ خطأ في التسجيل';
+            isRecording = false;
+        };
+        
+        recognition.onend = function() {
+            document.getElementById('voice-icon').textContent = '🎤';
+            if (isRecording) {
+                document.getElementById('voice-status').textContent = 'اضغط للتحدث';
+            }
+            isRecording = false;
+        };
+    }
+    
+    function toggleRecording() {
+        if (!recognition) {
+            initRecognition();
+        }
+        
+        if (isRecording) {
+            recognition.stop();
+            document.getElementById('voice-icon').textContent = '🎤';
+            document.getElementById('voice-status').textContent = 'اضغط للتحدث';
+            isRecording = false;
+        } else {
+            recognition.start();
+            document.getElementById('voice-icon').textContent = '🔴';
+            document.getElementById('voice-status').textContent = '🎙️ جاري الاستماع...';
+            isRecording = true;
+        }
+    }
+    
+    // تهيئة أولية
+    document.addEventListener('DOMContentLoaded', initRecognition);
+</script>
+"""
+
+def voice_button(target_id=""):
+    """عرض زر التسجيل الصوتي الذهبي"""
+    html = VOICE_INPUT_HTML
+    if target_id:
+        html = html.replace('id="voice-btn"', f'id="voice-btn" data-target="{target_id}"')
+    st.components.v1.html(html, height=80)
 
 def h1(title, color=PR):
     st.markdown(f"""<div style="text-align:right;margin-bottom:2rem;">
@@ -63,9 +186,11 @@ def show():
         "🎯 مراكز تكلفة"
     ])
 
+    # ====== تبويب 1: المساعد (تسجيل صوتي) ======
     with t1:
         h3("اسأل عن أي شيء في نظامك", BL)
-        q = st.chat_input("اكتب سؤالك هنا...")
+        voice_button("#ai-chat-input")
+        q = st.chat_input("اكتب سؤالك هنا...", key="ai-chat-input")
         if q:
             st.chat_message("user").write(q)
             data = get_comprehensive_data()
@@ -80,6 +205,7 @@ def show():
             save_chat_history(st.session_state.active_session, "user", q, model, "مساعد")
             save_chat_history(st.session_state.active_session, "assistant", ans, model, "مساعد")
 
+    # ====== تبويب 2: المحلل (بدون تسجيل صوتي) ======
     with t2:
         h3("تحليل مالي شامل وتوصيات", GR)
         if st.button("📈 تحليل شامل"):
@@ -106,6 +232,7 @@ def show():
                 ans = query_groq(prompt, "قدم تحليلاً شاملاً", model=model, max_tokens=1500)
             glass(ans)
 
+    # ====== تبويب 3: المخزون (بدون تسجيل صوتي) ======
     with t3:
         h3("تحليل المخزون وتوقع النفاد", OR)
         low, allp = get_inventory_data()
@@ -127,8 +254,10 @@ def show():
             st.warning("⚠️ منتجات تحت الحد الأدنى:")
             st.dataframe(pd.DataFrame(low))
 
+    # ====== تبويب 4: الموظفين (تسجيل صوتي) ======
     with t4:
         h3("استفسارات الموظفين", PR)
+        voice_button("#ename")
         nm = st.text_input("اسمك:", key="ename")
         eq = st.text_input("سؤالك:", key="eq")
         if st.button("💬 اسأل") and nm and eq:
@@ -143,18 +272,18 @@ def show():
             else:
                 st.error("غير موجود")
 
+    # ====== تبويب 5: القيود (تسجيل صوتي) ======
     with t5:
         h3("توليد قيود محاسبية ذكية", RD)
+        voice_button("#etxt")
         txt = st.text_area("اكتب العملية:", key="etxt")
         if st.button("📝 توليد القيد") and txt:
             with st.spinner("📝 جاري توليد قيد متوازن..."):
-                # 🆕 استخدام المحرك الآلي الجديد
                 entry, display, confidence, confidence_label, confidence_color = generate_entry_safe(txt, model=model)
             
             if entry:
                 st.code(display)
                 
-                # 🆕 عرض مؤشر الثقة
                 st.markdown(f"""
                 <div style="background:rgba(255,255,255,0.05); border:1px solid {confidence_color}; border-radius:12px; padding:12px 16px; margin-top:12px; display:flex; align-items:center; gap:12px;">
                     <div style="background:{confidence_color}; width:12px; height:12px; border-radius:50%; box-shadow:0 0 10px {confidence_color};"></div>
@@ -168,6 +297,7 @@ def show():
             else:
                 st.error(display)
 
+    # ====== تبويب 6: الاحتيال (بدون تسجيل صوتي) ======
     with t6:
         h3("تدقيق وكشف الاحتيال", RD)
         if st.button("🕵️ تدقيق شامل"):
@@ -187,6 +317,7 @@ def show():
             else:
                 st.info("لا قيود")
 
+    # ====== تبويب 7: التنبؤات (بدون تسجيل صوتي) ======
     with t7:
         h3("🔮 تنبؤات وتخطيط مالي", CY)
         period = st.selectbox("فترة التخطيط", ["الشهر القادم", "الربع القادم", "السنة القادمة"], key="fp")
@@ -207,6 +338,7 @@ def show():
                 ans = query_groq(prompt, "خطط", model=model, max_tokens=1500)
             glass(ans)
 
+    # ====== تبويب 8: التحليل الشامل (بدون تسجيل صوتي) ======
     with t8:
         h3("📈 تحليل مالي وتشغيلي متقدم", PR)
         st.caption("تقرير احترافي يولده الذكاء الاصطناعي بناءً على جميع بيانات النظام")
@@ -278,6 +410,7 @@ def show():
                 ans = query_groq(prompt, "قدم تحليلاً شاملاً", model=model, max_tokens=1500)
             glass(ans)
 
+    # ====== تبويب 9: مراكز التكلفة (بدون تسجيل صوتي) ======
     with t9:
         h3("🎯 تحليل مراكز التكلفة بالذكاء الاصطناعي", CY)
         
