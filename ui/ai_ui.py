@@ -180,14 +180,16 @@ def show():
             st.warning("⚠️ منتجات تحت الحد الأدنى:")
             st.dataframe(pd.DataFrame(low))
 
-    # ====== تبويب 4: الموظفين (WhatsApp Style) ======
+    # ====== تبويب 4: الموظفين (WhatsApp Style) - تم الإصلاح ======
     with t4:
         h3("استفسارات الموظفين", PR)
         mic_col, name_col = st.columns([1, 5])
         with mic_col:
             voice_name = audio_input_widget("employee_name_audio")
+            if voice_name:
+                st.session_state["ename"] = voice_name
         with name_col:
-            nm = st.text_input("اسمك:", key="ename", value=voice_name)
+            nm = st.text_input("اسمك:", key="ename")
         eq = st.text_input("سؤالك:", key="eq")
         if st.button("💬 اسأل") and nm and eq:
             emp, sal = get_employee_info(nm)
@@ -201,14 +203,16 @@ def show():
             else:
                 st.error("غير موجود")
 
-    # ====== تبويب 5: القيود (WhatsApp Style) ======
+    # ====== تبويب 5: القيود (WhatsApp Style) - تم الإصلاح ======
     with t5:
         h3("توليد قيود محاسبية ذكية", RD)
         mic_col, entry_col = st.columns([1, 5])
         with mic_col:
             voice_entry = audio_input_widget("entry_audio")
+            if voice_entry:
+                st.session_state["etxt"] = voice_entry
         with entry_col:
-            txt = st.text_area("اكتب العملية:", key="etxt", value=voice_entry, height=100)
+            txt = st.text_area("اكتب العملية:", key="etxt", height=100)
         if st.button("📝 توليد القيد") and txt:
             with st.spinner("📝 جاري توليد قيد متوازن..."):
                 entry, display, confidence, confidence_label, confidence_color = generate_entry_safe(txt, model=model)
