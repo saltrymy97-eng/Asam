@@ -1,6 +1,6 @@
 # ui/auth_ui.py
 import streamlit as st
-from database import init_db, get_connection
+from database import init_db
 from services.auth_service import (
     verify_user,
     change_password,
@@ -194,64 +194,13 @@ def login_form():
                     st.rerun()
             
             if login_btn:
-                # --- 🆕 تشخيص عملية تسجيل الدخول ---
-                st.write("---")
-                st.write("### 🩺 تشخيص عملية تسجيل الدخول")
-                
-                # 1. عرض المدخلات
-                st.write(f"👤 **اسم المستخدم المدخل:** `{username}`")
-                st.write(f"🔒 **طول كلمة المرور المدخلة:** `{len(password) if password else 0}` حرف")
-                
-                # 2. التحقق من وجود المستخدم في قاعدة البيانات
-                try:
-                    conn = get_connection()
-                    conn.row_factory = __import__('sqlite3').Row
-                    c = conn.cursor()
-                    c.execute("SELECT username, password FROM users WHERE username=?", (username,))
-                    user_row = c.fetchone()
-                    conn.close()
-                    
-                    if user_row:
-                        st.write(f"✅ **المستخدم موجود:** `{user_row['username']}`")
-                        stored_hash = user_row['password']
-                        st.write(f"🔑 **البصمة المخزنة تبدأ بـ:** `{stored_hash[:15]}...`")
-                        
-                        # 3. التحقق من تطابق كلمة المرور يدويًا
-                        import bcrypt
-                        # تحويل كلمة المرور المدخلة إلى bytes
-                        input_password_bytes = password.encode('utf-8')
-                        
-                        # تحويل البصمة المخزنة إلى bytes (إذا كانت str)
-                        if isinstance(stored_hash, str):
-                            stored_hash_bytes = stored_hash.encode('utf-8')
-                        else:
-                            stored_hash_bytes = stored_hash
-                        
-                        # فحص التوافق
-                        try:
-                            is_match = bcrypt.checkpw(input_password_bytes, stored_hash_bytes)
-                            if is_match:
-                                st.success(f"✅ **كلمة المرور صحيحة!** سيتم تسجيل الدخول.")
-                            else:
-                                st.error(f"❌ **كلمة المرور غير متطابقة مع البصمة المخزنة!**")
-                        except Exception as bcrypt_error:
-                            st.error(f"❌ **خطأ في bcrypt:** `{bcrypt_error}`")
-                    else:
-                        st.error(f"❌ **المستخدم `{username}` غير موجود في قاعدة البيانات!**")
-                except Exception as db_error:
-                    st.error(f"❌ **خطأ في قراءة قاعدة البيانات:** `{db_error}`")
-                
-                # 4. استدعاء verify_user الأصلي للمقارنة
-                st.write("---")
-                st.write("**🔍 نتيجة `verify_user` الأصلية:**")
                 user = verify_user(username, password)
                 if user:
-                    st.write("✅ **`verify_user` نجح!**")
                     st.session_state.logged_in = True
                     st.session_state.user = user
                     st.rerun()
                 else:
-                    st.error("❌ **`verify_user` فشل.**")
+                    st.error("❌ فشلت المصادقة المباشرة. يرجى مراجعة البيانات المدخلة.")
     
     st.markdown(f"""
     <div style="text-align:center; margin-top: 5rem; margin-bottom: 1rem;">
@@ -283,68 +232,20 @@ def password_change_form():
             col1, col2 = st.columns([1.6, 1])
             with col1:
                 if st.button("💾 حفظ البيانات وتحديث", use_container_width=True, type="primary"):
-                    # --- 🆕 قسم التشخيص ---
-                    st.write("---")
-                    st.write("### 🩺 تشخيص عملية تغيير كلمة المرور")
-                    
-                    # 1. عرض المدخلات (بدون كشف كلمة المرور)
-                    st.write(f"👤 **اسم المستخدم:** `{username}`")
-                    st.write(f"🔓 **طول كلمة المرور القديمة:** `{len(old_password) if old_password else 0}` حرف")
-                    st.write(f"✨ **طول كلمة المرور الجديدة:** `{len(new_password) if new_password else 0}` حرف")
-                    st.write(f"🔑 **التطابق:** {'✅ متطابقة' if new_password == confirm_password else '❌ غير متطابقة'}")
-                    
-                    # 2. التحقق من وجود المستخدم في قاعدة البيانات
-                    try:
-                        conn = get_connection()
-                        conn.row_factory = __import__('sqlite3').Row
-                        c = conn.cursor()
-                        c.execute("SELECT username, password FROM users WHERE username=?", (username,))
-                        user_row = c.fetchone()
-                        conn.close()
-                        
-                        if user_row:
-                            st.write(f"✅ **المستخدم موجود في قاعدة البيانات:** `{user_row['username']}`")
-                            st.write(f"🔑 **كلمة المرور المخزنة تبدأ بـ:** `{user_row['password'][:10]}...`")
-                        else:
-                            st.error(f"❌ **المستخدم `{username}` غير موجود في قاعدة البيانات!**")
-                    except Exception as db_error:
-                        st.error(f"❌ **خطأ في قراءة قاعدة البيانات:** `{db_error}`")
-                    
-                    # 3. استدعاء دالة التغيير
-                    if new_password == confirm_password and len(new_password) >= 4:
-                        st.write("⏳ **جاري استدعاء `change_password`...**")
-                        success, message = change_password(username, old_password, new_password)
-                        
-                        if success:
-                            # التحقق من أن التغيير تم فعلاً
-                            try:
-                                conn2 = get_connection()
-                                conn2.row_factory = __import__('sqlite3').Row
-                                c2 = conn2.cursor()
-                                c2.execute("SELECT password FROM users WHERE username=?", (username,))
-                                updated_row = c2.fetchone()
-                                conn2.close()
-                                
-                                if updated_row:
-                                    st.write(f"🔑 **كلمة المرور الجديدة المخزنة تبدأ بـ:** `{updated_row['password'][:10]}...`")
-                            except:
-                                pass
-                            
-                            # 🆕 إظهار مربع نجاح مع زر للعودة (بدون st.rerun فوري)
-                            st.success(f"✨ {message}")
-                            if st.button("🔙 العودة إلى صفحة الدخول", key="goto_login_after_change"):
-                                st.session_state.show_password_change = False
-                                st.rerun()
-                        else:
-                            st.error(f"❌ {message}")
-                    elif not old_password or not new_password:
+                    if not username or not old_password or not new_password:
                         st.warning("⚠️ جميع الحقول مطلوبة.")
                     elif new_password != confirm_password:
                         st.error("❌ عدم تطابق في تأكيد رمز المرور الجديد.")
                     elif len(new_password) < 4:
                         st.error("⚠️ رمز المرور ضعيف (يجب ألا يقل عن 4 خانات).")
                     else:
-                        st.error("❌ حالة غير معروفة.")
+                        success, message = change_password(username, old_password, new_password)
+                        if success:
+                            st.success(f"✨ {message}")
+                            st.session_state.show_password_change = False
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {message}")
             with col2:
                 if st.button("↩️ إلغاء العملية", use_container_width=True):
                     st.session_state.show_password_change = False
