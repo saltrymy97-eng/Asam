@@ -2,16 +2,11 @@ import os
 import sys
 import time
 import socket
-import threading
+import multiprocessing
 import asyncio
 import webview
 import traceback
 from streamlit.web import cli as stcli
-
-# 1. الحل الجذري لمشكلة الشاشة المخفية:
-# نوجه أي محاولة طباعة من Streamlit إلى "العدم" حتى لا ينهار السيرفر
-sys.stdout = open(os.devnull, "w")
-sys.stderr = open(os.devnull, "w")
 
 def find_free_port():
     """البحث عن منفذ شبكة فارغ"""
@@ -34,10 +29,20 @@ def get_base_path():
         return sys._MEIPASS
     return os.path.dirname(os.path.abspath(__file__))
 
-def run_streamlit(port, app_path):
-    """تشغيل السيرفر في الخلفية بأمان"""
+def resource_path(relative_path):
+    """تحديد مسار الأيقونة أو الملفات الخارجية بدقة سواء في البايثون أو الـ EXE"""
     try:
-        # 2. حل مشكلة شبكات ويندوز للعمليات الخلفية
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+def run_streamlit(port, app_path):
+    """تشغيل السيرفر في عملية (Process) منفصلة تماماً"""
+    sys.stdout = open(os.devnull, "w")
+    sys.stderr = open(os.devnull, "w")
+    
+    try:
         if sys.platform == 'win32':
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         
@@ -56,10 +61,9 @@ def run_streamlit(port, app_path):
         stcli.main()
         
     except Exception as e:
-        # ميزة الصندوق الأسود: تسجيل أي خطأ في ملف نصي بجانب الـ EXE لمعرفته
         exe_dir = os.path.dirname(os.path.abspath(sys.executable))
         with open(os.path.join(exe_dir, "server_error_log.txt"), "w", encoding="utf-8") as f:
-            f.write("حدث خطأ أثناء تشغيل سيرفر Streamlit:\n")
+            f.write("خطأ في عملية Streamlit المستقلة:\n")
             f.write(str(e) + "\n")
             f.write(traceback.format_exc())
     except SystemExit:
@@ -73,11 +77,9 @@ def main():
     port = find_free_port()
     url = f"http://{host}:{port}"
 
-    # تشغيل السيرفر في Thread خلفي
-    t = threading.Thread(target=run_streamlit, args=(port, app_py_path), daemon=True)
-    t.start()
+    p = multiprocessing.Process(target=run_streamlit, args=(port, app_py_path), daemon=True)
+    p.start()
 
-    # 3. زيادة المهلة الزمنية إلى 40 ثانية لإعطاء EXE وقتاً كافياً لفك الضغط
     max_retries = 80
     retries = 0
     while not is_server_running(host, port) and retries < max_retries:
@@ -85,22 +87,31 @@ def main():
         retries += 1
 
     if retries >= max_retries:
-        # إذا انتهى الوقت ولم يعمل، نسجل ذلك في ملف الأخطاء
         exe_dir = os.path.dirname(os.path.abspath(sys.executable))
         with open(os.path.join(exe_dir, "server_error_log.txt"), "a", encoding="utf-8") as f:
             f.write(f"\nانتهى الوقت (Timeout): السيرفر لم يستجب بعد {max_retries/2} ثانية.")
 
-    # فتح نافذة التطبيق
     window_title = "ERP Governance System - Asam"
-    webview.create_window(
-        title=window_title,
-        url=url,
-        width=1366,
-        height=768,
-        min_size=(1024, 600),
-        resizable=True
-    )
+    
+    # تحديد مسار الأيقونة (تأكد من وضع ملف باسم icon.ico بجانب الكود)
+    icon_path = resource_path("icon.ico")
+
+    # تمرير الأيقونة إلى نافذة التطبيق
+    window_args = {
+        "title": window_title,
+        "url": url,
+        "width": 1366,
+        "height": 768,
+        "min_size": (1024, 600),
+        "resizable": True
+    }
+    
+    if os.path.exists(icon_path):
+        window_args["icon"] = icon_path
+
+    webview.create_window(**window_args)
     webview.start(private_mode=False)
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     main()
