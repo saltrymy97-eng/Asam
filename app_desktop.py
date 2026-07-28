@@ -8,14 +8,14 @@ import webview
 from streamlit.web import cli as stcli
 
 def find_free_port():
-    """البحث عن منفذ فارغ"""
+    """البحث عن منفذ فارغ لضمان عدم تداخل الشبكات"""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(('127.0.0.1', 0))
         s.listen(1)
         return s.getsockname()[1]
 
 def is_server_running(host, port):
-    """التحقق من اشتغال السيرفر"""
+    """التحقق من جاهزية السيرفر"""
     try:
         with socket.create_connection((host, port), timeout=0.5):
             return True
@@ -23,16 +23,14 @@ def is_server_running(host, port):
         return False
 
 def get_base_path():
-    """تحديد المسار الصحيح للملفات المجمعة"""
+    """السر البرمجي: توجيه المسار إلى المجلد المؤقت الآمن الذي ينشئه الـ EXE"""
     if getattr(sys, 'frozen', False):
         return sys._MEIPASS
     return os.path.dirname(os.path.abspath(__file__))
 
 def run_streamlit(port, app_path):
-    """تشغيل سيرفر Streamlit مباشرة في Thread منفصل"""
-    # تهيئة حلقة الأحداث (Event Loop) الضرورية لعمل السيرفر داخل Thread منفصل
+    """تشغيل سيرفر Streamlit داخلياً"""
     asyncio.set_event_loop(asyncio.new_event_loop())
-    
     sys.argv = [
         "streamlit",
         "run",
@@ -43,25 +41,26 @@ def run_streamlit(port, app_path):
         "--browser.gatherUsageStats=false",
         "--global.developmentMode=false"
     ]
-    stcli.main()
+    try:
+        stcli.main()
+    except SystemExit:
+        pass  # تجاهل أمر الإغلاق التلقائي لمنع انهيار البرنامج
 
 def main():
     base_path = get_base_path()
     
-    # البحث عن ملف app.py
+    # تحديد مسار app.py داخل المجلد المؤقت
     app_py_path = os.path.join(base_path, "app.py")
-    if not os.path.exists(app_py_path):
-        app_py_path = os.path.join(os.path.dirname(sys.executable), "app.py")
 
     host = "127.0.0.1"
     port = find_free_port()
     url = f"http://{host}:{port}"
 
-    # تشغيل سيرفر Streamlit في مسار خلفي (Thread)
+    # تشغيل السيرفر في الخلفية
     t = threading.Thread(target=run_streamlit, args=(port, app_py_path), daemon=True)
     t.start()
 
-    # انتظار جاهزية السيرفر (حد أقصى 15 ثانية)
+    # انتظار جاهزية السيرفر
     max_retries = 30
     retries = 0
     while not is_server_running(host, port) and retries < max_retries:
@@ -72,7 +71,7 @@ def main():
         print("فشل تشغيل السيرفر.")
         return
 
-    # فتح نافذة Desktop
+    # فتح نافذة التطبيق
     window_title = "نظام حوكمة ERP - Asam"
     webview.create_window(
         title=window_title,
