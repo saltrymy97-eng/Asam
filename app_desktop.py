@@ -6,31 +6,33 @@ import subprocess
 import webview
 
 def find_free_port():
-    """البحث عن منفذ (Port) فارغ لتشغيل سيرفر Streamlit دون تضارب"""
+    """البحث عن منفذ (Port) فارغ"""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(('127.0.0.1', 0))
         s.listen(1)
         return s.getsockname()[1]
 
 def is_server_running(host, port):
-    """التحقق التلقائي المستمر من جاهزية السيرفر للاستجابة"""
+    """التحقق من جاهزية السيرفر"""
     try:
         with socket.create_connection((host, port), timeout=0.5):
             return True
-    except (SocketError, OverflowError, OSError):
+    except (socket.error, TimeoutError, OSError):
         return False
 
 def get_base_path():
-    """تحديد المسار الرئيسي للمشروع سواء كان كوداً مصدرياً أو ملف EXE مجمعاً"""
+    """تحديد المسار الصحيح سواء أثناء التطوير أو داخل الـ EXE"""
     if getattr(sys, 'frozen', False):
         return sys._MEIPASS
     return os.path.dirname(os.path.abspath(__file__))
 
 def start_streamlit_process(port, base_path):
-    """تشغيل سيرفر Streamlit في الخلفية بأعلى درجات الأمان والعزل"""
+    """تشغيل سيرفر Streamlit"""
+    # البحث عن app.py سواء في المجلد المترجم أو بجانبه
     app_py_path = os.path.join(base_path, "app.py")
-    
-    # تحضير أمر التشغيل للوضع الصامت (Headless)
+    if not os.path.exists(app_py_path):
+        app_py_path = os.path.join(os.path.dirname(sys.executable), "app.py")
+
     cmd = [
         sys.executable,
         "-m", "streamlit", "run",
@@ -42,7 +44,6 @@ def start_streamlit_process(port, base_path):
         "--global.developmentMode=false"
     ]
 
-    # إخفاء شاشة الأوامر السوداء عند التشغيل على الويندوز
     creation_flags = 0
     if sys.platform == "win32":
         creation_flags = subprocess.CREATE_NO_WINDOW
@@ -62,36 +63,36 @@ def main():
     port = find_free_port()
     url = f"http://{host}:{port}"
 
-    # 1. تشغيل المحرك المالي في الخلفية
     streamlit_process = start_streamlit_process(port, base_path)
 
-    # 2. الانتظار الذكي المعتمد على الاستجابة الحقيقية وليس الوقت الثابت
-    max_retries = 40
+    # حد أقصى للانتظار 15 ثانية فقط لتفادي تعليق الجهاز
+    max_retries = 30
     retries = 0
     while not is_server_running(host, port) and retries < max_retries:
-        time.sleep(0.25)
+        time.sleep(0.5)
         retries += 1
 
-    # 3. تكوين نافذة تطبيق الويندوز (Native Window)
+    # إذا لم يشتغل السيرفر، يتم إغلاق العملية فوراً ومسح الذاكرة
+    if retries >= max_retries:
+        if streamlit_process:
+            streamlit_process.kill()
+        print("فشل تشغيل السيرفر.")
+        return
+
     window_title = "نظام حوكمة ERP - Asam"
     
-    # إنشاء النافذة مع تحديد الحجم الأدنى والخصائص المتقدمة
     window = webview.create_window(
         title=window_title,
         url=url,
         width=1366,
         height=768,
         min_size=(1024, 600),
-        resizable=True,
-        confirm_close=True,  # تأكيد الإغلاق لمنع فقدان البيانات غير المحفوظة
-        text_select=True
+        resizable=True
     )
 
     try:
-        # 4. بدء تشغيل النافذة المباشرة
         webview.start(private_mode=False)
     finally:
-        # 5. تنظيف وتنظيف شامل عند الإغلاق لمنع بقاء أي عملية في الخلفية
         if streamlit_process and streamlit_process.poll() is None:
             streamlit_process.terminate()
             try:
