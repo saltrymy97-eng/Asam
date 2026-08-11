@@ -1,4 +1,4 @@
-# services/purchases_service.py – منطق أعمال المشتريات المُحسَّن (إصدار احترافي - معدل)
+# services/purchases_service.py – منطق أعمال المشتريات المُحسَّن (إصدار احترافي - حسابات وظيفية)
 import sqlite3
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
@@ -7,6 +7,7 @@ from services.audit_service import log_action
 from services.vat_service import get_vat_rate
 from services.currency_service import get_exchange_rate, get_base_currency
 from services.fifo_service import add_batch
+from services.chart_service import get_functional_account
 
 
 # ---------- دوال مساعدة ----------
@@ -193,34 +194,40 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
             if not success:
                 raise Exception(f"فشل إضافة دفعة FIFO للمنتج {item['product_id']}: {error}")
 
-        # 6. إنشاء القيد المحاسبي (قبل commit) - استخدام حساب الموردون الجامع (211)
+        # 6. إنشاء القيد المحاسبي (قبل commit) - باستخدام الحسابات الوظيفية
         from services.accounting_service import save_journal_entry
+
+        # ✅ استخدام الحسابات الوظيفية بدلاً من الأكواد الثابتة
+        inventory_account = get_functional_account("inventory")
+        suppliers_account = get_functional_account("suppliers")
+        vat_account = get_functional_account("vat_receivable")
 
         lines = [
             {
-                "account": "52",                 # المشتريات (مدين)
+                "account": inventory_account,      # المخزون (مدين)
                 "debit": float(subtotal_local),
                 "credit": 0,
-                "currency_code": currency_code,
-                "exchange_rate": float(exchange_rate)
-            },
-            {
-                "account": "211",                # حساب الموردون (الخصوم)
-                "debit": 0,
-                "credit": float(total_local),
                 "currency_code": currency_code,
                 "exchange_rate": float(exchange_rate)
             }
         ]
 
         if float(vat_amount_local) > 0:
-            lines.insert(1, {
-                "account": "213",                # ضريبة القيمة المضافة (مدين)
+            lines.append({
+                "account": vat_account,            # ضريبة القيمة المضافة المدخلة (مدين)
                 "debit": float(vat_amount_local),
                 "credit": 0,
                 "currency_code": currency_code,
                 "exchange_rate": float(exchange_rate)
             })
+
+        lines.append({
+            "account": suppliers_account,          # الموردون (دائن)
+            "debit": 0,
+            "credit": float(total_local),
+            "currency_code": currency_code,
+            "exchange_rate": float(exchange_rate)
+        })
 
         entry_id, entry_error = save_journal_entry(
             description=f"فاتورة مشتريات #{invoice_id} - {supplier_name}",
