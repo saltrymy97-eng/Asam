@@ -1,9 +1,10 @@
-# services/returns_service.py – منطق أعمال المرتجعات (إصدار تجاري: حماية معززة)
+# services/returns_service.py – منطق أعمال المرتجعات (إصدار تجاري: حماية معززة - حسابات وظيفية)
 import sqlite3
 from collections import defaultdict
 from datetime import date
 from database import get_connection
 from services.audit_service import log_action
+from services.chart_service import get_functional_account
 from services.fifo_service import (
     return_fifo_to_original_batch,
     remove_last_batch,
@@ -107,7 +108,7 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
     - تجميع الكميات وفحصها بدقة
     - تحديث المخزون
     - FIFO دقيق
-    - القيد المحاسبي قبل commit
+    - القيد المحاسبي قبل commit باستخدام الحسابات الوظيفية
     """
     add_reason_column()
     add_reference_column()
@@ -260,30 +261,41 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
                     raise Exception(f"فشل خصم FIFO: {err}")
                 total_fifo_cost += cost
         
-        # 7. إنشاء القيد المحاسبي (قبل commit) - استخدام الأكواد الموحدة
+        # 7. إنشاء القيد المحاسبي (قبل commit) - ✅ استخدام الحسابات الوظيفية
         from services.accounting_service import save_journal_entry
         
         if invoice_type == "sale":
+            # جلب الحسابات الوظيفية لمرتجع المبيعات
+            acc_sales_return = get_functional_account("sales_return")
+            acc_vat_payable = get_functional_account("vat_payable")
+            acc_receivables = get_functional_account("receivables")
+            acc_inventory = get_functional_account("inventory")
+            acc_cogs = get_functional_account("cogs")
+
             lines = [
-                {"account": "42", "debit": subtotal_return, "credit": 0,
+                {"account": acc_sales_return, "debit": subtotal_return, "credit": 0,
                  "currency_code": currency_code, "exchange_rate": exchange_rate},
-                {"account": "213", "debit": vat_amount, "credit": 0,
+                {"account": acc_vat_payable, "debit": vat_amount, "credit": 0,
                  "currency_code": currency_code, "exchange_rate": exchange_rate},
-                {"account": "113", "debit": 0, "credit": total_return,
+                {"account": acc_receivables, "debit": 0, "credit": total_return,
                  "currency_code": currency_code, "exchange_rate": exchange_rate},
-                {"account": "114", "debit": total_fifo_cost, "credit": 0,
+                {"account": acc_inventory, "debit": total_fifo_cost, "credit": 0,
                  "currency_code": currency_code, "exchange_rate": exchange_rate},
-                {"account": "51", "debit": 0, "credit": total_fifo_cost,
+                {"account": acc_cogs, "debit": 0, "credit": total_fifo_cost,
                  "currency_code": currency_code, "exchange_rate": exchange_rate}
             ]
         else:
-            # مرتجع مشتريات بدون سطر المخزون
+            # جلب الحسابات الوظيفية لمرتجع المشتريات
+            acc_payables = get_functional_account("suppliers")
+            acc_purchase_return = get_functional_account("purchase_return")
+            acc_vat_payable = get_functional_account("vat_payable")
+
             lines = [
-                {"account": "211", "debit": total_return, "credit": 0,
+                {"account": acc_payables, "debit": total_return, "credit": 0,
                  "currency_code": currency_code, "exchange_rate": exchange_rate},
-                {"account": "53", "debit": 0, "credit": subtotal_return,
+                {"account": acc_purchase_return, "debit": 0, "credit": subtotal_return,
                  "currency_code": currency_code, "exchange_rate": exchange_rate},
-                {"account": "213", "debit": 0, "credit": vat_amount,
+                {"account": acc_vat_payable, "debit": 0, "credit": vat_amount,
                  "currency_code": currency_code, "exchange_rate": exchange_rate}
             ]
         
