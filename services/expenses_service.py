@@ -1,9 +1,10 @@
-# services/expenses_service.py – وحدة المصروفات التشغيلية (متكاملة محاسبياً)
+# services/expenses_service.py – وحدة المصروفات التشغيلية (متكاملة محاسبياً - حسابات وظيفية)
 import sqlite3
 from datetime import date
 from database import get_connection
 from services.audit_service import log_action
 from services.accounting_service import save_journal_entry
+from services.chart_service import get_functional_account
 
 def create_expenses_table():
     """إنشاء جدول المصروفات إذا لم يكن موجوداً"""
@@ -29,16 +30,16 @@ def create_expenses_table():
     conn.close()
 
 def get_expense_categories():
-    """فئات المصروفات القياسية (مع ربطها بأكواد الحسابات)"""
+    """فئات المصروفات القياسية"""
     return [
-        {"code": "إيجار", "account": "541"},
-        {"code": "كهرباء", "account": "542"},
-        {"code": "ماء", "account": "546"},
-        {"code": "رواتب", "account": "544"},
-        {"code": "صيانة", "account": "543"},
-        {"code": "إعلانات", "account": "547"},
-        {"code": "اتصالات", "account": "546"},
-        {"code": "أخرى", "account": "546"}
+        {"code": "إيجار", "label": "إيجار"},
+        {"code": "كهرباء", "label": "كهرباء"},
+        {"code": "ماء", "label": "ماء"},
+        {"code": "رواتب", "label": "رواتب"},
+        {"code": "صيانة", "label": "صيانة"},
+        {"code": "إعلانات", "label": "إعلانات"},
+        {"code": "اتصالات", "label": "اتصالات"},
+        {"code": "أخرى", "label": "أخرى"}
     ]
 
 def get_cash_accounts():
@@ -87,18 +88,12 @@ def create_expense(expense_date, category, amount, account_code, payment_method,
               party_type, party_id, invoice_ref, notes, created_by))
         expense_id = cur.lastrowid
         
-        # 2. تحديد أكواد الحسابات
-        # استخدام كود الحساب الموحد للمصروف
-        expense_account = "546"  # مصروفات إدارية (افتراضي)
-        # محاولة تحويل اسم الفئة إلى كود
-        for cat in get_expense_categories():
-            if cat["code"] == category:
-                expense_account = cat["account"]
-                break
+        # 2. ✅ استخدام الحسابات الوظيفية
+        expense_account = get_functional_account("expense")
         
         # حساب الدائن
         if payment_method == 'credit' and party_type == 'supplier' and party_id:
-            credit_account = "211"  # الموردون
+            credit_account = get_functional_account("suppliers")
         else:
             credit_account = account_code  # النقدية (كود الصندوق/البنك)
         
