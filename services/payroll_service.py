@@ -1,10 +1,13 @@
-# services/payroll_service.py – منطق كشوف الرواتب (SQLite)
+# services/payroll_service.py – منطق كشوف الرواتب (SQLite - دعم الحسابات الوظيفية)
 import sqlite3
 from datetime import date
 from database import get_connection
 from services.audit_service import log_action
+from services.chart_service import get_functional_account
+from services.accounting_service import save_journal_entry
 
 def create_payroll_tables():
+    """إنشاء جداول الرواتب وإعدادات الموظفين إذا لم تكن موجودة"""
     conn = get_connection()
     conn.execute("""
         CREATE TABLE IF NOT EXISTS employee_salaries (
@@ -38,6 +41,7 @@ def create_payroll_tables():
     conn.close()
 
 def get_employees():
+    """جلب قائمة الموظفين"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     emps = conn.execute("SELECT id, name FROM employees").fetchall()
@@ -45,6 +49,7 @@ def get_employees():
     return emps
 
 def get_salary_config(employee_id):
+    """جلب إعدادات الراتب لموظف محدد"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     conf = conn.execute("SELECT * FROM employee_salaries WHERE employee_id=?", (employee_id,)).fetchone()
@@ -52,6 +57,7 @@ def get_salary_config(employee_id):
     return conf
 
 def save_salary_config(employee_id, basic, housing, transport, other, deductions):
+    """حفظ أو تحديث إعدادات الراتب للموظف"""
     conn = get_connection()
     exists = conn.execute("SELECT id FROM employee_salaries WHERE employee_id=?", (employee_id,)).fetchone()
     if exists:
@@ -68,12 +74,13 @@ def save_salary_config(employee_id, basic, housing, transport, other, deductions
     conn.close()
 
 def calculate_net(basic, housing, transport, other, deductions):
+    """حساب إجمالي البدلات وصافي الراتب"""
     total_allowances = housing + transport + other
     net = basic + total_allowances - deductions
     return total_allowances, net
 
 def run_payroll(employee_id, month):
-    """تشغيل كشف الراتب لشهر محدد وإنشاء قيد محاسبي مع إدارة العمليات"""
+    """تشغيل كشف الراتب لشهر محدد وإنشاء قيد محاسبي عبر الحسابات الوظيفية"""
     conf = get_salary_config(employee_id)
     if not conf:
         return None, "لا توجد إعدادات راتب للموظف"
@@ -84,41 +91,66 @@ def run_payroll(employee_id, month):
     other = conf["other_allowances"]
     deductions = conf["deductions"]
     total_allowances, net = calculate_net(basic, housing, transport, other, deductions)
+    gross_salary = basic + total_allowances
 
     conn = get_connection()
-    conn.row_factory = sqlite3.Row  # لجلب اسم الموظف
+    conn.row_factory = sqlite3.Row
 
     try:
-        # جلب اسم الموظف لتسجيله في السجل
+        # جلب اسم الموظف
         emp = conn.execute("SELECT name FROM employees WHERE id=?", (employee_id,)).fetchone()
         emp_name = emp["name"] if emp else "موظف غير معروف"
 
         conn.execute("BEGIN")
 
-        desc = f"راتب شهر {month}"
-        cur = conn.execute(
-            "INSERT INTO journal_entries (date, description, reference) VALUES (?, ?, ?)",
-            (date.today().strftime("%Y-%m-%d"), desc, month)
-        )
-        entry_id = cur.lastrowid
+        # 1. جلب الحسابات الوظيفية
+        acc_salaries_exp = get_functional_account("salaries_expense")
+        acc_bank = get_functional_account("bank")
+        acc_accrued = get_functional_account("accrued_expenses")
 
-        # مدين: رواتب وأجور (544) – مع exchange_rate و currency_code
-        conn.execute(
-            "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, '544', ?, 0, 'YER', 1.0)",
-            (entry_id, basic + total_allowances)
-        )
-        # دائن: البنوك (112) – مع exchange_rate و currency_code
-        conn.execute(
-            "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, '112', 0, ?, 'YER', 1.0)",
-            (entry_id, net)
-        )
+        # 2. تجهيز بنود القيد المحاسبي
+        lines = [
+            # مدين: إجمالي الرواتب والبدلات (مصروف الرواتب)
+            {
+                "account": acc_salaries_exp,
+                "debit": gross_salary,
+                "credit": 0,
+                "currency_code": "YER",
+                "exchange_rate": 1.0
+            },
+            # دائن: صافي الراتب المدفوع من البنك/النقدية
+            {
+                "account": acc_bank,
+                "debit": 0,
+                "credit": net,
+                "currency_code": "YER",
+                "exchange_rate": 1.0
+            }
+        ]
+
+        # إذا كانت هناك استقطاعات، تضاف كمركب دائن في حساب المصروفات/الالتزامات المستحقة
         if deductions > 0:
-            # دائن: مصروفات مستحقة (214) – مع exchange_rate و currency_code
-            conn.execute(
-                "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, '214', 0, ?, 'YER', 1.0)",
-                (entry_id, deductions)
-            )
+            lines.append({
+                "account": acc_accrued,
+                "debit": 0,
+                "credit": deductions,
+                "currency_code": "YER",
+                "exchange_rate": 1.0
+            })
 
+        # 3. حفظ القيد المحاسبي
+        entry_desc = f"راتب شهر {month} - الموظف: {emp_name}"
+        entry_id, entry_error = save_journal_entry(
+            description=entry_desc,
+            lines=lines,
+            entry_date=date.today().strftime("%Y-%m-%d"),
+            conn=conn
+        )
+
+        if entry_error:
+            raise Exception(f"فشل إنشاء القيد المحاسبي للراتب: {entry_error}")
+
+        # 4. تسجيل مسير الراتب في الجدول
         conn.execute("""
             INSERT INTO payroll_runs (employee_id, month, basic_salary, housing_allowance, transport_allowance,
             other_allowances, total_allowances, deductions, net_salary, journal_entry_id)
@@ -127,7 +159,7 @@ def run_payroll(employee_id, month):
 
         conn.commit()
 
-        # تسجيل العملية في سجل التدقيق
+        # 5. تسجيل العملية في سجل التدقيق
         log_action(
             username="admin",
             action="تشغيل راتب",
@@ -145,6 +177,7 @@ def run_payroll(employee_id, month):
         conn.close()
 
 def get_payroll_history(month=None):
+    """جلب سجل مسيرات الرواتب"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     query = """
