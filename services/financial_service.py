@@ -1,75 +1,84 @@
-# services/financial_service.py - القوائم المالية (مع مراكز التكلفة والعملات) - نسخة مصححة ونهائية
+# services/financial_service.py - القوائم المالية (مع دعم مراكز التكلفة والحسابات الوظيفية والعملات)
 import sqlite3
-import os
-from collections import defaultdict
+from database import get_connection
+from services.chart_service import get_functional_account
 
-DB_PATH = os.path.join("data", "erp.db")
-
-def get_conn():
-    conn = sqlite3.connect(DB_PATH)
+def get_account_balance(account_code, cost_center_id=None, as_of_date=None, from_date=None, to_date=None):
+    """
+    رصيد حساب معين بالعملة الأساسية (محتسباً بسعر الصرف وقت القيد).
+    دعم التصفية حسب مركز التكلفة أو نطاق زمني.
+    """
+    conn = get_connection()
     conn.row_factory = sqlite3.Row
-    return conn
+    
+    params = [account_code]
+    date_filter = ""
+    if from_date:
+        date_filter += " AND jl.entry_date >= ?"
+        params.append(from_date)
+    if to_date or as_of_date:
+        target_date = to_date or as_of_date
+        date_filter += " AND jl.entry_date <= ?"
+        params.append(target_date)
 
-def get_account_balance(account_code, cost_center_id=None):
-    """
-    رصيد حساب معين بالعملة الأساسية.
-    إذا حُدد cost_center_id، يتم استخدام توزيعات المركز مع سعر صرف السطر الأصلي.
-    """
-    conn = get_conn()
     if cost_center_id:
-        debit = conn.execute("""
-            SELECT COALESCE(SUM(cca.amount * COALESCE(jl.exchange_rate, 1.0)), 0)
+        query = f"""
+            SELECT 
+                COALESCE(SUM(CASE WHEN jl.debit > 0 THEN cca.amount * COALESCE(jl.exchange_rate, 1.0) ELSE 0 END), 0) AS total_debit,
+                COALESCE(SUM(CASE WHEN jl.credit > 0 THEN cca.amount * COALESCE(jl.exchange_rate, 1.0) ELSE 0 END), 0) AS total_credit
             FROM cost_center_allocations cca
             JOIN journal_lines jl ON cca.journal_line_id = jl.id
-            WHERE jl.account_name = ? AND cca.cost_center_id = ? AND jl.debit > 0
-        """, (account_code, cost_center_id)).fetchone()[0]
-        credit = conn.execute("""
-            SELECT COALESCE(SUM(cca.amount * COALESCE(jl.exchange_rate, 1.0)), 0)
-            FROM cost_center_allocations cca
-            JOIN journal_lines jl ON cca.journal_line_id = jl.id
-            WHERE jl.account_name = ? AND cca.cost_center_id = ? AND jl.credit > 0
-        """, (account_code, cost_center_id)).fetchone()[0]
+            WHERE jl.account_name = ? AND cca.cost_center_id = ? {date_filter}
+        """
+        params.insert(1, cost_center_id)
     else:
-        debit = conn.execute(
-            "SELECT COALESCE(SUM(debit * COALESCE(exchange_rate, 1.0)), 0) FROM journal_lines WHERE account_name=?",
-            (account_code,)
-        ).fetchone()[0]
-        credit = conn.execute(
-            "SELECT COALESCE(SUM(credit * COALESCE(exchange_rate, 1.0)), 0) FROM journal_lines WHERE account_name=?",
-            (account_code,)
-        ).fetchone()[0]
+        query = f"""
+            SELECT 
+                COALESCE(SUM(debit * COALESCE(exchange_rate, 1.0)), 0) AS total_debit,
+                COALESCE(SUM(credit * COALESCE(exchange_rate, 1.0)), 0) AS total_credit
+            FROM journal_lines jl
+            WHERE jl.account_name = ? {date_filter}
+        """
+
+    row = conn.execute(query, params).fetchone()
     conn.close()
+    
+    debit = row["total_debit"] if row else 0
+    credit = row["total_credit"] if row else 0
     return debit, credit
 
 def get_all_active_accounts(cost_center_id=None):
     """
     جلب جميع الحسابات المستخدمة في القيود مع تصنيفها من شجرة الحسابات.
     """
-    conn = get_conn()
-    accounts = []
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
     
     if cost_center_id:
-        rows = conn.execute("""
-            SELECT DISTINCT jl.account_name as code
+        query = """
+            SELECT DISTINCT jl.account_name AS code
             FROM journal_lines jl
             JOIN cost_center_allocations cca ON jl.id = cca.journal_line_id
             WHERE cca.cost_center_id = ?
             ORDER BY jl.account_name
-        """, (cost_center_id,)).fetchall()
+        """
+        rows = conn.execute(query, (cost_center_id,)).fetchall()
     else:
-        rows = conn.execute("""
-            SELECT DISTINCT account_name as code
+        query = """
+            SELECT DISTINCT account_name AS code
             FROM journal_lines
             ORDER BY account_name
-        """).fetchall()
+        """
+        rows = conn.execute(query).fetchall()
     
+    accounts = []
     for row in rows:
         code = row["code"]
-        # التعديل: البحث بالكود أو بالاسم ليشمل الحسابات النصية
         tree = conn.execute(
-            "SELECT name, is_debit, account_type FROM accounts WHERE code=? OR name=?",
+            "SELECT name, is_debit, account_type FROM accounts WHERE code = ? OR name = ?",
             (code, code)
         ).fetchone()
+        
         accounts.append({
             "code": code,
             "name": tree["name"] if tree else code,
@@ -80,7 +89,7 @@ def get_all_active_accounts(cost_center_id=None):
     conn.close()
     return accounts
 
-def get_income_statement(cost_center_id=None):
+def get_income_statement(cost_center_id=None, from_date=None, to_date=None):
     """قائمة الدخل (بالعملة الأساسية)"""
     all_accounts = get_all_active_accounts(cost_center_id)
     revenue_list = []
@@ -91,12 +100,13 @@ def get_income_statement(cost_center_id=None):
     for acc in all_accounts:
         code = acc["code"]
         atype = acc["account_type"]
-        # تصنيف الحساب كإيراد أو مصروف بناءً على النوع أو البادئة
+        
         is_revenue = False
         is_expense = False
-        if atype in ("Revenue", "Expense"):
-            is_revenue = (atype == "Revenue")
-            is_expense = (atype == "Expense")
+        
+        if atype in ("Revenue", "Expense", "income", "expense", "revenue"):
+            is_revenue = (atype in ("Revenue", "income", "revenue"))
+            is_expense = (atype in ("Expense", "expense"))
         elif code and code[0].isdigit():
             prefix = code[0]
             if prefix == "4":
@@ -107,13 +117,14 @@ def get_income_statement(cost_center_id=None):
         if not is_revenue and not is_expense:
             continue
 
-        debit, credit = get_account_balance(code, cost_center_id)
+        debit, credit = get_account_balance(code, cost_center_id=cost_center_id, from_date=from_date, to_date=to_date)
+        
         if is_revenue:
             amount = credit - debit
             if amount != 0:
                 total_revenue += amount
                 revenue_list.append({"code": code, "name": acc["name"], "amount": amount})
-        else:  # expense
+        else:  # المصروفات
             amount = debit - credit
             if amount != 0:
                 total_expenses += amount
@@ -127,8 +138,8 @@ def get_income_statement(cost_center_id=None):
         "net_income": total_revenue - total_expenses
     }
 
-def get_balance_sheet(cost_center_id=None):
-    """الميزانية العمومية (بالعملة الأساسية) - تصنيف دقيق ومتوازن"""
+def get_balance_sheet(cost_center_id=None, as_of_date=None):
+    """الميزانية العمومية (بالعملة الأساسية) - تصنيف دقيق ومتوازن اعتماداً على الحسابات الوظيفية"""
     all_accounts = get_all_active_accounts(cost_center_id)
     asset_list = []
     total_assets = 0
@@ -137,13 +148,20 @@ def get_balance_sheet(cost_center_id=None):
     equity_list = []
     total_equity = 0
 
+    retained_earnings_code = get_functional_account("retained_earnings")
+
     for acc in all_accounts:
         code = acc["code"]
         atype = acc["account_type"]
-        # تحديد الفئة: أصل، خصم، حقوق ملكية، أو بنود قائمة الدخل (يتم تجاهلها هنا)
+        
         category = None
-        if atype in ("Asset", "Liability", "Equity"):
-            category = atype
+        if atype in ("Asset", "Liability", "Equity", "asset", "liability", "equity"):
+            if atype in ("Asset", "asset"):
+                category = "Asset"
+            elif atype in ("Liability", "liability"):
+                category = "Liability"
+            elif atype in ("Equity", "equity"):
+                category = "Equity"
         elif code and code[0].isdigit():
             prefix = code[0]
             if prefix == "1":
@@ -152,21 +170,20 @@ def get_balance_sheet(cost_center_id=None):
                 category = "Liability"
             elif prefix == "3":
                 category = "Equity"
-            # 4 و 5 تُعالج في قائمة الدخل
         else:
-            # حساب غير رقمي (اسم عميل/مورد): نصنفه حسب الرصيد
-            debit, credit = get_account_balance(code, cost_center_id)
+            # حساب غير رقمي (عميل / مورد): يصنف حسب الطبيعة
+            debit, credit = get_account_balance(code, cost_center_id=cost_center_id, as_of_date=as_of_date)
             net = debit - credit
             if net > 0:
                 category = "Asset"
             elif net < 0:
                 category = "Liability"
-            # إذا كان الصفر، لا نظهره
 
         if category is None:
             continue
 
-        debit, credit = get_account_balance(code, cost_center_id)
+        debit, credit = get_account_balance(code, cost_center_id=cost_center_id, as_of_date=as_of_date)
+        
         if category == "Asset":
             amount = debit - credit
             if amount != 0:
@@ -183,11 +200,23 @@ def get_balance_sheet(cost_center_id=None):
                 total_equity += amount
                 equity_list.append({"code": code, "name": acc["name"], "amount": amount})
 
-    # إضافة صافي الدخل إلى حقوق الملكية
-    income_stmt = get_income_statement(cost_center_id)
+    # احتساب صافي الدخل وإضافته إلى حقوق الملكية تحت كود الأرباح المحتجزة الوظيفي
+    income_stmt = get_income_statement(cost_center_id=cost_center_id, to_date=as_of_date)
     net_income = income_stmt['net_income']
     total_equity += net_income
-    equity_list.append({"code": "", "name": "صافي الدخل (أرباح محتجزة)", "amount": net_income})
+    
+    # جلب اسم حساب الأرباح المحتجزة
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    retained_acc = conn.execute("SELECT name FROM accounts WHERE code = ?", (retained_earnings_code,)).fetchone()
+    conn.close()
+    retained_name = retained_acc["name"] if retained_acc else "الأرباح المحتجزة (صافي الدخل)"
+
+    equity_list.append({
+        "code": retained_earnings_code,
+        "name": f"{retained_name} - الفترة الحالية",
+        "amount": net_income
+    })
 
     return {
         "assets": asset_list,
