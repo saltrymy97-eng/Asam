@@ -1,8 +1,10 @@
-# services/assets_service.py – منطق الأصول الثابتة والإهلاكات
+# services/assets_service.py – منطق الأصول الثابتة والإهلاكات (دعم الحسابات الوظيفية)
 import sqlite3
 from datetime import date, datetime
 from database import get_connection
 from services.audit_service import log_action
+from services.chart_service import get_functional_account
+from services.accounting_service import save_journal_entry
 
 def create_assets_tables():
     """إنشاء جداول الأصول الثابتة والإهلاكات إذا لم تكن موجودة"""
@@ -43,7 +45,6 @@ def create_assets_tables():
 
 def add_asset(name, category, purchase_date, purchase_cost, salvage_value=0, useful_life_years=5, method="قسط ثابت", notes=""):
     """إضافة أصل ثابت جديد مع حساب الإهلاك الشهري تلقائياً"""
-    # حساب الإهلاك الشهري (قسط ثابت)
     depreciable_amount = purchase_cost - salvage_value
     total_months = useful_life_years * 12
     monthly_dep = round(depreciable_amount / total_months, 2) if total_months > 0 else 0
@@ -68,7 +69,7 @@ def get_all_assets():
     return [dict(a) for a in assets]
 
 def run_depreciation(asset_id, entry_date=None, notes=""):
-    """تشغيل إهلاك شهري لأصل محدد وتسجيل قيد محاسبي (مع حماية atomicity)"""
+    """تشغيل إهلاك شهري لأصل محدد وتسجيل قيد محاسبي عبر الحسابات الوظيفية"""
     if entry_date is None:
         entry_date = date.today().strftime("%Y-%m-%d")
 
@@ -81,41 +82,56 @@ def run_depreciation(asset_id, entry_date=None, notes=""):
         asset = conn.execute("SELECT * FROM fixed_assets WHERE id=?", (asset_id,)).fetchone()
         if not asset or asset["status"] != "نشط":
             conn.rollback()
-            conn.close()
             return False, "الأصل غير موجود أو غير نشط"
 
         monthly_dep = asset["monthly_depreciation"]
         if monthly_dep <= 0:
             conn.rollback()
-            conn.close()
             return False, "قيمة الإهلاك صفر"
 
-        # الحل الاحترافي: رقم تسلسلي للإهلاك لكل أصل
+        # رقم تسلسلي للإهلاك لكل أصل
         count = conn.execute(
             "SELECT COUNT(*) FROM depreciation_entries WHERE asset_id=?", (asset_id,)
         ).fetchone()[0] + 1
         
         desc = f"إهلاك {asset['name']} - الشهر {count} - {entry_date}"
-        reference = f"إهلاك أصل #{asset_id} - شهر {count}"
         
-        cur = conn.execute(
-            "INSERT INTO journal_entries (date, description, reference) VALUES (?, ?, ?)",
-            (entry_date, desc, reference)
-        )
-        entry_id = cur.lastrowid
+        # 1. جلب الحسابات الوظيفية
+        acc_dep_exp = get_functional_account("depreciation_expense")
+        acc_accum_dep = get_functional_account("accumulated_depreciation")
 
-        # مدين: مصروف الإهلاك (كود 545) – مع exchange_rate و currency_code
-        conn.execute(
-            "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, '545', ?, 0, 'YER', 1.0)",
-            (entry_id, monthly_dep)
-        )
-        # دائن: مجمع الإهلاك (كود 122) – مع exchange_rate و currency_code
-        conn.execute(
-            "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, '122', 0, ?, 'YER', 1.0)",
-            (entry_id, monthly_dep)
+        # 2. إعداد بنود القيد
+        lines = [
+            # مدين: مصروف الإهلاك
+            {
+                "account": acc_dep_exp,
+                "debit": monthly_dep,
+                "credit": 0,
+                "currency_code": "YER",
+                "exchange_rate": 1.0
+            },
+            # دائن: مجمع الإهلاك
+            {
+                "account": acc_accum_dep,
+                "debit": 0,
+                "credit": monthly_dep,
+                "currency_code": "YER",
+                "exchange_rate": 1.0
+            }
+        ]
+
+        # 3. حفظ القيد المحاسبي
+        entry_id, entry_error = save_journal_entry(
+            description=desc,
+            lines=lines,
+            entry_date=entry_date,
+            conn=conn
         )
 
-        # تحديث الأصل
+        if entry_error:
+            raise Exception(f"فشل إنشاء قيد الإهلاك المحاسبي: {entry_error}")
+
+        # 4. تحديث قيم الأصل
         new_accumulated = round(asset["accumulated_depreciation"] + monthly_dep, 2)
         new_book_value = round(asset["purchase_cost"] - new_accumulated, 2)
         new_status = "نشط" if new_book_value > asset["salvage_value"] else "مستنفذ"
@@ -125,20 +141,30 @@ def run_depreciation(asset_id, entry_date=None, notes=""):
             (new_accumulated, new_book_value, new_status, asset_id)
         )
 
-        # تسجيل في سجل الإهلاك
+        # 5. تسجيل حركة الإهلاك
         conn.execute(
             "INSERT INTO depreciation_entries (asset_id, entry_date, amount, journal_entry_id, notes) VALUES (?, ?, ?, ?, ?)",
             (asset_id, entry_date, monthly_dep, entry_id, notes)
         )
 
         conn.commit()
-        conn.close()
+
+        # 6. تسجيل العملية في سجل التدقيق
+        log_action(
+            username="admin",
+            action="إصدار إهلاك",
+            table_name="depreciation_entries",
+            record_id=entry_id,
+            new_value=f"الأصل: {asset['name']}, القيمة: {monthly_dep:,.2f}"
+        )
+
         return True, f"تم تسجيل إهلاك {monthly_dep:.2f} للأصل {asset['name']} (شهر {count})"
     
     except Exception as e:
         conn.rollback()
-        conn.close()
         return False, f"فشل تسجيل الإهلاك: {str(e)}"
+    finally:
+        conn.close()
 
 def run_all_depreciations():
     """تشغيل الإهلاك الشهري لجميع الأصول النشطة"""
@@ -154,7 +180,7 @@ def run_all_depreciations():
     return results
 
 def get_depreciation_history(asset_id=None):
-    """سجل الإهلاكات"""
+    """جلب سجل الإهلاكات"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     if asset_id:
