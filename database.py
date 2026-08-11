@@ -144,6 +144,7 @@ def init_db():
         is_debit TEXT DEFAULT 'debit',
         is_active INTEGER CHECK(is_active IN (0,1)) DEFAULT 1,
         account_type TEXT CHECK(account_type IN ('Asset','Liability','Equity','Revenue','Expense')),
+        functional_type TEXT,
         FOREIGN KEY (parent_id) REFERENCES accounts(id) ON DELETE SET NULL
     )''')
 
