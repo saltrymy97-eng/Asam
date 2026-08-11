@@ -1,582 +1,247 @@
-# database.py - قاعدة بيانات نظام حوكمة ERP (SQLite) – إصدار إنتاجي نهائي
-import sqlite3
-import bcrypt
 import os
+import random
+import sqlite3
+from datetime import datetime, timedelta
 
-# تغيير مسار قاعدة البيانات إلى مجلد data/ ليتم حفظه مع المشروع
-DB_PATH = os.path.join("data", "erp.db")
+# 1. الاستيرادات الموحدة في أعلى الملف (PEP 8)
+import database
+from services.chart_service import get_functional_account
+from services.invoice_service import create_purchase_invoice, create_sales_invoice
+from services.product_service import add_product
+from services.voucher_service import create_receipt_voucher, create_payment_voucher
+from services.expense_service import create_expense
+from services.inventory_service import create_inventory_adjustment
 
-def get_connection():
-    """إنشاء اتصال بقاعدة البيانات مع دعم الوصول القاموسي للصفوف"""
-    # التأكد من وجود مجلد data
-    os.makedirs("data", exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=15)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.row_factory = sqlite3.Row
-    return conn
 
-def init_db():
-    """إنشاء جميع جداول النظام إذا لم تكن موجودة"""
-    conn = get_connection()
+def ensure_base_currency():
+    """التأكد من وجود العملة الأساسية (الريال اليمني)"""
+    conn = database.get_connection()
     c = conn.cursor()
+    c.execute("SELECT id FROM currencies WHERE code = 'YER'")
+    row = c.fetchone()
+    if not row:
+        c.execute(
+            "INSERT INTO currencies (code, name, symbol, is_base, is_active) VALUES ('YER', 'ريال يمني', 'ر.ي', 1, 1)"
+        )
+        conn.commit()
+    conn.close()
 
-    # ========== 1. المستخدمين (الاعتماد على role_id فقط) ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE NOT NULL,
-        password TEXT NOT NULL,
-        full_name TEXT,
-        role_id INTEGER NOT NULL,
-        FOREIGN KEY (role_id) REFERENCES roles(id)
-    )''')
 
-    # ========== 2. المنتجات (أسعار وكميات غير سالبة) ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS products (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        barcode TEXT UNIQUE,
-        category TEXT,
-        purchase_price REAL CHECK(purchase_price >= 0),
-        selling_price REAL CHECK(selling_price >= 0),
-        quantity INTEGER DEFAULT 0 CHECK(quantity >= 0),
-        reorder_level INTEGER DEFAULT 10
-    )''')
+def safe_add_product(name, barcode, category, purchase_price, selling_price, quantity, reorder_level=10):
+    """دالة إضافة منتج معدلة تُرجع الـ ID الحقيقي من قاعدة البيانات"""
+    conn = database.get_connection()
+    c = conn.cursor()
+    try:
+        c.execute("""
+            INSERT INTO products (name, barcode, category, purchase_price, selling_price, quantity, reorder_level)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (name, barcode, category, purchase_price, selling_price, quantity, reorder_level))
+        product_id = c.lastrowid
+        conn.commit()
+        return product_id
+    except sqlite3.Error as e:
+        conn.rollback()
+        print(f"[خطأ إضافة منتج]: {e}")
+        return None
+    finally:
+        conn.close()
 
-    c.execute('''CREATE TABLE IF NOT EXISTS stock_movements (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        product_id INTEGER NOT NULL,
-        type TEXT NOT NULL,
-        quantity INTEGER NOT NULL,
-        date TEXT NOT NULL,
-        reference TEXT,
-        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
-    )''')
 
-    c.execute('''CREATE TABLE IF NOT EXISTS customers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        phone TEXT,
-        address TEXT
-    )''')
+def run_seeder(num_transactions=10000):
+    print("🚀 بدء عملية تغذية واختبار قاعدة البيانات (Seeding & Stress Test)...")
+    
+    # تهيئة قاعدة البيانات والعملة الأساسية
+    database.init_db()
+    database.create_default_admin()
+    ensure_base_currency()
 
-    c.execute('''CREATE TABLE IF NOT EXISTS suppliers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        phone TEXT,
-        address TEXT
-    )''')
+    # 2. التحقق الجوهري من وجود الحسابات المالية قبل البدء
+    cash_account_id = get_functional_account('cash')
+    inventory_account_id = get_functional_account('inventory')
+    capital_account_id = get_functional_account('capital')
+    operating_expense_account_id = (
+        get_functional_account('operating_expenses') or 
+        get_functional_account('general_expense')
+    )
 
-    # ========== 3. الفواتير ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS invoices (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        type TEXT NOT NULL,
-        invoice_date TEXT NOT NULL DEFAULT (date('now')),
-        total REAL DEFAULT 0,
-        total_base REAL DEFAULT 0,
-        status TEXT DEFAULT 'draft',
-        vat_rate REAL DEFAULT 0.15,
-        vat_amount REAL DEFAULT 0,
-        currency_code TEXT DEFAULT 'YER',
-        exchange_rate REAL DEFAULT 1.0,
-        customer_id INTEGER,
-        supplier_id INTEGER,
-        reason TEXT,
-        reference TEXT,
-        FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL,
-        FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL
-    )''')
+    required_accounts = {
+        "النقدية (cash)": cash_account_id,
+        "المخزون (inventory)": inventory_account_id,
+        "رأس المال (capital)": capital_account_id,
+        "المصروفات (operating_expenses)": operating_expense_account_id
+    }
 
-    c.execute('''CREATE TABLE IF NOT EXISTS invoice_items (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        invoice_id INTEGER NOT NULL,
-        product_id INTEGER NOT NULL,
-        quantity INTEGER NOT NULL,
-        unit_price REAL NOT NULL,
-        FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
-        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT
-    )''')
+    for name, acc_id in required_accounts.items():
+        if acc_id is None:
+            raise ValueError(f"❌ خطأ قاطع: حساب ({name}) غير محدد في شجرة الحسابات! يرجى تهيئة الشجرة أولاً.")
 
-    # ========== 4. القيود المحاسبية (حماية من التكرار + منع مدين ودائن معاً) ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS journal_entries (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        date TEXT NOT NULL DEFAULT (date('now')),
-        description TEXT NOT NULL,
-        reference TEXT UNIQUE
-    )''')
+    # 3. إدخال الموردين والعملاء
+    conn = database.get_connection()
+    c = conn.cursor()
+    
+    supplier_ids = []
+    for i in range(1, 21):
+        c.execute("INSERT INTO suppliers (name, phone, address) VALUES (?, ?, ?)", 
+                  (f"مورد {i}", f"7700000{i:02d}", f"صنعاء - شارع {i}"))
+        supplier_ids.append(c.lastrowid)
 
-    c.execute('''CREATE TABLE IF NOT EXISTS journal_lines (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        entry_id INTEGER NOT NULL,
-        account_name TEXT NOT NULL,
-        debit REAL DEFAULT 0 CHECK(debit >= 0),
-        credit REAL DEFAULT 0 CHECK(credit >= 0),
-        currency_code TEXT DEFAULT 'YER',
-        exchange_rate REAL DEFAULT 1.0,
-        CHECK((debit > 0 AND credit = 0) OR (credit > 0 AND debit = 0)),
-        FOREIGN KEY (entry_id) REFERENCES journal_entries(id) ON DELETE CASCADE
-    )''')
-
-    # ========== 5. الموارد البشرية ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS employees (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        position TEXT,
-        salary REAL,
-        join_date TEXT DEFAULT (date('now'))
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS attendance (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        employee_id INTEGER NOT NULL,
-        date TEXT NOT NULL DEFAULT (date('now')),
-        status TEXT NOT NULL,
-        FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
-    )''')
-
-    # ========== 6. شجرة الحسابات ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS accounts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        code TEXT UNIQUE NOT NULL,
-        name TEXT NOT NULL,
-        parent_id INTEGER,
-        level INTEGER DEFAULT 1,
-        is_debit TEXT DEFAULT 'debit',
-        is_active INTEGER CHECK(is_active IN (0,1)) DEFAULT 1,
-        account_type TEXT CHECK(account_type IN ('Asset','Liability','Equity','Revenue','Expense')),
-        functional_type TEXT,
-        FOREIGN KEY (parent_id) REFERENCES accounts(id) ON DELETE SET NULL
-    )''')
-
-    # ========== 7. المخزون و FIFO ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS inventory_batches (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        product_id INTEGER NOT NULL,
-        quantity REAL NOT NULL CHECK(quantity > 0),
-        unit_cost REAL NOT NULL CHECK(unit_cost >= 0),
-        batch_date TEXT NOT NULL DEFAULT (date('now')),
-        reference TEXT,
-        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS fifo_consumptions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        batch_id INTEGER NOT NULL,
-        consumed_qty REAL NOT NULL CHECK(consumed_qty > 0),
-        consumption_date TEXT NOT NULL DEFAULT (date('now')),
-        reference TEXT,
-        FOREIGN KEY (batch_id) REFERENCES inventory_batches(id) ON DELETE CASCADE
-    )''')
-
-    # ========== 8. الرواتب ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS employee_salaries (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        employee_id INTEGER UNIQUE NOT NULL,
-        basic_salary REAL DEFAULT 0 CHECK(basic_salary >= 0),
-        housing_allowance REAL DEFAULT 0 CHECK(housing_allowance >= 0),
-        transport_allowance REAL DEFAULT 0 CHECK(transport_allowance >= 0),
-        other_allowances REAL DEFAULT 0 CHECK(other_allowances >= 0),
-        deductions REAL DEFAULT 0 CHECK(deductions >= 0),
-        FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS payroll_runs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        employee_id INTEGER NOT NULL,
-        month TEXT NOT NULL,
-        basic_salary REAL,
-        housing_allowance REAL,
-        transport_allowance REAL,
-        other_allowances REAL,
-        total_allowances REAL,
-        deductions REAL,
-        net_salary REAL,
-        journal_entry_id INTEGER,
-        FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
-    )''')
-
-    # ========== 9. إغلاق الفترات ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS closed_periods (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        period_type TEXT NOT NULL,
-        period_value TEXT NOT NULL,
-        closed_at TEXT NOT NULL DEFAULT (datetime('now')),
-        closed_by TEXT NOT NULL,
-        UNIQUE(period_type, period_value)
-    )''')
-
-    # ========== 10. الصلاحيات والأدوار ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS roles (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT UNIQUE NOT NULL
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS role_permissions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        role_id INTEGER NOT NULL,
-        module TEXT NOT NULL,
-        can_view INTEGER DEFAULT 1 CHECK(can_view IN (0,1)),
-        can_add INTEGER DEFAULT 0 CHECK(can_add IN (0,1)),
-        can_edit INTEGER DEFAULT 0 CHECK(can_edit IN (0,1)),
-        can_delete INTEGER DEFAULT 0 CHECK(can_delete IN (0,1)),
-        can_approve INTEGER DEFAULT 0 CHECK(can_approve IN (0,1)),
-        FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
-        UNIQUE(role_id, module)
-    )''')
-
-    # ========== 11. سجل التدقيق ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS audit_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT,
-        action TEXT NOT NULL,
-        table_name TEXT NOT NULL,
-        record_id INTEGER,
-        old_value TEXT,
-        new_value TEXT,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-    )''')
-
-    # ========== 12. مراكز التكلفة ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS cost_centers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        code TEXT UNIQUE NOT NULL,
-        name TEXT NOT NULL,
-        parent_id INTEGER,
-        is_active INTEGER CHECK(is_active IN (0,1)) DEFAULT 1,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (parent_id) REFERENCES cost_centers(id) ON DELETE SET NULL
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS cost_center_allocations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        journal_line_id INTEGER NOT NULL,
-        cost_center_id INTEGER NOT NULL,
-        amount REAL NOT NULL,
-        percentage REAL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (journal_line_id) REFERENCES journal_lines(id) ON DELETE CASCADE,
-        FOREIGN KEY (cost_center_id) REFERENCES cost_centers(id) ON DELETE CASCADE
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS cost_center_budgets (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        cost_center_id INTEGER NOT NULL,
-        account_id INTEGER NOT NULL,
-        fiscal_year INTEGER NOT NULL,
-        budget_amount REAL NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (cost_center_id) REFERENCES cost_centers(id) ON DELETE CASCADE,
-        FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE,
-        UNIQUE(cost_center_id, account_id, fiscal_year)
-    )''')
-
-    # ========== 13. العملات ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS currencies (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        code TEXT UNIQUE NOT NULL,
-        name TEXT NOT NULL,
-        symbol TEXT,
-        is_base INTEGER CHECK(is_base IN (0,1)) DEFAULT 0,
-        is_active INTEGER CHECK(is_active IN (0,1)) DEFAULT 1,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS exchange_rates (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        from_currency TEXT NOT NULL,
-        to_currency TEXT NOT NULL,
-        rate REAL NOT NULL CHECK(rate > 0),
-        date TEXT NOT NULL DEFAULT (date('now')),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(from_currency, to_currency, date)
-    )''')
-
-    # ========== 14. البنوك ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS bank_accounts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        bank_name TEXT NOT NULL,
-        account_number TEXT NOT NULL,
-        account_name TEXT,
-        currency_code TEXT DEFAULT 'YER',
-        opening_balance REAL DEFAULT 0,
-        current_balance REAL DEFAULT 0,
-        is_active INTEGER CHECK(is_active IN (0,1)) DEFAULT 1,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS bank_transactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        bank_account_id INTEGER NOT NULL,
-        transaction_date TEXT NOT NULL DEFAULT (date('now')),
-        description TEXT,
-        type TEXT NOT NULL,
-        amount REAL NOT NULL,
-        reference TEXT,
-        journal_line_id INTEGER,
-        reconciled INTEGER DEFAULT 0 CHECK(reconciled IN (0,1)),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (bank_account_id) REFERENCES bank_accounts(id) ON DELETE CASCADE,
-        FOREIGN KEY (journal_line_id) REFERENCES journal_lines(id) ON DELETE SET NULL
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS bank_reconciliations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        bank_account_id INTEGER NOT NULL,
-        reconciliation_date TEXT NOT NULL DEFAULT (date('now')),
-        statement_balance REAL NOT NULL,
-        book_balance REAL NOT NULL,
-        difference REAL DEFAULT 0,
-        status TEXT DEFAULT 'draft',
-        notes TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (bank_account_id) REFERENCES bank_accounts(id) ON DELETE CASCADE
-    )''')
-
-    # ========== 15. المرفقات ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS attachments (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        filename TEXT NOT NULL,
-        original_name TEXT NOT NULL,
-        file_path TEXT NOT NULL,
-        file_size INTEGER,
-        file_type TEXT,
-        linked_table TEXT,
-        linked_id INTEGER,
-        uploaded_by TEXT,
-        uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-
-    # ========== 16. ضريبة ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS vat_config (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        rate REAL NOT NULL DEFAULT 0.15 CHECK(rate >= 0 AND rate <= 1),
-        is_active INTEGER CHECK(is_active IN (0,1)) DEFAULT 1,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-    c.execute("INSERT OR IGNORE INTO vat_config (id, rate, is_active) VALUES (1, 0.15, 1)")
-
-    # ========== 17. السندات والمصروفات والتسويات والافتتاحية وإعادة التقييم ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS vouchers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        type TEXT NOT NULL,
-        date TEXT NOT NULL DEFAULT (date('now')),
-        party_type TEXT NOT NULL,
-        party_id INTEGER,
-        amount REAL NOT NULL CHECK(amount > 0),
-        account TEXT NOT NULL,
-        invoice_id INTEGER,
-        journal_entry_id INTEGER,
-        reference TEXT,
-        notes TEXT,
-        created_by TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS expenses (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        date TEXT NOT NULL DEFAULT (date('now')),
-        category TEXT NOT NULL,
-        amount REAL NOT NULL CHECK(amount > 0),
-        account_code TEXT NOT NULL,
-        payment_method TEXT NOT NULL,
-        party_type TEXT,
-        party_id INTEGER,
-        invoice_ref TEXT,
-        notes TEXT,
-        journal_entry_id INTEGER,
-        created_by TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS inventory_adjustments (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        date TEXT NOT NULL DEFAULT (date('now')),
-        product_id INTEGER NOT NULL,
-        expected_qty REAL NOT NULL,
-        actual_qty REAL NOT NULL,
-        difference REAL NOT NULL,
-        unit_cost REAL,
-        total_cost REAL,
-        reason TEXT,
-        reference TEXT,
-        journal_entry_id INTEGER,
-        created_by TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS opening_balances (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        entry_date TEXT NOT NULL DEFAULT (date('now')),
-        account_code TEXT NOT NULL,
-        account_name TEXT,
-        debit REAL DEFAULT 0,
-        credit REAL DEFAULT 0,
-        journal_entry_id INTEGER,
-        created_by TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS opening_inventory (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        entry_date TEXT NOT NULL DEFAULT (date('now')),
-        product_id INTEGER NOT NULL,
-        quantity REAL NOT NULL CHECK(quantity > 0),
-        unit_cost REAL NOT NULL CHECK(unit_cost >= 0),
-        journal_entry_id INTEGER,
-        created_by TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS currency_revaluations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        date TEXT NOT NULL DEFAULT (date('now')),
-        account_name TEXT NOT NULL,
-        currency_code TEXT NOT NULL,
-        old_rate REAL,
-        new_rate REAL NOT NULL CHECK(new_rate > 0),
-        foreign_balance REAL,
-        old_local_value REAL,
-        new_local_value REAL,
-        difference REAL,
-        journal_entry_id INTEGER,
-        created_by TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-
-    # ========== 18. الأصول الثابتة ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS fixed_assets (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        category TEXT DEFAULT 'أثاث ومعدات',
-        purchase_date TEXT NOT NULL,
-        purchase_cost REAL NOT NULL,
-        salvage_value REAL DEFAULT 0,
-        useful_life_years INTEGER DEFAULT 5,
-        depreciation_method TEXT DEFAULT 'قسط ثابت',
-        monthly_depreciation REAL DEFAULT 0,
-        accumulated_depreciation REAL DEFAULT 0,
-        book_value REAL DEFAULT 0,
-        status TEXT DEFAULT 'نشط',
-        notes TEXT,
-        created_at TEXT DEFAULT (datetime('now','localtime'))
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS depreciation_entries (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        asset_id INTEGER,
-        entry_date TEXT NOT NULL,
-        amount REAL NOT NULL,
-        journal_entry_id INTEGER,
-        notes TEXT,
-        FOREIGN KEY (asset_id) REFERENCES fixed_assets(id)
-    )''')
-
-    # ========== 19. CRM (إدارة علاقات العملاء) ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS crm_leads (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        company TEXT,
-        phone TEXT,
-        email TEXT,
-        source TEXT DEFAULT 'أخرى',
-        status TEXT DEFAULT 'جديد',
-        notes TEXT,
-        created_at TEXT DEFAULT (datetime('now','localtime')),
-        updated_at TEXT DEFAULT (datetime('now','localtime'))
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS crm_opportunities (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        lead_id INTEGER,
-        title TEXT NOT NULL,
-        amount REAL DEFAULT 0,
-        stage TEXT DEFAULT 'مؤهل',
-        probability INTEGER DEFAULT 50,
-        expected_close_date TEXT,
-        notes TEXT,
-        created_at TEXT DEFAULT (datetime('now','localtime')),
-        FOREIGN KEY (lead_id) REFERENCES crm_leads(id)
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS crm_interactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        lead_id INTEGER,
-        type TEXT DEFAULT 'اتصال',
-        date TEXT NOT NULL,
-        notes TEXT,
-        created_at TEXT DEFAULT (datetime('now','localtime')),
-        FOREIGN KEY (lead_id) REFERENCES crm_leads(id)
-    )''')
-
-    # ========== 20. الصندوق (Cash Management) ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS cash_accounts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        currency_code TEXT NOT NULL DEFAULT 'YER',
-        opening_balance REAL DEFAULT 0.0,
-        current_balance REAL DEFAULT 0.0,
-        is_active INTEGER DEFAULT 1 CHECK(is_active IN (0,1)),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS cash_transactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        cash_account_id INTEGER NOT NULL,
-        transaction_date TEXT NOT NULL,
-        description TEXT,
-        type TEXT NOT NULL CHECK(type IN ('deposit','withdrawal')),
-        amount REAL NOT NULL CHECK(amount > 0),
-        reference TEXT,
-        journal_line_id INTEGER,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (cash_account_id) REFERENCES cash_accounts(id)
-    )''')
-
-    # ========== 21. الفهارس (Indexes) لتحسين الأداء ==========
-    c.execute("CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_date ON invoices(invoice_date)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_type ON invoices(type)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_customer ON invoices(customer_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_supplier ON invoices(supplier_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_journal_entries_date ON journal_entries(date)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_account ON journal_lines(account_name)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_product ON stock_movements(product_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_inventory_batches_product ON inventory_batches(product_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_fifo_consumptions_batch ON fifo_consumptions(batch_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_attendance_employee ON attendance(employee_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_table ON audit_log(table_name)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(username)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_fixed_assets_category ON fixed_assets(category)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_depreciation_entries_asset ON depreciation_entries(asset_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_crm_leads_status ON crm_leads(status)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_crm_opportunities_lead ON crm_opportunities(lead_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_crm_interactions_lead ON crm_interactions(lead_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_cash_transactions_account ON cash_transactions(cash_account_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_cash_transactions_date ON cash_transactions(transaction_date)")
+    customer_ids = []
+    for i in range(1, 51):
+        c.execute("INSERT INTO customers (name, phone, address) VALUES (?, ?, ?)", 
+                  (f"عميل {i}", f"7300000{i:02d}", f"عدن - شارع {i}"))
+        customer_ids.append(c.lastrowid)
 
     conn.commit()
     conn.close()
 
-def create_default_admin():
-    """إنشاء مستخدم مسؤول افتراضي بكلمة مرور ثابتة"""
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM users")
-    row = c.fetchone()
-    count = row[0] if row else 0
-    if count == 0:
+    # 4. إدخال المنتجات مع احتفاظ بالـ IDs الحقيقية
+    product_ids = []
+    for i in range(200):
+        cost = round(random.uniform(500, 50000), 2)
+        price = round(cost * random.uniform(1.15, 1.40), 2)
+        p_id = safe_add_product(f"منتج-{i+1}", f"BAR-{1000+i}", "عام", cost, price, 0, 10)
+        if p_id:
+            product_ids.append(p_id)
+
+    print(f"✅ تم تجهيز: {len(supplier_ids)} موردين، {len(customer_ids)} عملاء، و {len(product_ids)} منتجات.")
+
+    # أحصائيات الأخطاء والنجاح
+    stats = {
+        'purchase': 0, 'sale': 0, 'receipt': 0, 
+        'payment': 0, 'expense': 0, 'adjustment': 0,
+        'errors': 0
+    }
+
+    start_date = datetime.now() - timedelta(days=365)
+
+    # 5. حلقة التغذية الرئيسية (10,000 عملية)
+    for i in range(num_transactions):
+        current_date = (start_date + timedelta(minutes=i * 5)).strftime('%Y-%m-%d %H:%M:%S')
+        
+        # أوزان محسوبة: 30% شراء و 50% بيع لضمان توفر البضاعة وعدم حدوث عجز مخزني
+        op_type = random.choices(
+            ['purchase', 'sale', 'receipt', 'payment', 'expense', 'adjustment'],
+            weights=[30, 50, 8, 5, 5, 2]
+        )[0]
+
         try:
-            # 1. تأكد من وجود دور المدير
-            c.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (1, 'مدير')")
-            # 2. كلمة مرور ثابتة
-            hashed = bcrypt.hashpw("admin".encode(), bcrypt.gensalt()).decode()
-            c.execute("INSERT INTO users (username, password, full_name, role_id) VALUES (?, ?, ?, ?)",
-                      ("admin", hashed, "مدير النظام", 1))
-            conn.commit()
-        except sqlite3.IntegrityError:
-            pass
-    conn.close()
+            if op_type == 'purchase':
+                sup_id = random.choice(supplier_ids)
+                p_id = random.choice(product_ids)
+                qty = random.randint(10, 100)
+                cost = round(random.uniform(500, 50000), 2)
+                
+                inv_id, total, err = create_purchase_invoice(
+                    supplier_id=sup_id,
+                    items=[{'product_id': p_id, 'quantity': qty, 'unit_price': cost}],
+                    currency_code='YER',
+                    exchange_rate=1.0,
+                    invoice_date=current_date
+                )
+                if err:
+                    stats['errors'] += 1
+                    print(f"[خطأ شراء #{i+1}]: {err}")
+                else:
+                    stats['purchase'] += 1
+
+            elif op_type == 'sale':
+                cust_id = random.choice(customer_ids)
+                p_id = random.choice(product_ids)
+                qty = random.randint(1, 5)
+                price = round(random.uniform(600, 60000), 2)
+
+                inv_id, total, err = create_sales_invoice(
+                    customer_id=cust_id,
+                    items=[{'product_id': p_id, 'quantity': qty, 'unit_price': price}],
+                    currency_code='YER',
+                    exchange_rate=1.0,
+                    invoice_date=current_date
+                )
+                if err:
+                    stats['errors'] += 1
+                else:
+                    stats['sale'] += 1
+
+            elif op_type == 'receipt':
+                cust_id = random.choice(customer_ids)
+                amount = round(random.uniform(1000, 100000), 2)
+                v_id, err = create_receipt_voucher(
+                    party_type='customer',
+                    party_id=cust_id,
+                    amount=amount,
+                    account_code=cash_account_id,
+                    date_str=current_date,
+                    notes=f"سند قبض تلقائي #{i+1}"
+                )
+                if err:
+                    stats['errors'] += 1
+                else:
+                    stats['receipt'] += 1
+
+            elif op_type == 'payment':
+                sup_id = random.choice(supplier_ids)
+                amount = round(random.uniform(1000, 100000), 2)
+                v_id, err = create_payment_voucher(
+                    party_type='supplier',
+                    party_id=sup_id,
+                    amount=amount,
+                    account_code=cash_account_id,
+                    date_str=current_date,
+                    notes=f"سند صرف تلقائي #{i+1}"
+                )
+                if err:
+                    stats['errors'] += 1
+                else:
+                    stats['payment'] += 1
+
+            elif op_type == 'expense':
+                amount = round(random.uniform(500, 20000), 2)
+                exp_id, err = create_expense(
+                    category="مصروفات تشغيلية",
+                    amount=amount,
+                    account_code=operating_expense_account_id,
+                    payment_method="cash",
+                    date_str=current_date,
+                    notes=f"مصروف تشغيلي تلقائي #{i+1}"
+                )
+                if err:
+                    stats['errors'] += 1
+                else:
+                    stats['expense'] += 1
+
+            elif op_type == 'adjustment':
+                p_id = random.choice(product_ids)
+                actual_qty = random.randint(0, 50)
+                adj_id, err = create_inventory_adjustment(
+                    product_id=p_id,
+                    actual_qty=actual_qty,
+                    reason="تسوية جردية دورية",
+                    date_str=current_date
+                )
+                if err:
+                    stats['errors'] += 1
+                else:
+                    stats['adjustment'] += 1
+
+        except Exception as e:
+            stats['errors'] += 1
+            print(f"[استثناء غير متوقع في العملية #{i+1}]: {e}")
+
+        # طباعة مؤشر التقدم كل 1000 عملية
+        if (i + 1) % 1000 == 0:
+            print(f"⏳ تم تنفيذ {i+1} عملية من أصل {num_transactions}...")
+
+    # 6. التقرير النهائي
+    print("\n🎉 اكتملت عملية التغذية والاختبار بنجاح!")
+    print("📊 ملخص العمليات المضافة:")
+    print(f" - فواتير الشراء: {stats['purchase']}")
+    print(f" - فواتير البيع: {stats['sale']}")
+    print(f" - سندات القبض: {stats['receipt']}")
+    print(f" - سندات الصرف: {stats['payment']}")
+    print(f" - المصروفات: {stats['expense']}")
+    print(f" - التسويات الجردية: {stats['adjustment']}")
+    print(f" ⚠️ إجمالي الأخطاء/العمليات المرفوضة: {stats['errors']}")
+
+
+if __name__ == "__main__":
+    run_seeder(10000)
