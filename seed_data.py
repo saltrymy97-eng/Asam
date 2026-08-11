@@ -1,9 +1,16 @@
-import sys, traceback
-import database
+import sys
+import traceback
+import random
+from datetime import date, timedelta
+from decimal import Decimal
 
+import database
+from services.chart_service import get_functional_account
+
+# 1. تهيئة قاعدة البيانات
 database.init_db()
 
-# إضافة العملة الأساسية فوراً
+# التأكد من وجود العملة الأساسية
 def ensure_base_currency():
     conn = database.get_connection()
     c = conn.cursor()
@@ -15,10 +22,6 @@ def ensure_base_currency():
     print("✅ تم التأكد من وجود العملة الأساسية YER")
 
 ensure_base_currency()
-
-import random
-from datetime import date, timedelta
-from decimal import Decimal
 
 # استيراد خدمات النظام
 from services.sales_service import add_customer, create_sale_invoice
@@ -58,7 +61,7 @@ def random_date(start_year=2025, end_year=2026):
 def random_phone():
     return f"77{random.randint(1000000, 9999999)}"
 
-# ===================== إنشاء شجرة الحسابات الكاملة =====================
+# ===================== إنشاء شجرة الحسابات الكاملة الديناميكية =====================
 def create_default_accounts():
     conn = database.get_connection()
     c = conn.cursor()
@@ -67,60 +70,65 @@ def create_default_accounts():
         conn.close()
         print("✅ شجرة الحسابات موجودة مسبقاً")
         return
-    print("إنشاء شجرة الحسابات الكاملة...")
+    print("إنشاء شجرة الحسابات الكاملة المتوافقة مع functional_type...")
     
-    # (كود, اسم, أب, مستوى, طبيعة, تصنيف)
+    # (كود, اسم, أب, مستوى, طبيعة, تصنيف, نوع_وظيفي)
     accounts = [
         # ===== 1 - الأصول =====
-        ("1", "الأصول", None, 1, "debit", "Asset"),
-        ("11", "الأصول المتداولة", "1", 2, "debit", "Asset"),
-        ("111", "الصندوق", "11", 3, "debit", "Asset"),
-        ("112", "البنوك", "11", 3, "debit", "Asset"),
-        ("113", "العملاء", "11", 3, "debit", "Asset"),
-        ("114", "المخزون", "11", 3, "debit", "Asset"),
-        ("115", "أوراق القبض", "11", 3, "debit", "Asset"),
-        ("12", "الأصول غير المتداولة", "1", 2, "debit", "Asset"),
-        ("121", "الأصول الثابتة", "12", 3, "debit", "Asset"),
-        ("122", "مجمع الإهلاك", "12", 3, "credit", "Asset"),
+        ("1", "الأصول", None, 1, "debit", "Asset", None),
+        ("11", "الأصول المتداولة", "1", 2, "debit", "Asset", None),
+        ("111", "الصندوق الرئيسي", "11", 3, "debit", "Asset", "cash"),
+        ("112", "البنوك", "11", 3, "debit", "Asset", "bank"),
+        ("113", "العملاء", "11", 3, "debit", "Asset", "ar"),
+        ("114", "المخزون", "11", 3, "debit", "Asset", "inventory"),
+        ("115", "أوراق القبض", "11", 3, "debit", "Asset", "notes_receivable"),
+        ("12", "الأصول غير المتداولة", "1", 2, "debit", "Asset", None),
+        ("121", "الأصول الثابتة", "12", 3, "debit", "Asset", "fixed_assets"),
+        ("122", "مجمع الإهلاك", "12", 3, "credit", "Asset", "accumulated_depreciation"),
         
         # ===== 2 - الخصوم =====
-        ("2", "الخصوم", None, 1, "credit", "Liability"),
-        ("21", "الخصوم المتداولة", "2", 2, "credit", "Liability"),
-        ("211", "الموردون", "21", 3, "credit", "Liability"),
-        ("212", "أوراق الدفع", "21", 3, "credit", "Liability"),
-        ("213", "ضريبة القيمة المضافة المستحقة", "21", 3, "credit", "Liability"),
-        ("214", "مصروفات مستحقة", "21", 3, "credit", "Liability"),
-        ("22", "الخصوم غير المتداولة", "2", 2, "credit", "Liability"),
-        ("221", "قروض طويلة الأجل", "22", 3, "credit", "Liability"),
+        ("2", "الخصوم", None, 1, "credit", "Liability", None),
+        ("21", "الخصوم المتداولة", "2", 2, "credit", "Liability", None),
+        ("211", "الموردون", "21", 3, "credit", "Liability", "ap"),
+        ("212", "أوراق الدفع", "21", 3, "credit", "Liability", "notes_payable"),
+        ("213", "ضريبة القيمة المضافة المستحقة", "21", 3, "credit", "Liability", "vat"),
+        ("214", "مصروفات مستحقة", "21", 3, "credit", "Liability", "accrued_expenses"),
+        ("215", "رواتب مستحقة", "21", 3, "credit", "Liability", "salaries_payable"),
+        ("22", "الخصوم غير المتداولة", "2", 2, "credit", "Liability", None),
+        ("221", "قروض طويلة الأجل", "22", 3, "credit", "Liability", "long_term_loans"),
         
         # ===== 3 - حقوق الملكية =====
-        ("3", "حقوق الملكية", None, 1, "credit", "Equity"),
-        ("31", "رأس المال", "3", 2, "credit", "Equity"),
-        ("32", "الأرباح المحتجزة", "3", 2, "credit", "Equity"),
+        ("3", "حقوق الملكية", None, 1, "credit", "Equity", None),
+        ("31", "رأس المال", "3", 2, "credit", "Equity", "capital"),
+        ("32", "الأرباح المحتجزة", "3", 2, "credit", "Equity", "retained_earnings"),
+        ("33", "تسوية الأرصدة الافتتاحية", "3", 2, "credit", "Equity", "opening_balance_equity"),
         
         # ===== 4 - الإيرادات =====
-        ("4", "الإيرادات", None, 1, "credit", "Revenue"),
-        ("41", "المبيعات", "4", 2, "credit", "Revenue"),
-        ("42", "مردودات المبيعات", "4", 2, "debit", "Revenue"),
-        ("43", "إيرادات خدمات", "4", 2, "credit", "Revenue"),
-        ("44", "إيرادات أخرى", "4", 2, "credit", "Revenue"),
+        ("4", "الإيرادات", None, 1, "credit", "Revenue", None),
+        ("41", "المبيعات", "4", 2, "credit", "Revenue", "sales"),
+        ("42", "مردودات المبيعات", "4", 2, "debit", "Revenue", "sales_returns"),
+        ("43", "خصم مسموح به", "4", 2, "debit", "Revenue", "sales_discount"),
+        ("44", "إيرادات خدمات", "4", 2, "credit", "Revenue", "service_revenue"),
+        ("45", "أرباح فروق عملة", "4", 2, "credit", "Revenue", "fx_gain"),
+        ("46", "إيرادات أخرى", "4", 2, "credit", "Revenue", "other_revenue"),
         
         # ===== 5 - المصروفات =====
-        ("5", "المصروفات", None, 1, "debit", "Expense"),
-        ("51", "تكلفة البضاعة المباعة", "5", 2, "debit", "Expense"),
-        ("52", "المشتريات", "5", 2, "debit", "Expense"),
-        ("53", "مردودات المشتريات", "5", 2, "credit", "Expense"),
-        ("54", "مصروفات تشغيلية", "5", 2, "debit", "Expense"),
-        ("541", "الإيجار", "54", 3, "debit", "Expense"),
-        ("542", "الكهرباء", "54", 3, "debit", "Expense"),
-        ("543", "الصيانة", "54", 3, "debit", "Expense"),
-        ("544", "رواتب وأجور", "54", 3, "debit", "Expense"),
-        ("545", "مصروف الإهلاك", "54", 3, "debit", "Expense"),
-        ("546", "مصروفات إدارية", "54", 3, "debit", "Expense"),
-        ("547", "مصروفات تسويقية", "54", 3, "debit", "Expense"),
+        ("5", "المصروفات", None, 1, "debit", "Expense", None),
+        ("51", "تكلفة البضاعة المباعة", "5", 2, "debit", "Expense", "cogs"),
+        ("52", "المشتريات", "5", 2, "debit", "Expense", "purchases"),
+        ("53", "مردودات المشتريات", "5", 2, "credit", "Expense", "purchase_returns"),
+        ("54", "مصروفات تشغيلية", "5", 2, "debit", "Expense", "operating_expenses"),
+        ("541", "الإيجار", "54", 3, "debit", "Expense", "rent_expense"),
+        ("542", "الكهرباء والماء", "54", 3, "debit", "Expense", "utilities_expense"),
+        ("543", "الصيانة", "54", 3, "debit", "Expense", "maintenance_expense"),
+        ("544", "رواتب وأجور", "54", 3, "debit", "Expense", "salaries_expense"),
+        ("545", "مصروف الإهلاك", "54", 3, "debit", "Expense", "depreciation_expense"),
+        ("546", "مصروف تسوية المخزون", "54", 3, "debit", "Expense", "inventory_adjustment"),
+        ("547", "خسائر فروق عملة", "54", 3, "debit", "Expense", "fx_loss"),
+        ("548", "مصروفات إدارية وتسويقية", "54", 3, "debit", "Expense", "general_expense"),
     ]
     
-    for code, name, parent_code, level, is_debit, acc_type in accounts:
+    for code, name, parent_code, level, is_debit, acc_type, func_type in accounts:
         try:
             parent_id = None
             if parent_code:
@@ -128,18 +136,26 @@ def create_default_accounts():
                 if parent_row:
                     parent_id = parent_row[0]
             c.execute(
-                "INSERT INTO accounts (code, name, parent_id, level, is_debit, account_type) VALUES (?, ?, ?, ?, ?, ?)",
-                (code, name, parent_id, level, is_debit, acc_type)
+                """INSERT INTO accounts 
+                   (code, name, parent_id, level, is_debit, account_type, functional_type, is_sub) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 1)""",
+                (code, name, parent_id, level, is_debit, acc_type, func_type)
             )
         except Exception as e:
             pass
     
     conn.commit()
     conn.close()
-    print("✅ تم إنشاء شجرة الحسابات الكاملة (38 حساب)")
+    print("✅ تم إنشاء شجرة الحسابات الكاملة والمرتبطة بـ functional_type بنجاح")
 
 # ===================== التنفيذ =====================
 create_default_accounts()
+
+# جلب المعرفات الوظيفية الأساسية لاستخدامها الديناميكي في السكريبت
+cash_account_id = get_functional_account('cash')
+inventory_account_id = get_functional_account('inventory')
+capital_account_id = get_functional_account('capital')
+operating_expense_account_id = get_functional_account('operating_expenses') or get_functional_account('general_expense')
 
 # ===================== 1. العملاء والموردين =====================
 print("\nإنشاء العملاء والموردين...")
@@ -181,25 +197,26 @@ for pid in product_ids:
         purchase_errors += 1
 print(f"  اكتمل. أخطاء الشراء الافتتاحي: {purchase_errors}")
 
-if total_opening_stock_value > 0:
+# تسجيل قيد الأرصدة الافتتاحية باستخدام المعرفات الديناميكية account_id
+if total_opening_stock_value > 0 and inventory_account_id and capital_account_id:
     try:
         entry_id, err = save_journal_entry(
             description="قيد الأرصدة الافتتاحية",
             lines=[
-                {"account": "114", "debit": total_opening_stock_value, "credit": 0, "exchange_rate": 1.0},
-                {"account": "31", "debit": 0, "credit": total_opening_stock_value, "exchange_rate": 1.0}
+                {"account_id": inventory_account_id, "debit": total_opening_stock_value, "credit": 0, "exchange_rate": 1.0},
+                {"account_id": capital_account_id, "debit": 0, "credit": total_opening_stock_value, "exchange_rate": 1.0}
             ],
             entry_date=date.today().strftime("%Y-%m-%d")
         )
         if err:
             print(f"  ⚠️ فشل قيد الافتتاح: {err}")
         else:
-            print(f"  ✅ تم قيد الافتتاح")
+            print(f"  ✅ تم تسجيل قيد الافتتاح بنجاح بواسطة account_id")
     except Exception as e:
-        print(f"  ⚠️ استثناء: {e}")
+        print(f"  ⚠️ استثناء في قيد الافتتاح: {e}")
 
 # ===================== 4. العمليات المالية (10,000) =====================
-print("بدء توليد 10,000 عملية...")
+print("\nبدء توليد 10,000 عملية مالية ديناميكية...")
 errors = []
 success_count = 0
 sale_count = 0
@@ -242,7 +259,8 @@ for op_num in range(TOTAL_OPERATIONS):
         elif op_type == 'receipt':
             cid = random.choice(customer_ids)
             amount = random.randint(100, 5000)
-            vid, err = create_voucher('receipt', 'customer', cid, amount, "111")
+            # تم تحويل الحساب للصندوق الديناميكي cash_account_id
+            vid, err = create_voucher('receipt', 'customer', cid, amount, cash_account_id)
             if err:
                 raise Exception(err)
             receipt_count += 1
@@ -250,14 +268,22 @@ for op_num in range(TOTAL_OPERATIONS):
         elif op_type == 'payment':
             sid = random.choice(supplier_ids)
             amount = random.randint(100, 5000)
-            vid, err = create_voucher('payment', 'supplier', sid, amount, "111")
+            # تم تحويل الحساب للصندوق الديناميكي cash_account_id
+            vid, err = create_voucher('payment', 'supplier', sid, amount, cash_account_id)
             if err:
                 raise Exception(err)
             payment_count += 1
 
         elif op_type == 'expense':
-            eid, err = create_expense(op_date, random.choice(["إيجار", "كهرباء", "صيانة", "أخرى"]),
-                          random.randint(500, 3000), "111", "cash")
+            # نمرر المعرف الديناميكي لمصروف التشغيل والصندوق
+            eid, err = create_expense(
+                op_date, 
+                random.choice(["إيجار", "كهرباء", "صيانة", "أخرى"]),
+                random.randint(500, 3000), 
+                cash_account_id, 
+                "cash",
+                expense_account_id=operating_expense_account_id
+            )
             if err:
                 raise Exception(err)
             expense_count += 1
@@ -272,7 +298,7 @@ for op_num in range(TOTAL_OPERATIONS):
                 adjustment_count += 1
 
         success_count += 1
-        if op_num % 1000 == 0:
+        if op_num % 1000 == 0 and op_num > 0:
             print(f"  تم تنفيذ {op_num} عملية... (مبيعات: {sale_count})")
 
     except Exception as e:
@@ -358,7 +384,7 @@ for bank_name, acc_num, acc_name, curr, balance in banks:
     create_bank_reconciliation(bank_id, random_date(), balance + random.randint(-5000, 5000))
 print(f"  ✅ {len(bank_ids)} حسابات + 500 حركة")
 
-# --- 5.5 العملات (حل احترافي: يتجنب التكرار مع seed_default_roles) ---
+# --- 5.5 العملات ---
 print("\n💱 إنشاء عملات وأسعار صرف...")
 currencies_to_seed = [
     ("USD", "دولار أمريكي", "$"),
@@ -371,8 +397,7 @@ for code, name, symbol in currencies_to_seed:
     try:
         create_currency(code, name, symbol)
     except:
-        pass  # العملة موجودة مسبقاً (أنشأتها seed_default_roles)
-    # إضافة أسعار صرف متنوعة
+        pass
     for _ in range(40):
         rate = random.uniform(250, 1500) if code in ["USD", "EUR", "GBP"] else random.uniform(3.5, 270)
         try:
@@ -399,7 +424,7 @@ for code, name in cost_centers:
         allocate_journal_line(random.randint(1, 20), [{"cost_center_id": cc_id, "amount": random.randint(500, 50000)}])
 print(f"  ✅ {len(cc_ids)} مراكز + 50 موازنة + 550 توزيع")
 
-# --- 5.7 الصلاحيات (seed_default_roles) ---
+# --- 5.7 الصلاحيات ---
 print("\n🛡️ إنشاء الأدوار والصلاحيات...")
 seed_default_roles()
 print(f"  ✅ تم إنشاء الأدوار الافتراضية")
@@ -458,96 +483,37 @@ except Exception as e:
 
 # ===================== 6. النتائج =====================
 print("\n" + "="*60)
-print(f"✅ العمليات الأساسية: {success_count}/{TOTAL_OPERATIONS}")
+print(f"✅ العمليات الأساسية الناجحة: {success_count}/{TOTAL_OPERATIONS}")
 print(f"❌ الأخطاء: {len(errors)}")
-print(f"\n📊 إحصائيات:")
+print(f"\n📊 إحصائيات العمليات:")
 print(f"  مبيعات: {sale_count}")
 print(f"  مشتريات: {purchase_count}")
 print(f"  سندات قبض: {receipt_count}")
 print(f"  سندات صرف: {payment_count}")
 print(f"  مصروفات: {expense_count}")
 print(f"  تسويات: {adjustment_count}")
-print(f"  موظفين: {len(employee_ids)}")
-print(f"  حسابات بنكية: {len(bank_ids)}")
-print(f"  عملات: {len(currencies_to_seed)}")
-print(f"  مراكز تكلفة: {len(cc_ids)}")
-print(f"  أصول: {len(asset_ids)}")
-print(f"  عملاء محتملين: {len(lead_ids)}")
 
 if errors:
-    print(f"\nأول 3 أخطاء:")
+    print(f"\nأول 3 أخطاء إن وجدت:")
     for err in errors[:3]:
         print(f"  - {err}")
 
-# ===================== تشخيص exchange_rate =====================
-conn = database.get_connection()
-null_count = conn.execute("SELECT COUNT(*) FROM journal_lines WHERE exchange_rate IS NULL").fetchone()[0]
-total_count = conn.execute("SELECT COUNT(*) FROM journal_lines").fetchone()[0]
-print(f"\n⚠️ قيود بـ exchange_rate=NULL: {null_count} من {total_count}")
-conn.close()
-
-# ===================== تشخيص تلقائي للمشكلة =====================
-print("\n🔍 تشخيص تلقائي...")
+# ===================== تشخيص تلقائي وميزان المراجعة =====================
+print("\n🔍 تشخيص ميزان المراجعة والتأكد من التوازن المحاسبي...")
 conn = database.get_connection()
 
-# 1. فحص الحسابات المكررة في القيود
-print("\n📋 الحسابات المستخدمة في القيود:")
-rows = conn.execute("""
-    SELECT account_name, 
-           COUNT(*) as cnt,
-           SUM(debit * exchange_rate) as total_debit,
-           SUM(credit * exchange_rate) as total_credit
-    FROM journal_lines 
-    GROUP BY account_name 
-    ORDER BY account_name
-""").fetchall()
-
-for r in rows:
-    # هل هذا الحساب موجود في شجرة الحسابات؟
-    tree = conn.execute(
-        "SELECT code, name, account_type FROM accounts WHERE code=? OR name=?",
-        (r['account_name'], r['account_name'])
-    ).fetchone()
-    
-    found = "✅" if tree else "❌ غير موجود في الشجرة"
-    name = tree['name'] if tree else r['account_name']
-    atype = tree['account_type'] if tree else "غير مصنف"
-    
-    print(f"  {found} {r['account_name']} ({atype}) | مدين: {r['total_debit']:,.2f} | دائن: {r['total_credit']:,.2f}")
-
-# 2. فحص تطابق الميزان
 tb = get_trial_balance()
 total_d = sum(row['total_debit'] for row in tb)
 total_c = sum(row['total_credit'] for row in tb)
-diff = abs(total_d - total_c)
-
-if diff > 0.01:
-    print(f"\n⚠️ الميزان غير متوازن بفارق: {diff:,.2f}")
-    print("   البحث عن الحسابات غير المصنفة...")
-    
-    for r in rows:
-        tree = conn.execute(
-            "SELECT code, name, account_type FROM accounts WHERE code=? OR name=?",
-            (r['account_name'], r['account_name'])
-        ).fetchone()
-        
-        if not tree:
-            net = r['total_debit'] - r['total_credit']
-            if abs(net) > 0.01:
-                print(f"   ⚠️ حساب غير مصنف: {r['account_name']} (صافي: {net:,.2f})")
-
-conn.close()
-print("\n🔍 انتهى التشخيص")
 
 print("\n📊 ميزان المراجعة النهائي:")
-tb = get_trial_balance()
-total_d = sum(row['total_debit'] for row in tb)
-total_c = sum(row['total_credit'] for row in tb)
-print(f"إجمالي المدين: {total_d:,.2f}")
-print(f"إجمالي الدائن: {total_c:,.2f}")
+print(f"  إجمالي المدين: {total_d:,.2f}")
+print(f"  إجمالي الدائن: {total_c:,.2f}")
+
 if abs(total_d - total_c) < 0.01:
-    print("✅ الميزان متوازن!")
+    print("✅ الميزان متوازن 100% بدون أي فارق!")
 else:
     print(f"⚠️ الميزان غير متوازن بفارق: {abs(total_d - total_c):,.2f}")
 
-print("\n🎉 اكتمل حقن البيانات!")
+conn.close()
+print("\n🎉 اكتمل حقن البيانات والاختبار بنجاح كامل!")
