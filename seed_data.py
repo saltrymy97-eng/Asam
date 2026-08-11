@@ -1,16 +1,20 @@
 import os
+import sys
 import random
 import sqlite3
 from datetime import datetime, timedelta
 
-# 1. الاستيرادات الموحدة في أعلى الملف (PEP 8)
+# ضمان التعرف على مسار الجذر في Streamlit Cloud
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+# 1. الاستيرادات المحدثة وفقاً لأسماء ملفات مشروعك الحقيقية
 import database
 from services.chart_service import get_functional_account
-from services.invoice_service import create_purchase_invoice, create_sales_invoice
-from services.product_service import add_product
-from services.voucher_service import create_receipt_voucher, create_payment_voucher
-from services.expense_service import create_expense
-from services.inventory_service import create_inventory_adjustment
+from services.purchases_service import create_purchase_invoice
+from services.sales_service import create_sales_invoice
+from services.receipts_service import create_receipt_voucher, create_payment_voucher
+from services.expenses_service import create_expense
+from services.inventory_adjustment_service import create_inventory_adjustment
 
 
 def ensure_base_currency():
@@ -94,18 +98,18 @@ def run_seeder(num_transactions=10000):
     conn.commit()
     conn.close()
 
-    # 4. إدخال المنتجات مع احتفاظ بالـ IDs الحقيقية
+    # 4. إدخال المنتجات مع الاحتفاظ بالـ IDs الحقيقية ورصيد افتتاحي بسيط لمنع العجز
     product_ids = []
     for i in range(200):
         cost = round(random.uniform(500, 50000), 2)
         price = round(cost * random.uniform(1.15, 1.40), 2)
-        p_id = safe_add_product(f"منتج-{i+1}", f"BAR-{1000+i}", "عام", cost, price, 0, 10)
+        p_id = safe_add_product(f"منتج-{i+1}", f"BAR-{1000+i}", "عام", cost, price, random.randint(20, 50), 10)
         if p_id:
             product_ids.append(p_id)
 
     print(f"✅ تم تجهيز: {len(supplier_ids)} موردين، {len(customer_ids)} عملاء، و {len(product_ids)} منتجات.")
 
-    # أحصائيات الأخطاء والنجاح
+    # إحصائيات الأخطاء والنجاح
     stats = {
         'purchase': 0, 'sale': 0, 'receipt': 0, 
         'payment': 0, 'expense': 0, 'adjustment': 0,
@@ -118,7 +122,6 @@ def run_seeder(num_transactions=10000):
     for i in range(num_transactions):
         current_date = (start_date + timedelta(minutes=i * 5)).strftime('%Y-%m-%d %H:%M:%S')
         
-        # أوزان محسوبة: 30% شراء و 50% بيع لضمان توفر البضاعة وعدم حدوث عجز مخزني
         op_type = random.choices(
             ['purchase', 'sale', 'receipt', 'payment', 'expense', 'adjustment'],
             weights=[30, 50, 8, 5, 5, 2]
@@ -140,7 +143,6 @@ def run_seeder(num_transactions=10000):
                 )
                 if err:
                     stats['errors'] += 1
-                    print(f"[خطأ شراء #{i+1}]: {err}")
                 else:
                     stats['purchase'] += 1
 
@@ -211,7 +213,7 @@ def run_seeder(num_transactions=10000):
 
             elif op_type == 'adjustment':
                 p_id = random.choice(product_ids)
-                actual_qty = random.randint(0, 50)
+                actual_qty = random.randint(10, 50)
                 adj_id, err = create_inventory_adjustment(
                     product_id=p_id,
                     actual_qty=actual_qty,
@@ -225,7 +227,6 @@ def run_seeder(num_transactions=10000):
 
         except Exception as e:
             stats['errors'] += 1
-            print(f"[استثناء غير متوقع في العملية #{i+1}]: {e}")
 
         # طباعة مؤشر التقدم كل 1000 عملية
         if (i + 1) % 1000 == 0:
