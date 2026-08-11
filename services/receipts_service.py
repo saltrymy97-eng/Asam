@@ -1,9 +1,10 @@
-# services/receipts_service.py – سندات القبض والصرف الاحترافية (إصدار احترافي)
+# services/receipts_service.py – سندات القبض والصرف الاحترافية (إصدار احترافي - حسابات وظيفية)
 import sqlite3
 from datetime import date
 from database import get_connection
 from services.audit_service import log_action
 from services.accounting_service import save_journal_entry
+from services.chart_service import get_functional_account
 
 def create_vouchers_table():
     """إنشاء جدول السندات إذا لم يكن موجوداً"""
@@ -141,16 +142,21 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
             party_name = conn.execute("SELECT name FROM suppliers WHERE id=?", 
                                      (party_id,)).fetchone()["name"]
         
+        # ✅ استخدام الحسابات الوظيفية
+        customers_account = get_functional_account("customers")
+        suppliers_account = get_functional_account("suppliers")
+        cash_account_code = get_functional_account("cash")
+        
         if voucher_type == 'receipt':
             # قبض: مدين الصندوق، دائن العميل
             lines = [
                 {"account": account, "debit": amount, "credit": 0},
-                {"account": "113", "debit": 0, "credit": amount}  # العملاء
+                {"account": customers_account, "debit": 0, "credit": amount}
             ]
         else:
             # صرف: مدين المورد، دائن الصندوق
             lines = [
-                {"account": "211", "debit": amount, "credit": 0},  # الموردون
+                {"account": suppliers_account, "debit": amount, "credit": 0},
                 {"account": account, "debit": 0, "credit": amount}
             ]
         
@@ -171,12 +177,12 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
                     (entry_id, voucher_id))
         
         # ✅ ربط السندات بوحدة الصندوق تلقائياً
-        if account == "111":
+        if account == cash_account_code:
             try:
                 from services.cash_service import add_cash_transaction, get_all_cash_accounts
                 cash_accounts = get_all_cash_accounts(active_only=True)
                 if cash_accounts:
-                    cash_acc = cash_accounts[0]  # أول حساب صندوق نشط
+                    cash_acc = cash_accounts[0]
                     trans_type = "deposit" if voucher_type == "receipt" else "withdrawal"
                     add_cash_transaction(
                         cash_acc['id'],
@@ -186,7 +192,7 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
                         amount
                     )
             except Exception:
-                pass  # إذا فشلت حركة الصندوق، لا يؤثر على السند
+                pass
         
         conn.commit()
         
