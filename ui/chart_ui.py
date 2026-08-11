@@ -1,4 +1,4 @@
-# ui/chart_ui.py – واجهة شجرة الحسابات (تصميم زجاجي فخم + توضيح وجهة الحساب + اختيار التصنيف)
+# ui/chart_ui.py – واجهة شجرة الحسابات (تصميم زجاجي فخم + توضيح وجهة الحساب + دعم الحسابات الوظيفية)
 import streamlit as st
 import pandas as pd
 from services.chart_service import (
@@ -21,11 +21,28 @@ ACCENT_ORANGE = "#F59E0B"
 ACCENT_RED = "#EF4444"
 ACCENT_PURPLE = "#8B5CF6"
 
+# خيارات الأنواع الوظيفية للحسابات التلقائية للنظام
+FUNCTIONAL_TYPES = {
+    "بدون (حساب عادي/فرعي)": None,
+    "النقدية/الصندوق (cash)": "cash",
+    "البنك (bank)": "bank",
+    "المخزون (inventory)": "inventory",
+    "العملاء/مدينون (accounts_receivable)": "accounts_receivable",
+    "الموردون/دائنون (accounts_payable)": "accounts_payable",
+    "إيرادات المبيعات (sales_revenue)": "sales_revenue",
+    "تكلفة البضاعة المباعة (cogs)": "cogs",
+    "ضريبة المبيعات/مخرجات (sales_tax)": "sales_tax",
+    "ضريبة المشتريات/مدخلات (purchase_tax)": "purchase_tax",
+    "المصروفات العامة (operating_expense)": "operating_expense",
+    "رأس المال (capital)": "capital",
+    "الأرباح المبقاة (retained_earnings)": "retained_earnings"
+}
+
 def show():
     st.markdown(f"""
     <div style="margin-bottom:2rem; text-align:right;">
         <h1 style="color:{TEXT_PRIMARY}; font-size:2.8rem; margin:0; text-shadow:0 0 20px {ACCENT_PURPLE};">🧾 شجرة الحسابات</h1>
-        <p style="color:{TEXT_SECONDARY}; font-size:1.2rem;">إدارة الحسابات الهرمية للنظام المحاسبي</p>
+        <p style="color:{TEXT_SECONDARY}; font-size:1.2rem;">إدارة الحسابات الهرمية والربط الوظيفي للنظام المحاسبي</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -41,7 +58,7 @@ def show():
             df = pd.DataFrame(tree)
             df["display_name"] = df.apply(lambda r: " " * r["indent"] + r["name"], axis=1)
             
-            # 🆕 تحديد أين يظهر الحساب بناءً على تصنيفه
+            # تحديد أين يظهر الحساب بناءً على تصنيفه
             def where_appears(acc_type):
                 if acc_type in ("Asset", "Liability", "Equity"):
                     return "الميزانية العمومية"
@@ -52,13 +69,18 @@ def show():
             
             df["يظهر في"] = df["account_type"].apply(where_appears)
             
+            # إضافة عمود النوع الوظيفي إذا كان متوفراً في DataFrame
+            if "functional_type" not in df.columns:
+                df["functional_type"] = "-"
+
             # إعادة ترتيب وتسمية الأعمدة للعرض
-            df_display = df[["code", "display_name", "level", "is_debit", "يظهر في"]].rename(
+            df_display = df[["code", "display_name", "level", "account_type", "functional_type", "يظهر في"]].rename(
                 columns={
-                    "display_name": "اسم الحساب",
                     "code": "الكود",
+                    "display_name": "اسم الحساب",
                     "level": "المستوى",
-                    "is_debit": "طبيعة الحساب",
+                    "account_type": "التصنيف",
+                    "functional_type": "النوع الوظيفي",
                     "يظهر في": "يظهر في"
                 }
             )
@@ -77,14 +99,21 @@ def show():
         code = col1.text_input("كود الحساب")
         name = col2.text_input("اسم الحساب")
         
-        # 🆕 حقل اختيار تصنيف الحساب
-        account_type = st.selectbox(
-            "تصنيف الحساب (يحدد أين يظهر في القوائم المالية)",
+        col3, col4 = st.columns(2)
+        
+        account_type = col3.selectbox(
+            "تصنيف الحساب الرئيسي",
             ["", "Asset - أصل", "Liability - خصم", "Equity - حقوق ملكية", "Revenue - إيراد", "Expense - مصروف"],
-            help="اختر التصنيف المناسب. يحدد ما إذا كان الحساب يظهر في الميزانية العمومية أم قائمة الدخل"
+            help="يحدد أين يظهر الحساب في القوائم المالية"
         )
         
-        # تحويل القيمة المعروضة إلى القيمة المخزنة
+        selected_func_label = col4.selectbox(
+            "النوع الوظيفي للنظام (اختياري)",
+            list(FUNCTIONAL_TYPES.keys()),
+            help="إذا كان هذا الحساب مخصصاً لاستقبال فواتير المبيعات/المشتريات أو الصندوق تلقائياً اختر نوعه هنا"
+        )
+        
+        # تحويل القيم المعروضة إلى القيمة التخزينية
         account_type_map = {
             "Asset - أصل": "Asset",
             "Liability - خصم": "Liability",
@@ -93,14 +122,16 @@ def show():
             "Expense - مصروف": "Expense"
         }
         selected_account_type = account_type_map.get(account_type)
+        functional_type = FUNCTIONAL_TYPES.get(selected_func_label)
 
         if st.button("💾 حفظ الحساب"):
             if not code or not name:
                 st.error("الكود والاسم مطلوبان")
             else:
-                success, error = add_account(code, name, parent_id, selected_account_type)
+                # ملاحظة: تم إرسال functional_type لدالة add_account
+                success, error = add_account(code, name, parent_id, selected_account_type, functional_type=functional_type)
                 if success:
-                    st.success(f"تم إضافة الحساب {code} - {name}")
+                    st.success(f"تم إضافة الحساب {code} - {name} بنجاح!")
                     st.rerun()
                 else:
                     st.error(error)
