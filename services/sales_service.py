@@ -1,4 +1,4 @@
-# services/sales_service.py – (منطق أعمال المبيعات المُحسَّن (إصدار احترافي
+# services/sales_service.py – (منطق أعمال المبيعات المُحسَّن (إصدار احترافي - حسابات وظيفية)
 import sqlite3
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
@@ -7,6 +7,7 @@ from services.audit_service import log_action
 from services.vat_service import get_vat_rate
 from services.currency_service import get_exchange_rate, get_base_currency
 from services.fifo_service import consume_fifo, get_fifo_cost
+from services.chart_service import get_functional_account
 
 
 # ---------- دوال مساعدة ----------
@@ -210,7 +211,7 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
                 (product_id, total_qty, f"فاتورة مبيعات #{invoice_id}")
             )
 
-        # 7. إنشاء القيد المحاسبي (قبل commit)
+        # 7. إنشاء القيد المحاسبي (قبل commit) - باستخدام الحسابات الوظيفية
         customer_name = "غير معروف"
         try:
             row = conn.execute("SELECT name FROM customers WHERE id = ?", (customer_id,)).fetchone()
@@ -221,16 +222,23 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
 
         from services.accounting_service import save_journal_entry
 
+        # ✅ استخدام الحسابات الوظيفية بدلاً من الأكواد الثابتة
+        customers_account = get_functional_account("customers")
+        sales_account = get_functional_account("sales_revenue")
+        vat_account = get_functional_account("vat_payable")
+        cogs_account = get_functional_account("cogs")
+        inventory_account = get_functional_account("inventory")
+
         lines = [
             {
-                "account": "113",                # العملاء (مدين)
+                "account": customers_account,      # العملاء (مدين)
                 "debit": float(total_local),
                 "credit": 0,
                 "currency_code": currency_code,
                 "exchange_rate": float(exchange_rate)
             },
             {
-                "account": "41",                 # المبيعات (دائن)
+                "account": sales_account,          # المبيعات (دائن)
                 "debit": 0,
                 "credit": float(subtotal_local),
                 "currency_code": currency_code,
@@ -240,7 +248,7 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
 
         if float(vat_amount_local) > 0:
             lines.append({
-                "account": "213",                # ضريبة القيمة المضافة المستحقة (دائن)
+                "account": vat_account,            # ضريبة القيمة المضافة المستحقة (دائن)
                 "debit": 0,
                 "credit": float(vat_amount_local),
                 "currency_code": currency_code,
@@ -250,14 +258,14 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
         if float(total_cogs) > 0:
             lines.extend([
                 {
-                    "account": "51",             # تكلفة البضاعة المباعة (مدين)
+                    "account": cogs_account,       # تكلفة البضاعة المباعة (مدين)
                     "debit": float(total_cogs),
                     "credit": 0,
                     "currency_code": currency_code,
                     "exchange_rate": float(exchange_rate)
                 },
                 {
-                    "account": "114",            # المخزون (دائن)
+                    "account": inventory_account,  # المخزون (دائن)
                     "debit": 0,
                     "credit": float(total_cogs),
                     "currency_code": currency_code,
