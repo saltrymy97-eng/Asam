@@ -6,7 +6,8 @@ from services.chart_service import (
     add_account,
     get_accounts_tree,
     build_tree,
-    get_account_options
+    get_account_options,
+    delete_account  # <--- تم استيراد دالة الحذف
 )
 
 # ========== ألوان التصميم ==========
@@ -84,7 +85,25 @@ def show():
                     "يظهر في": "يظهر في"
                 }
             )
+            
+            # عرض الجدول مع أزرار الحذف (تعديل جديد)
             st.dataframe(df_display, use_container_width=True, hide_index=True)
+            
+            # إضافة أزرار الحذف أسفل الجدول أو بجانب كل صف
+            st.markdown("---")
+            st.subheader("🗑️ إدارة الحسابات")
+            for acc in accounts:
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    st.text(f"{acc['code']} - {acc['name']}")
+                with col2:
+                    if st.button(f"🗑️ حذف", key=f"del_{acc['id']}"):
+                        success, message = delete_account(acc['id'])
+                        if success:
+                            st.success(message)
+                            st.rerun()
+                        else:
+                            st.error(message)
         else:
             st.info("لا توجد حسابات. أضف حسابات جديدة من التبويب الثاني.")
 
