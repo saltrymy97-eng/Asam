@@ -3,23 +3,21 @@ import sqlite3
 from database import get_connection
 from services.audit_service import log_action
 
-# الأنواع الوظيفية المتاحة
+# خيارات الأنواع الوظيفية للحسابات (مطابقة للواجهة تماماً)
 FUNCTIONAL_TYPES = {
-    "cash": "صندوق النقدية",
-    "bank": "حساب بنكي",
-    "customers": "العملاء (ذمم مدينة)",
-    "suppliers": "الموردين (ذمم دائنة)",
-    "inventory": "المخزون",
-    "sales_revenue": "إيرادات المبيعات",
-    "cogs": "تكلفة البضاعة المباعة",
-    "vat_payable": "ضريبة القيمة المضافة المستحقة",
-    "vat_receivable": "ضريبة القيمة المضافة المدخلة",
-    "expense": "مصروف",
-    "fixed_asset": "أصل ثابت",
-    "depreciation": "مجمع الإهلاك",
-    "equity": "حقوق ملكية",
-    "salary": "رواتب",
-    "retained_earnings": "أرباح محتجزة",
+    "None": "بدون (حساب عادي/فرعي)",
+    "cash": "(cash) النقدية/الصندوق",
+    "bank": "(bank) البنك",
+    "inventory": "(inventory) المخزون",
+    "accounts_receivable": "(accounts_receivable) العملاء/مدينون",
+    "accounts_payable": "(accounts_payable) الموردون/دائنون",
+    "sales_revenue": "(sales_revenue) إيرادات المبيعات",
+    "cogs": "(cogs) تكلفة البضاعة المباعة",
+    "sales_tax": "(sales_tax) ضريبة المبيعات/مخرجات",
+    "purchase_tax": "(purchase_tax) ضريبة المشتريات/مدخلات",
+    "operating_expense": "(operating_expense) المصروفات العامة",
+    "capital": "(capital) رأس المال",
+    "retained_earnings": "(retained_earnings) الأرباح المبقاة",
 }
 
 def create_accounts_table():
@@ -116,7 +114,7 @@ def get_functional_account(functional_type):
     ترجع كود الحساب (code) إذا وجد، أو ترسل خطأ إذا لم يوجد.
     
     Parameters:
-    - functional_type: مثل 'cash', 'sales_revenue', 'customers', إلخ.
+    - functional_type: مثل 'cash', 'sales_revenue', 'accounts_receivable', إلخ.
     
     Returns:
     - كود الحساب (نص).
@@ -141,14 +139,12 @@ def get_functional_account(functional_type):
 def delete_account(account_id):
     """حذف حساب من قاعدة البيانات (مع التحقق من عدم استخدامه)"""
     conn = get_connection()
-    # التحقق من أن الحساب غير مستخدم في القيود (بشكل آمن)
     try:
         used = conn.execute(
             "SELECT COUNT(*) FROM journal_lines WHERE account_id = ?",
             (account_id,)
         ).fetchone()[0]
     except sqlite3.OperationalError:
-        # إذا لم يكن الجدول موجوداً، نعتبر أن الحساب غير مستخدم
         used = 0
     
     if used > 0:
@@ -160,5 +156,5 @@ def delete_account(account_id):
     conn.close()
     return True, "تم حذف الحساب بنجاح."
 
-# إنشاء جدول الحسابات فقط عند بدء التشغيل
+# إنشاء جدول الحسابات عند بدء التشغيل
 create_accounts_table()
