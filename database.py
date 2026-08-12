@@ -21,7 +21,12 @@ def init_db():
     conn = get_connection()
     c = conn.cursor()
 
-    # ========== 1. المستخدمين (الاعتماد على role_id فقط) ==========
+    # ========== 1. الصلاحيات والأدوار والمستخدمين ==========
+    c.execute('''CREATE TABLE IF NOT EXISTS roles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE NOT NULL
+    )''')
+
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
@@ -31,7 +36,59 @@ def init_db():
         FOREIGN KEY (role_id) REFERENCES roles(id)
     )''')
 
-    # ========== 2. المنتجات (أسعار وكميات غير سالبة) ==========
+    c.execute('''CREATE TABLE IF NOT EXISTS role_permissions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        role_id INTEGER NOT NULL,
+        module TEXT NOT NULL,
+        can_view INTEGER DEFAULT 1 CHECK(can_view IN (0,1)),
+        can_add INTEGER DEFAULT 0 CHECK(can_add IN (0,1)),
+        can_edit INTEGER DEFAULT 0 CHECK(can_edit IN (0,1)),
+        can_delete INTEGER DEFAULT 0 CHECK(can_delete IN (0,1)),
+        can_approve INTEGER DEFAULT 0 CHECK(can_approve IN (0,1)),
+        FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+        UNIQUE(role_id, module)
+    )''')
+
+    # ========== 2. شجرة الحسابات (مقدمة لربط القيود بها) ==========
+    c.execute('''CREATE TABLE IF NOT EXISTS accounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        parent_id INTEGER,
+        level INTEGER DEFAULT 1,
+        is_debit TEXT DEFAULT 'debit',
+        is_active INTEGER CHECK(is_active IN (0,1)) DEFAULT 1,
+        account_type TEXT CHECK(account_type IN ('Asset','Liability','Equity','Revenue','Expense')),
+        functional_type TEXT,
+        FOREIGN KEY (parent_id) REFERENCES accounts(id) ON DELETE SET NULL
+    )''')
+
+    # ========== 3. القيود المحاسبية (محدثة لدعم account_id) ==========
+    c.execute('''CREATE TABLE IF NOT EXISTS journal_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entry_number TEXT UNIQUE,
+        date TEXT NOT NULL DEFAULT (date('now')),
+        description TEXT NOT NULL,
+        reference TEXT
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS journal_lines (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entry_id INTEGER NOT NULL,
+        journal_entry_id INTEGER,
+        account_id INTEGER,
+        account_name TEXT,
+        debit REAL DEFAULT 0 CHECK(debit >= 0),
+        credit REAL DEFAULT 0 CHECK(credit >= 0),
+        currency_code TEXT DEFAULT 'YER',
+        exchange_rate REAL DEFAULT 1.0,
+        CHECK((debit > 0 AND credit = 0) OR (credit > 0 AND debit = 0) OR (debit = 0 AND credit = 0)),
+        FOREIGN KEY (entry_id) REFERENCES journal_entries(id) ON DELETE CASCADE,
+        FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id) ON DELETE CASCADE,
+        FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE RESTRICT
+    )''')
+
+    # ========== 4. المنتجات والمخزون ==========
     c.execute('''CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -53,6 +110,26 @@ def init_db():
         FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
     )''')
 
+    c.execute('''CREATE TABLE IF NOT EXISTS inventory_batches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER NOT NULL,
+        quantity REAL NOT NULL CHECK(quantity > 0),
+        unit_cost REAL NOT NULL CHECK(unit_cost >= 0),
+        batch_date TEXT NOT NULL DEFAULT (date('now')),
+        reference TEXT,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS fifo_consumptions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        batch_id INTEGER NOT NULL,
+        consumed_qty REAL NOT NULL CHECK(consumed_qty > 0),
+        consumption_date TEXT NOT NULL DEFAULT (date('now')),
+        reference TEXT,
+        FOREIGN KEY (batch_id) REFERENCES inventory_batches(id) ON DELETE CASCADE
+    )''')
+
+    # ========== 5. العملاء والموردين ==========
     c.execute('''CREATE TABLE IF NOT EXISTS customers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -67,7 +144,7 @@ def init_db():
         address TEXT
     )''')
 
-    # ========== 3. الفواتير ==========
+    # ========== 6. الفواتير ==========
     c.execute('''CREATE TABLE IF NOT EXISTS invoices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
@@ -97,27 +174,7 @@ def init_db():
         FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT
     )''')
 
-    # ========== 4. القيود المحاسبية (حماية من التكرار + منع مدين ودائن معاً) ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS journal_entries (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        date TEXT NOT NULL DEFAULT (date('now')),
-        description TEXT NOT NULL,
-        reference TEXT UNIQUE
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS journal_lines (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        entry_id INTEGER NOT NULL,
-        account_name TEXT NOT NULL,
-        debit REAL DEFAULT 0 CHECK(debit >= 0),
-        credit REAL DEFAULT 0 CHECK(credit >= 0),
-        currency_code TEXT DEFAULT 'YER',
-        exchange_rate REAL DEFAULT 1.0,
-        CHECK((debit > 0 AND credit = 0) OR (credit > 0 AND debit = 0)),
-        FOREIGN KEY (entry_id) REFERENCES journal_entries(id) ON DELETE CASCADE
-    )''')
-
-    # ========== 5. الموارد البشرية ==========
+    # ========== 7. الموارد البشرية والرواتب ==========
     c.execute('''CREATE TABLE IF NOT EXISTS employees (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -134,41 +191,6 @@ def init_db():
         FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
     )''')
 
-    # ========== 6. شجرة الحسابات ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS accounts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        code TEXT UNIQUE NOT NULL,
-        name TEXT NOT NULL,
-        parent_id INTEGER,
-        level INTEGER DEFAULT 1,
-        is_debit TEXT DEFAULT 'debit',
-        is_active INTEGER CHECK(is_active IN (0,1)) DEFAULT 1,
-        account_type TEXT CHECK(account_type IN ('Asset','Liability','Equity','Revenue','Expense')),
-        functional_type TEXT,
-        FOREIGN KEY (parent_id) REFERENCES accounts(id) ON DELETE SET NULL
-    )''')
-
-    # ========== 7. المخزون و FIFO ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS inventory_batches (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        product_id INTEGER NOT NULL,
-        quantity REAL NOT NULL CHECK(quantity > 0),
-        unit_cost REAL NOT NULL CHECK(unit_cost >= 0),
-        batch_date TEXT NOT NULL DEFAULT (date('now')),
-        reference TEXT,
-        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS fifo_consumptions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        batch_id INTEGER NOT NULL,
-        consumed_qty REAL NOT NULL CHECK(consumed_qty > 0),
-        consumption_date TEXT NOT NULL DEFAULT (date('now')),
-        reference TEXT,
-        FOREIGN KEY (batch_id) REFERENCES inventory_batches(id) ON DELETE CASCADE
-    )''')
-
-    # ========== 8. الرواتب ==========
     c.execute('''CREATE TABLE IF NOT EXISTS employee_salaries (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         employee_id INTEGER UNIQUE NOT NULL,
@@ -195,7 +217,7 @@ def init_db():
         FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
     )''')
 
-    # ========== 9. إغلاق الفترات ==========
+    # ========== 8. إغلاق الفترات ==========
     c.execute('''CREATE TABLE IF NOT EXISTS closed_periods (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         period_type TEXT NOT NULL,
@@ -205,26 +227,7 @@ def init_db():
         UNIQUE(period_type, period_value)
     )''')
 
-    # ========== 10. الصلاحيات والأدوار ==========
-    c.execute('''CREATE TABLE IF NOT EXISTS roles (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT UNIQUE NOT NULL
-    )''')
-
-    c.execute('''CREATE TABLE IF NOT EXISTS role_permissions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        role_id INTEGER NOT NULL,
-        module TEXT NOT NULL,
-        can_view INTEGER DEFAULT 1 CHECK(can_view IN (0,1)),
-        can_add INTEGER DEFAULT 0 CHECK(can_add IN (0,1)),
-        can_edit INTEGER DEFAULT 0 CHECK(can_edit IN (0,1)),
-        can_delete INTEGER DEFAULT 0 CHECK(can_delete IN (0,1)),
-        can_approve INTEGER DEFAULT 0 CHECK(can_approve IN (0,1)),
-        FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
-        UNIQUE(role_id, module)
-    )''')
-
-    # ========== 11. سجل التدقيق ==========
+    # ========== 9. سجل التدقيق ==========
     c.execute('''CREATE TABLE IF NOT EXISTS audit_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT,
@@ -236,7 +239,7 @@ def init_db():
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     )''')
 
-    # ========== 12. مراكز التكلفة ==========
+    # ========== 10. مراكز التكلفة ==========
     c.execute('''CREATE TABLE IF NOT EXISTS cost_centers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT UNIQUE NOT NULL,
@@ -270,7 +273,7 @@ def init_db():
         UNIQUE(cost_center_id, account_id, fiscal_year)
     )''')
 
-    # ========== 13. العملات ==========
+    # ========== 11. العملات والبنوك ==========
     c.execute('''CREATE TABLE IF NOT EXISTS currencies (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT UNIQUE NOT NULL,
@@ -291,7 +294,6 @@ def init_db():
         UNIQUE(from_currency, to_currency, date)
     )''')
 
-    # ========== 14. البنوك ==========
     c.execute('''CREATE TABLE IF NOT EXISTS bank_accounts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         bank_name TEXT NOT NULL,
@@ -332,7 +334,7 @@ def init_db():
         FOREIGN KEY (bank_account_id) REFERENCES bank_accounts(id) ON DELETE CASCADE
     )''')
 
-    # ========== 15. المرفقات ==========
+    # ========== 12. المرفقات وضريبة القيمة المضافة ==========
     c.execute('''CREATE TABLE IF NOT EXISTS attachments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         filename TEXT NOT NULL,
@@ -346,7 +348,6 @@ def init_db():
         uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
-    # ========== 16. ضريبة ==========
     c.execute('''CREATE TABLE IF NOT EXISTS vat_config (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         rate REAL NOT NULL DEFAULT 0.15 CHECK(rate >= 0 AND rate <= 1),
@@ -355,7 +356,7 @@ def init_db():
     )''')
     c.execute("INSERT OR IGNORE INTO vat_config (id, rate, is_active) VALUES (1, 0.15, 1)")
 
-    # ========== 17. السندات والمصروفات والتسويات والافتتاحية وإعادة التقييم ==========
+    # ========== 13. السندات والمصروفات والتسويات ==========
     c.execute('''CREATE TABLE IF NOT EXISTS vouchers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
@@ -445,7 +446,7 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
-    # ========== 18. الأصول الثابتة ==========
+    # ========== 14. الأصول الثابتة ==========
     c.execute('''CREATE TABLE IF NOT EXISTS fixed_assets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -473,7 +474,7 @@ def init_db():
         FOREIGN KEY (asset_id) REFERENCES fixed_assets(id)
     )''')
 
-    # ========== 19. CRM (إدارة علاقات العملاء) ==========
+    # ========== 15. CRM (إدارة علاقات العملاء) ==========
     c.execute('''CREATE TABLE IF NOT EXISTS crm_leads (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -510,7 +511,7 @@ def init_db():
         FOREIGN KEY (lead_id) REFERENCES crm_leads(id)
     )''')
 
-    # ========== 20. الصندوق (Cash Management) ==========
+    # ========== 16. الصندوق (Cash Management) ==========
     c.execute('''CREATE TABLE IF NOT EXISTS cash_accounts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -534,7 +535,7 @@ def init_db():
         FOREIGN KEY (cash_account_id) REFERENCES cash_accounts(id)
     )''')
 
-    # ========== 21. الفهارس (Indexes) لتحسين الأداء ==========
+    # ========== 17. الفهارس (Indexes) لتحسين الأداء ==========
     c.execute("CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_date ON invoices(invoice_date)")
@@ -543,6 +544,7 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_supplier ON invoices(supplier_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_journal_entries_date ON journal_entries(date)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_account ON journal_lines(account_name)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_journal_lines_account_id ON journal_lines(account_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_product ON stock_movements(product_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_inventory_batches_product ON inventory_batches(product_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_fifo_consumptions_batch ON fifo_consumptions(batch_id)")
@@ -580,3 +582,7 @@ def create_default_admin():
         except sqlite3.IntegrityError:
             pass
     conn.close()
+
+# تهيئة قاعدة البيانات تلقائياً عند استيراد الملف
+init_db()
+create_default_admin()
