@@ -199,7 +199,7 @@ def create_purchase_invoice(supplier_id, items, username="admin", currency_code=
 
         # ✅ استخدام الحسابات الوظيفية بدلاً من الأكواد الثابتة
         inventory_account = get_functional_account("inventory")
-        suppliers_account = get_functional_account("suppliers")
+        suppliers_account = get_functional_account("accounts_payable")
         vat_account = get_functional_account("purchase_tax")
 
         lines = [
