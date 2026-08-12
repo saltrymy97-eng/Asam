@@ -22,6 +22,10 @@ FUNCTIONAL_TYPES = {
     "retained_earnings": "أرباح محتجزة",
 }
 
+# إنشاء الجداول عند بدء التشغيل
+create_accounts_table()
+create_journal_lines_table()  # <--- هذا السطر سيخلق الجدول دون إعادة تشغيل
+
 def create_accounts_table():
     """إنشاء جدول الحسابات إذا لم يكن موجوداً"""
     conn = get_connection()
@@ -37,6 +41,25 @@ def create_accounts_table():
             account_type TEXT CHECK(account_type IN ('Asset','Liability','Equity','Revenue','Expense')),
             functional_type TEXT,
             FOREIGN KEY (parent_id) REFERENCES accounts(id) ON DELETE SET NULL
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def create_journal_lines_table():
+    """إنشاء جدول القيود المحاسبية إذا لم يكن موجوداً"""
+    conn = get_connection()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS journal_lines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            journal_entry_id INTEGER,
+            account_id INTEGER,
+            debit REAL DEFAULT 0,
+            credit REAL DEFAULT 0,
+            currency_code TEXT,
+            exchange_rate REAL,
+            FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id),
+            FOREIGN KEY (account_id) REFERENCES accounts(id)
         )
     """)
     conn.commit()
