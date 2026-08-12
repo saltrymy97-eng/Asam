@@ -199,7 +199,7 @@ def post_vat_settlement_entry(settlement_date, start_date, end_date, description
 
     vat_output_acc = get_functional_account("sales_tax")
     vat_input_acc = get_functional_account("purchase_tax")
-    vat_payable_acc = get_functional_account("vat_payable")
+    vat_payable_acc = get_functional_account("sales_tax")
 
     lines = [
         # إقفال ضريبة المخرجات
