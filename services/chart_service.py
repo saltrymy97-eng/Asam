@@ -42,25 +42,6 @@ def create_accounts_table():
     conn.commit()
     conn.close()
 
-def create_journal_lines_table():
-    """إنشاء جدول القيود المحاسبية إذا لم يكن موجوداً"""
-    conn = get_connection()
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS journal_lines (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            journal_entry_id INTEGER,
-            account_id INTEGER,
-            debit REAL DEFAULT 0,
-            credit REAL DEFAULT 0,
-            currency_code TEXT,
-            exchange_rate REAL,
-            FOREIGN KEY (journal_entry_id) REFERENCES journal_entries(id),
-            FOREIGN KEY (account_id) REFERENCES accounts(id)
-        )
-    """)
-    conn.commit()
-    conn.close()
-
 def add_account(code, name, parent_id=None, account_type=None, functional_type=None):
     """إضافة حساب جديد مع حماية العملية ودعم النوع الوظيفي"""
     level = 1
@@ -160,11 +141,15 @@ def get_functional_account(functional_type):
 def delete_account(account_id):
     """حذف حساب من قاعدة البيانات (مع التحقق من عدم استخدامه)"""
     conn = get_connection()
-    # التحقق من أن الحساب غير مستخدم في القيود
-    used = conn.execute(
-        "SELECT COUNT(*) FROM journal_lines WHERE account_id = ?",
-        (account_id,)
-    ).fetchone()[0]
+    # التحقق من أن الحساب غير مستخدم في القيود (بشكل آمن)
+    try:
+        used = conn.execute(
+            "SELECT COUNT(*) FROM journal_lines WHERE account_id = ?",
+            (account_id,)
+        ).fetchone()[0]
+    except sqlite3.OperationalError:
+        # إذا لم يكن الجدول موجوداً، نعتبر أن الحساب غير مستخدم
+        used = 0
     
     if used > 0:
         conn.close()
@@ -175,6 +160,5 @@ def delete_account(account_id):
     conn.close()
     return True, "تم حذف الحساب بنجاح."
 
-# إنشاء الجداول عند بدء التشغيل (بعد تعريف الدوال)
+# إنشاء جدول الحسابات فقط عند بدء التشغيل
 create_accounts_table()
-create_journal_lines_table()
