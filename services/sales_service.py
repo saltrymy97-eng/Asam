@@ -223,7 +223,7 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
         from services.accounting_service import save_journal_entry
 
         # ✅ استخدام الحسابات الوظيفية بدلاً من الأكواد الثابتة
-        customers_account = get_functional_account("customers")
+        customers_account = get_functional_account("accounts_receivable")
         sales_account = get_functional_account("sales_revenue")
         vat_account = get_functional_account("vat_payable")
         cogs_account = get_functional_account("cogs")
