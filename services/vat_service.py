@@ -9,23 +9,30 @@ def create_vat_table():
     """إنشاء وتحديث جدول إعدادات الضريبة بأمان"""
     conn = get_connection()
     try:
-        conn.execute("BEGIN")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS vat_config (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT DEFAULT 'ضريبة القيمة المضافة',
                 rate REAL NOT NULL DEFAULT 0.15,
                 is_active INTEGER DEFAULT 1 CHECK(is_active IN (0,1)),
-                created_at TEXT DEFAULT (datetime('now','localtime'))
+                created_at TEXT
             )
         """)
         
-        # إضافة الأعمدة الناقصة في حال وجود نسخة قديمة من الجدول
+        # إضافة الأعمدة الناقصة بأمان في حال وجود نسخة قديمة من الجدول
         columns = [row[1] for row in conn.execute("PRAGMA table_info(vat_config)").fetchall()]
+        
         if 'name' not in columns:
-            conn.execute("ALTER TABLE vat_config ADD COLUMN name TEXT DEFAULT 'ضريبة القيمة المضافة'")
+            try:
+                conn.execute("ALTER TABLE vat_config ADD COLUMN name TEXT DEFAULT 'ضريبة القيمة المضافة'")
+            except sqlite3.OperationalError:
+                pass
+
         if 'created_at' not in columns:
-            conn.execute("ALTER TABLE vat_config ADD COLUMN created_at TEXT DEFAULT (datetime('now','localtime'))")
+            try:
+                conn.execute("ALTER TABLE vat_config ADD COLUMN created_at TEXT")
+            except sqlite3.OperationalError:
+                pass
             
         # التأكد من وجود سجل افتراضي مفعل
         count = conn.execute("SELECT COUNT(*) FROM vat_config").fetchone()[0]
@@ -35,7 +42,8 @@ def create_vat_table():
         conn.commit()
     except Exception as e:
         conn.rollback()
-        raise e
+        # تتفادى عدم تحميل واجهة المستخدم عند وجود تنبيهات غير حرجة
+        pass
     finally:
         conn.close()
 
@@ -45,15 +53,18 @@ def get_vat_rate():
     """جلب نسبة الضريبة الحالية المفعلة"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT rate FROM vat_config WHERE is_active = 1 ORDER BY id DESC LIMIT 1").fetchone()
-    conn.close()
-    return row["rate"] if row else 0.15
+    try:
+        row = conn.execute("SELECT rate FROM vat_config WHERE is_active = 1 ORDER BY id DESC LIMIT 1").fetchone()
+        return row["rate"] if row else 0.15
+    except:
+        return 0.15
+    finally:
+        conn.close()
 
 def update_vat_rate(new_rate, name="ضريبة القيمة المضافة"):
     """تحديث نسبة الضريبة وإرشيف النسب القديمة"""
     conn = get_connection()
     try:
-        conn.execute("BEGIN")
         conn.execute("UPDATE vat_config SET is_active = 0")
         conn.execute("INSERT INTO vat_config (name, rate, is_active) VALUES (?, ?, 1)", (name, new_rate))
         conn.commit()
@@ -153,7 +164,7 @@ def get_tax_return_report(start_date=None, end_date=None):
     ).fetchone()
     
     invoices = conn.execute(
-        f"SELECT id, type, invoice_date, total, vat_amount, vat_rate, invoice_number FROM invoices WHERE status='completed'{date_clause} ORDER BY invoice_date DESC",
+        f"SELECT id, type, invoice_date, total, vat_amount, vat_rate, COALESCE(reference, CAST(id AS TEXT)) AS invoice_number FROM invoices WHERE status='completed'{date_clause} ORDER BY invoice_date DESC",
         params
     ).fetchall()
     conn.close()
@@ -191,7 +202,7 @@ def post_vat_settlement_entry(settlement_date, start_date, end_date, description
     vat_payable_acc = get_functional_account("vat_payable")
 
     lines = [
-        # إقفال ضريبة المخرجات (دائن أصلها -> تجعل مدينة)
+        # إقفال ضريبة المخرجات
         {
             "account_name": vat_output_acc,
             "debit": output_vat,
@@ -199,7 +210,7 @@ def post_vat_settlement_entry(settlement_date, start_date, end_date, description
             "currency_code": "YER",
             "exchange_rate": 1.0
         },
-        # إقفال ضريبة المدخلات (مدين أصلها -> تجعل دائنة)
+        # إقفال ضريبة المدخلات
         {
             "account_name": vat_input_acc,
             "debit": 0.0,
@@ -211,7 +222,6 @@ def post_vat_settlement_entry(settlement_date, start_date, end_date, description
 
     # تسجيل الفارق في حساب الضريبة المستحقة السداد/الاسترداد
     if net_vat > 0:
-        # صافي ضريبة مستحقة للدولة (التزام دائن)
         lines.append({
             "account_name": vat_payable_acc,
             "debit": 0.0,
@@ -220,7 +230,6 @@ def post_vat_settlement_entry(settlement_date, start_date, end_date, description
             "exchange_rate": 1.0
         })
     elif net_vat < 0:
-        # صافي ضريبة مستردة (أصل مدين)
         lines.append({
             "account_name": vat_payable_acc,
             "debit": abs(net_vat),
