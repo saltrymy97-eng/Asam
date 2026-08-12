@@ -22,10 +22,6 @@ FUNCTIONAL_TYPES = {
     "retained_earnings": "أرباح محتجزة",
 }
 
-# إنشاء الجداول عند بدء التشغيل
-create_accounts_table()
-create_journal_lines_table()  # <--- هذا السطر سيخلق الجدول دون إعادة تشغيل
-
 def create_accounts_table():
     """إنشاء جدول الحسابات إذا لم يكن موجوداً"""
     conn = get_connection()
@@ -178,3 +174,7 @@ def delete_account(account_id):
     conn.commit()
     conn.close()
     return True, "تم حذف الحساب بنجاح."
+
+# إنشاء الجداول عند بدء التشغيل (بعد تعريف الدوال)
+create_accounts_table()
+create_journal_lines_table()
