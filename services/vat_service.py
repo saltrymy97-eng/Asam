@@ -197,8 +197,8 @@ def post_vat_settlement_entry(settlement_date, start_date, end_date, description
     if output_vat == 0 and input_vat == 0:
         return False, "لا توجد مبالغ ضريبية مستحقة للتسوية خلال هذه الفترة"
 
-    vat_output_acc = get_functional_account("vat_output")
-    vat_input_acc = get_functional_account("vat_input")
+    vat_output_acc = get_functional_account("sales_tax")
+    vat_input_acc = get_functional_account("purchase_tax")
     vat_payable_acc = get_functional_account("vat_payable")
 
     lines = [
