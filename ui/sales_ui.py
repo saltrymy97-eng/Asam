@@ -99,7 +99,7 @@ def show():
 
             save_disabled = st.session_state.saving_sale or customer_id is None
 
-           if st.button("💾 حفظ الفاتورة", type="primary", disabled=save_disabled, key="save_sales_btn"): 
+            if st.button("💾 حفظ الفاتورة", type="primary", disabled=save_disabled, key="save_sales_btn"): 
                 st.session_state.saving_sale = True
                 st.rerun()
 
