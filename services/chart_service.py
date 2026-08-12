@@ -86,7 +86,7 @@ def get_accounts_tree():
     """جلب جميع الحسابات مرتبة مع التصنيف والنوع الوظيفي"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
-    accounts = conn.execute("SELECT id, code, name, parent_id, level, is_debit, account_type, functional_type FROM accounts ORDER BY code").fetchall()
+    accounts = conn.execute("SELECT id, code, name, parent_id, level, is_debit, is_active, account_type, functional_type FROM accounts ORDER BY code").fetchall()
     conn.close()
     return accounts
 
@@ -137,3 +137,21 @@ def get_functional_account(functional_type):
     else:
         type_name = FUNCTIONAL_TYPES.get(functional_type, functional_type)
         raise ValueError(f"لم يتم العثور على حساب بالنوع الوظيفي '{type_name}'. يرجى إضافة حساب بهذا النوع في شجرة الحسابات.")
+
+def delete_account(account_id):
+    """حذف حساب من قاعدة البيانات (مع التحقق من عدم استخدامه)"""
+    conn = get_connection()
+    # التحقق من أن الحساب غير مستخدم في القيود
+    used = conn.execute(
+        "SELECT COUNT(*) FROM journal_lines WHERE account_id = ?",
+        (account_id,)
+    ).fetchone()[0]
+    
+    if used > 0:
+        conn.close()
+        return False, "لا يمكن حذف هذا الحساب لأنه مستخدم في قيود محاسبية."
+    
+    conn.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
+    conn.commit()
+    conn.close()
+    return True, "تم حذف الحساب بنجاح."
