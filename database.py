@@ -298,7 +298,7 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         bank_name TEXT NOT NULL,
         account_number TEXT NOT NULL,
-        account_code TEXT,  # <--- تم إضافة هذا السطر المفقود
+        account_code TEXT,
         account_name TEXT,
         currency_code TEXT DEFAULT 'YER',
         opening_balance REAL DEFAULT 0,
@@ -306,6 +306,12 @@ def init_db():
         is_active INTEGER CHECK(is_active IN (0,1)) DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
+
+    # إضافة العمود المفقود بأمان إذا لم يكن موجوداً
+    c.execute("PRAGMA table_info(bank_accounts)")
+    columns = [col[1] for col in c.fetchall()]
+    if "account_code" not in columns:
+        c.execute("ALTER TABLE bank_accounts ADD COLUMN account_code TEXT")
 
     c.execute('''CREATE TABLE IF NOT EXISTS bank_transactions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
