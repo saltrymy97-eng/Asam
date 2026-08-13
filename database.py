@@ -321,12 +321,11 @@ def init_db():
         type TEXT NOT NULL,
         amount REAL NOT NULL,
         reference TEXT,
-        journal_id INTEGER,          # <--- تم إضافة هذا العمود هنا
+        journal_id INTEGER,
         journal_line_id INTEGER,
         reconciled INTEGER DEFAULT 0 CHECK(reconciled IN (0,1)),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (bank_account_id) REFERENCES bank_accounts(id) ON DELETE CASCADE,
-        FOREIGN KEY (journal_line_id) REFERENCES journal_lines(id) ON DELETE SET NULL
+        FOREIGN KEY (bank_account_id) REFERENCES bank_accounts(id) ON DELETE CASCADE
     )''')
 
     # إضافة العمود journal_id بأمان إذا لم يكن موجوداً في الجدول الحالي
