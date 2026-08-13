@@ -1,4 +1,4 @@
-# ui/receipts_ui.py – واجهة سندات القبض والصرف (تصميم زجاجي فاخر - معدل + حماية من التكرار)
+# ui/receipts_ui.py – واجهة سندات القبض والصرف (تصميم زجاجي فاخر - معدل + حماية من التكرار + حقول بحث)
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -45,13 +45,28 @@ def show():
         if not customers:
             st.warning("لا يوجد عملاء")
         else:
-            customer_options = {f"{c['name']} (الرصيد: {c['balance']:,.2f})": c for c in customers}
+            # --- حقل بحث العميل ---
+            search_cust = st.text_input("🔍 بحث عن العميل...", key="receipt_cust_search")
+            # تصفية العملاء بناءً على البحث
+            filtered_customers = [c for c in customers if search_cust.lower() in c['name'].lower()]
+            if not filtered_customers:
+                filtered_customers = customers  # إذا لم يجد، عرض الكل
+                
+            customer_options = {f"{c['name']} (الرصيد: {c['balance']:,.2f})": c for c in filtered_customers}
             selected_cust_str = st.selectbox("اختر العميل", list(customer_options.keys()), key="receipt_cust")
             selected_cust = customer_options[selected_cust_str]
             
             invoices = get_invoices_for_party('customer', selected_cust['id'])
+            
+            # --- حقل بحث الفاتورة ---
+            search_inv = st.text_input("🔍 بحث عن رقم الفاتورة...", key="receipt_inv_search")
+            # تصفية الفواتير
+            filtered_invoices = [inv for inv in invoices if search_inv == "" or str(inv['id']) in search_inv or search_inv.lower() in str(inv['id'])]
+            if not filtered_invoices:
+                filtered_invoices = invoices
+                
             invoice_options = {"بدون فاتورة (دفعة عامة)": None}
-            for inv in invoices:
+            for inv in filtered_invoices:
                 label = f"فاتورة #{inv['id']} - المتبقي: {inv['remaining']:,.2f}"
                 invoice_options[label] = inv
             
@@ -108,13 +123,27 @@ def show():
         if not suppliers:
             st.warning("لا يوجد موردين")
         else:
-            supplier_options = {f"{s['name']} (الرصيد: {s['balance']:,.2f})": s for s in suppliers}
+            # --- حقل بحث المورد ---
+            search_sup = st.text_input("🔍 بحث عن المورد...", key="payment_sup_search")
+            # تصفية الموردين بناءً على البحث
+            filtered_suppliers = [s for s in suppliers if search_sup.lower() in s['name'].lower()]
+            if not filtered_suppliers:
+                filtered_suppliers = suppliers
+                
+            supplier_options = {f"{s['name']} (الرصيد: {s['balance']:,.2f})": s for s in filtered_suppliers}
             selected_sup_str = st.selectbox("اختر المورد", list(supplier_options.keys()), key="payment_sup")
             selected_sup = supplier_options[selected_sup_str]
             
             invoices = get_invoices_for_party('supplier', selected_sup['id'])
+            
+            # --- حقل بحث الفاتورة ---
+            search_inv = st.text_input("🔍 بحث عن رقم الفاتورة...", key="payment_inv_search")
+            filtered_invoices = [inv for inv in invoices if search_inv == "" or str(inv['id']) in search_inv or search_inv.lower() in str(inv['id'])]
+            if not filtered_invoices:
+                filtered_invoices = invoices
+                
             invoice_options = {"بدون فاتورة (دفعة عامة)": None}
-            for inv in invoices:
+            for inv in filtered_invoices:
                 label = f"فاتورة #{inv['id']} - المتبقي: {inv['remaining']:,.2f}"
                 invoice_options[label] = inv
             
