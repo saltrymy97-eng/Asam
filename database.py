@@ -298,6 +298,7 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         bank_name TEXT NOT NULL,
         account_number TEXT NOT NULL,
+        account_code TEXT,  # <--- تم إضافة هذا السطر المفقود
         account_name TEXT,
         currency_code TEXT DEFAULT 'YER',
         opening_balance REAL DEFAULT 0,
