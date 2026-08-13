@@ -114,9 +114,9 @@ def update_bank_balance(account_id):
 
 # ===================== الحركات البنكية والقيود الآلية =====================
 
-def add_bank_transaction(bank_account_id, transaction_date, description, trans_type, amount, reference="", contra_account_code=None, create_journal=True):
+def add_bank_transaction(bank_account_id, transaction_date, description, trans_type, amount, reference="", contra_account_code=None):
     """
-    إضافة حركة بنكية مع إنشاء قيد محاسبي تلقائي وتحديث الرصيد.
+    إضافة حركة بنكية مع إنشاء قيد محاسبي تلقائي وتحديث الرصيد (القيد إلزامي دائماً).
     """
     if trans_type not in ('deposit', 'withdrawal', 'transfer_in', 'transfer_out'):
         raise ValueError("نوع الحركة غير صالح")
@@ -135,58 +135,55 @@ def add_bank_transaction(bank_account_id, transaction_date, description, trans_t
     else:
         exchange_rate = get_exchange_rate(currency, base_currency['code']) or 1.0
     
-    journal_id = None
+    # تحديد الحساب المقابل في القيد المحاسبي
+    target_contra_code = contra_account_code or get_functional_account("cash")
     
-    if create_journal:
-        # تحديد الحساب المقابل في القيد المحاسبي
-        target_contra_code = contra_account_code or get_functional_account("cash")
+    lines = []
+    if trans_type in ('deposit', 'transfer_in'):
+        # إيداع: البنك مدين، والحساب المقابل دائن
+        lines.append({
+            "account_name": bank_account_code,
+            "debit": amount,
+            "credit": 0.0,
+            "currency_code": currency,
+            "exchange_rate": exchange_rate
+        })
+        lines.append({
+            "account_name": target_contra_code,
+            "debit": 0.0,
+            "credit": amount,
+            "currency_code": currency,
+            "exchange_rate": exchange_rate
+        })
+    else:
+        # سحب/تحويل للخارج: الحساب المقابل مدين، والبنك دائن
+        lines.append({
+            "account_name": target_contra_code,
+            "debit": amount,
+            "credit": 0.0,
+            "currency_code": currency,
+            "exchange_rate": exchange_rate
+        })
+        lines.append({
+            "account_name": bank_account_code,
+            "debit": 0.0,
+            "credit": amount,
+            "currency_code": currency,
+            "exchange_rate": exchange_rate
+        })
         
-        lines = []
-        if trans_type in ('deposit', 'transfer_in'):
-            # إيداع: البنك مدين، والحساب المقابل دائن
-            lines.append({
-                "account_name": bank_account_code,
-                "debit": amount,
-                "credit": 0.0,
-                "currency_code": currency,
-                "exchange_rate": exchange_rate
-            })
-            lines.append({
-                "account_name": target_contra_code,
-                "debit": 0.0,
-                "credit": amount,
-                "currency_code": currency,
-                "exchange_rate": exchange_rate
-            })
-        else:
-            # سحب/تحويل للخارج: الحساب المقابل مدين، والبنك دائن
-            lines.append({
-                "account_name": target_contra_code,
-                "debit": amount,
-                "credit": 0.0,
-                "currency_code": currency,
-                "exchange_rate": exchange_rate
-            })
-            lines.append({
-                "account_name": bank_account_code,
-                "debit": 0.0,
-                "credit": amount,
-                "currency_code": currency,
-                "exchange_rate": exchange_rate
-            })
-            
-        # 🔧 التعديل الجديد: معالجة القيمة المرتجعة من save_journal_entry
-        _journal_result = save_journal_entry(
-            entry_date=transaction_date,
-            description=f"{description} ({reference})".strip(),
-            lines=lines
-        )
-        
-        # التأكد من أن القيمة رقم وليس tuple
-        if isinstance(_journal_result, tuple):
-            journal_id = _journal_result[0]
-        else:
-            journal_id = _journal_result
+    # 🔧 التعديل الجديد: معالجة القيمة المرتجعة من save_journal_entry
+    _journal_result = save_journal_entry(
+        entry_date=transaction_date,
+        description=f"{description} ({reference})".strip(),
+        lines=lines
+    )
+    
+    # التأكد من أن القيمة رقم وليس tuple
+    if isinstance(_journal_result, tuple):
+        journal_id = _journal_result[0]
+    else:
+        journal_id = _journal_result
 
     conn = get_conn()
     try:
@@ -255,8 +252,8 @@ def transfer_between_banks(from_account_id, to_account_id, amount, transfer_date
     )
     
     # تسجيل الحركتين في الجدول المصرفي
-    add_bank_transaction(from_account_id, transfer_date, f"تحويل إلى {to_acc['bank_name']}", 'transfer_out', amount, reference, create_journal=False)
-    add_bank_transaction(to_account_id, transfer_date, f"تحويل من {from_acc['bank_name']}", 'transfer_in', converted_to_amount, reference, create_journal=False)
+    add_bank_transaction(from_account_id, transfer_date, f"تحويل إلى {to_acc['bank_name']}", 'transfer_out', amount, reference)
+    add_bank_transaction(to_account_id, transfer_date, f"تحويل من {from_acc['bank_name']}", 'transfer_in', converted_to_amount, reference)
     
     return journal_id
 
