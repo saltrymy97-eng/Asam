@@ -142,14 +142,14 @@ def add_bank_transaction(bank_account_id, transaction_date, description, trans_t
     if trans_type in ('deposit', 'transfer_in'):
         # إيداع: البنك مدين، والحساب المقابل دائن
         lines.append({
-            "account_name": bank_account_code,
+            "account": bank_account_code,      # <--- تم التغيير هنا (account_name → account)
             "debit": amount,
             "credit": 0.0,
             "currency_code": currency,
             "exchange_rate": exchange_rate
         })
         lines.append({
-            "account_name": target_contra_code,
+            "account": target_contra_code,     # <--- تم التغيير هنا
             "debit": 0.0,
             "credit": amount,
             "currency_code": currency,
@@ -158,14 +158,14 @@ def add_bank_transaction(bank_account_id, transaction_date, description, trans_t
     else:
         # سحب/تحويل للخارج: الحساب المقابل مدين، والبنك دائن
         lines.append({
-            "account_name": target_contra_code,
+            "account": target_contra_code,     # <--- تم التغيير هنا
             "debit": amount,
             "credit": 0.0,
             "currency_code": currency,
             "exchange_rate": exchange_rate
         })
         lines.append({
-            "account_name": bank_account_code,
+            "account": bank_account_code,      # <--- تم التغيير هنا
             "debit": 0.0,
             "credit": amount,
             "currency_code": currency,
@@ -230,14 +230,14 @@ def transfer_between_banks(from_account_id, to_account_id, amount, transfer_date
     # إنشاء قيد التحويل المباشر
     lines = [
         {
-            "account_name": to_code,
+            "account": to_code,          # <--- تم التغيير هنا
             "debit": converted_to_amount,
             "credit": 0.0,
             "currency_code": to_curr,
             "exchange_rate": to_rate
         },
         {
-            "account_name": from_code,
+            "account": from_code,        # <--- تم التغيير هنا
             "debit": 0.0,
             "credit": amount,
             "currency_code": from_curr,
