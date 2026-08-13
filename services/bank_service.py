@@ -127,7 +127,13 @@ def add_bank_transaction(bank_account_id, transaction_date, description, trans_t
     
     bank_account_code = bank_acc.get('account_code') or get_functional_account("bank")
     currency = bank_acc.get('currency_code', 'YER')
-    exchange_rate = get_exchange_rate(currency)
+    
+    # ✅ الحل الاحترافي لسعر الصرف (تعديل السطر الوحيد هنا)
+    base_currency = get_base_currency()
+    if currency == base_currency['code']:
+        exchange_rate = 1.0
+    else:
+        exchange_rate = get_exchange_rate(currency, base_currency['code']) or 1.0
     
     journal_id = None
     
