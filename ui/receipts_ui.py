@@ -1,4 +1,4 @@
-# ui/receipts_ui.py – واجهة سندات القبض والصرف (تصميم زجاجي فاخر - قوائم قابلة للبحث)
+# ui/receipts_ui.py – واجهة سندات القبض والصرف (تصميم زجاجي فاخر - معدل + حماية من التكرار)
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -45,25 +45,18 @@ def show():
         if not customers:
             st.warning("لا يوجد عملاء")
         else:
-            # --- قائمة العملاء القابلة للبحث ---
             customer_options = {f"{c['name']} (الرصيد: {c['balance']:,.2f})": c for c in customers}
-            cust_df = pd.DataFrame(list(customer_options.keys()), columns=["العميل"])
-            edited_cust = st.data_editor(cust_df, hide_index=True, use_container_width=True, key="receipt_cust_editor")
-            selected_cust_label = edited_cust.iloc[0]["العميل"] if not edited_cust.empty and len(edited_cust) > 0 else list(customer_options.keys())[0]
-            selected_cust = customer_options[selected_cust_label]
+            selected_cust_str = st.selectbox("اختر العميل", list(customer_options.keys()), key="receipt_cust")
+            selected_cust = customer_options[selected_cust_str]
             
             invoices = get_invoices_for_party('customer', selected_cust['id'])
-            
-            # --- قائمة الفواتير القابلة للبحث ---
             invoice_options = {"بدون فاتورة (دفعة عامة)": None}
             for inv in invoices:
                 label = f"فاتورة #{inv['id']} - المتبقي: {inv['remaining']:,.2f}"
                 invoice_options[label] = inv
             
-            inv_df = pd.DataFrame(list(invoice_options.keys()), columns=["الفاتورة"])
-            edited_inv = st.data_editor(inv_df, hide_index=True, use_container_width=True, key="receipt_inv_editor")
-            selected_inv_label = edited_inv.iloc[0]["الفاتورة"] if not edited_inv.empty and len(edited_inv) > 0 else list(invoice_options.keys())[0]
-            selected_inv = invoice_options[selected_inv_label]
+            selected_inv_str = st.selectbox("ربط بفاتورة (اختياري)", list(invoice_options.keys()), key="receipt_inv")
+            selected_inv = invoice_options[selected_inv_str]
             
             default_amount = selected_inv['remaining'] if selected_inv else 0.0
             amount = st.number_input("المبلغ", min_value=0.0, value=float(default_amount), step=0.01, key="receipt_amount")
@@ -115,25 +108,18 @@ def show():
         if not suppliers:
             st.warning("لا يوجد موردين")
         else:
-            # --- قائمة الموردين القابلة للبحث ---
             supplier_options = {f"{s['name']} (الرصيد: {s['balance']:,.2f})": s for s in suppliers}
-            sup_df = pd.DataFrame(list(supplier_options.keys()), columns=["المورد"])
-            edited_sup = st.data_editor(sup_df, hide_index=True, use_container_width=True, key="payment_sup_editor")
-            selected_sup_label = edited_sup.iloc[0]["المورد"] if not edited_sup.empty and len(edited_sup) > 0 else list(supplier_options.keys())[0]
-            selected_sup = supplier_options[selected_sup_label]
+            selected_sup_str = st.selectbox("اختر المورد", list(supplier_options.keys()), key="payment_sup")
+            selected_sup = supplier_options[selected_sup_str]
             
             invoices = get_invoices_for_party('supplier', selected_sup['id'])
-            
-            # --- قائمة الفواتير القابلة للبحث ---
             invoice_options = {"بدون فاتورة (دفعة عامة)": None}
             for inv in invoices:
                 label = f"فاتورة #{inv['id']} - المتبقي: {inv['remaining']:,.2f}"
                 invoice_options[label] = inv
             
-            inv_df = pd.DataFrame(list(invoice_options.keys()), columns=["الفاتورة"])
-            edited_inv = st.data_editor(inv_df, hide_index=True, use_container_width=True, key="payment_inv_editor")
-            selected_inv_label = edited_inv.iloc[0]["الفاتورة"] if not edited_inv.empty and len(edited_inv) > 0 else list(invoice_options.keys())[0]
-            selected_inv = invoice_options[selected_inv_label]
+            selected_inv_str = st.selectbox("ربط بفاتورة (اختياري)", list(invoice_options.keys()), key="payment_inv")
+            selected_inv = invoice_options[selected_inv_str]
             
             default_amount = selected_inv['remaining'] if selected_inv else 0.0
             amount = st.number_input("المبلغ", min_value=0.0, value=float(default_amount), step=0.01, key="payment_amount")
