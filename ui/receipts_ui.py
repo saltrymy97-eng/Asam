@@ -1,4 +1,4 @@
-# ui/receipts_ui.py – واجهة سندات القبض والصرف (تصميم زجاجي فاخر - معدل + حماية من التكرار + حقول بحث)
+# ui/receipts_ui.py – واجهة سندات القبض والصرف (تصميم زجاجي فاخر - معدل + حماية من التكرار + حقول بحث ديناميكية)
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -53,7 +53,8 @@ def show():
                 filtered_customers = customers  # إذا لم يجد، عرض الكل
                 
             customer_options = {f"{c['name']} (الرصيد: {c['balance']:,.2f})": c for c in filtered_customers}
-            selected_cust_str = st.selectbox("اختر العميل", list(customer_options.keys()), key="receipt_cust")
+            # ✅ التعديل: key ديناميكي يعتمد على نص البحث
+            selected_cust_str = st.selectbox("اختر العميل", list(customer_options.keys()), key=f"receipt_cust_{search_cust}")
             selected_cust = customer_options[selected_cust_str]
             
             invoices = get_invoices_for_party('customer', selected_cust['id'])
@@ -70,7 +71,8 @@ def show():
                 label = f"فاتورة #{inv['id']} - المتبقي: {inv['remaining']:,.2f}"
                 invoice_options[label] = inv
             
-            selected_inv_str = st.selectbox("ربط بفاتورة (اختياري)", list(invoice_options.keys()), key="receipt_inv")
+            # ✅ التعديل: key ديناميكي يعتمد على نص البحث
+            selected_inv_str = st.selectbox("ربط بفاتورة (اختياري)", list(invoice_options.keys()), key=f"receipt_inv_{search_inv}")
             selected_inv = invoice_options[selected_inv_str]
             
             default_amount = selected_inv['remaining'] if selected_inv else 0.0
@@ -131,7 +133,8 @@ def show():
                 filtered_suppliers = suppliers
                 
             supplier_options = {f"{s['name']} (الرصيد: {s['balance']:,.2f})": s for s in filtered_suppliers}
-            selected_sup_str = st.selectbox("اختر المورد", list(supplier_options.keys()), key="payment_sup")
+            # ✅ التعديل: key ديناميكي يعتمد على نص البحث
+            selected_sup_str = st.selectbox("اختر المورد", list(supplier_options.keys()), key=f"payment_sup_{search_sup}")
             selected_sup = supplier_options[selected_sup_str]
             
             invoices = get_invoices_for_party('supplier', selected_sup['id'])
@@ -147,7 +150,8 @@ def show():
                 label = f"فاتورة #{inv['id']} - المتبقي: {inv['remaining']:,.2f}"
                 invoice_options[label] = inv
             
-            selected_inv_str = st.selectbox("ربط بفاتورة (اختياري)", list(invoice_options.keys()), key="payment_inv")
+            # ✅ التعديل: key ديناميكي يعتمد على نص البحث
+            selected_inv_str = st.selectbox("ربط بفاتورة (اختياري)", list(invoice_options.keys()), key=f"payment_inv_{search_inv}")
             selected_inv = invoice_options[selected_inv_str]
             
             default_amount = selected_inv['remaining'] if selected_inv else 0.0
