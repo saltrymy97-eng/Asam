@@ -321,12 +321,19 @@ def init_db():
         type TEXT NOT NULL,
         amount REAL NOT NULL,
         reference TEXT,
+        journal_id INTEGER,          # <--- تم إضافة هذا العمود هنا
         journal_line_id INTEGER,
         reconciled INTEGER DEFAULT 0 CHECK(reconciled IN (0,1)),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (bank_account_id) REFERENCES bank_accounts(id) ON DELETE CASCADE,
         FOREIGN KEY (journal_line_id) REFERENCES journal_lines(id) ON DELETE SET NULL
     )''')
+
+    # إضافة العمود journal_id بأمان إذا لم يكن موجوداً في الجدول الحالي
+    c.execute("PRAGMA table_info(bank_transactions)")
+    columns = [col[1] for col in c.fetchall()]
+    if "journal_id" not in columns:
+        c.execute("ALTER TABLE bank_transactions ADD COLUMN journal_id INTEGER")
 
     c.execute('''CREATE TABLE IF NOT EXISTS bank_reconciliations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
