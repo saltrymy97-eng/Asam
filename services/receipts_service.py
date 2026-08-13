@@ -142,9 +142,9 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
             party_name = conn.execute("SELECT name FROM suppliers WHERE id=?", 
                                      (party_id,)).fetchone()["name"]
         
-        # ✅ استخدام الحسابات الوظيفية
-        customers_account = get_functional_account("customers")
-        suppliers_account = get_functional_account("suppliers")
+        # ✅ استخدام الحسابات الوظيفية (تم تصحيح المفاتيح)
+        customers_account = get_functional_account("accounts_receivable")
+        suppliers_account = get_functional_account("accounts_payable")
         cash_account_code = get_functional_account("cash")
         
         if voucher_type == 'receipt':
