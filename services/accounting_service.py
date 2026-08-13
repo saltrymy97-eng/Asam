@@ -1,399 +1,252 @@
-# services/bank_service.py – منطق التعاملات البنكية (مع إدارة العمليات والقيود الآلية ودعم العملات)
+# services/accounting_service.py - منطق الحسابات وقيود اليومية (مع دعم الاتصال الخارجي – إصدار احترافي)
 import sqlite3
-from datetime import date, datetime
-import database
-from services.currency_service import get_base_currency, get_exchange_rate, convert_amount
-from services.chart_service import get_functional_account
-from services.accounting_service import save_journal_entry
+import uuid
+import os
+from datetime import date
+from services import cost_center_service
+from services.currency_service import get_base_currency, get_exchange_rate
+
+DB_PATH = os.path.join("data", "erp.db")
 
 def get_conn():
-    conn = database.get_connection()
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
-# ===================== إدارة الحسابات البنكية =====================
-
-def create_bank_account(bank_name, account_number, account_name="", currency_code="YER", opening_balance=0.0, account_code=None):
-    """إضافة حساب بنكي جديد مع ربطه بكود الحساب في شجرة الحسابات"""
-    conn = get_conn()
-    try:
-        conn.execute("BEGIN")
-        # إذا لم يتم تحديد كود حساب، يتم استخدام الحساب الوظيفي الافتراضي للبنك
-        final_account_code = account_code or get_functional_account("bank")
-        
-        conn.execute(
-            """INSERT INTO bank_accounts (bank_name, account_number, account_name, currency_code, opening_balance, current_balance, account_code)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (bank_name, account_number, account_name, currency_code, opening_balance, opening_balance, final_account_code)
-        )
-        conn.commit()
-        return True
-    except Exception as e:
-        conn.rollback()
-        raise e
-    finally:
+def get_account_code(account_input, conn=None):
+    """تحويل اسم الحساب إلى كود، أو إرجاع الكود إذا كان رقماً (يدعم اتصال خارجي)"""
+    if not account_input or not account_input.strip():
+        return None
+    
+    account_input = account_input.strip()
+    
+    if account_input.isdigit():
+        return account_input
+    
+    own_conn = False
+    if conn is None:
+        conn = get_conn()
+        own_conn = True
+    
+    row = conn.execute(
+        "SELECT code FROM accounts WHERE name = ? OR name LIKE ? OR code = ?",
+        (account_input, f"%{account_input}%", account_input)
+    ).fetchone()
+    
+    if own_conn:
         conn.close()
+    
+    if row:
+        return row["code"]
+    
+    if account_input[0].isdigit():
+        code_part = account_input.split("-")[0].strip()
+        if code_part.isdigit():
+            return code_part
+    
+    return None
 
-def update_bank_account(account_id, bank_name=None, account_number=None, account_name=None, currency_code=None, account_code=None, is_active=None):
-    """تحديث بيانات حساب بنكي"""
-    conn = get_conn()
-    fields = []
-    values = []
-    if bank_name: fields.append("bank_name = ?"); values.append(bank_name)
-    if account_number: fields.append("account_number = ?"); values.append(account_number)
-    if account_name: fields.append("account_name = ?"); values.append(account_name)
-    if currency_code: fields.append("currency_code = ?"); values.append(currency_code)
-    if account_code: fields.append("account_code = ?"); values.append(account_code)
-    if is_active is not None: fields.append("is_active = ?"); values.append(1 if is_active else 0)
-    if not fields: return
-    try:
-        conn.execute("BEGIN")
-        values.append(account_id)
-        conn.execute(f"UPDATE bank_accounts SET {', '.join(fields)} WHERE id = ?", values)
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        raise e
-    finally:
-        conn.close()
-
-def get_all_bank_accounts(active_only=True):
-    """جلب جميع الحسابات البنكية"""
-    conn = get_conn()
-    query = "SELECT * FROM bank_accounts"
-    if active_only:
-        query += " WHERE is_active = 1"
-    query += " ORDER BY bank_name"
-    rows = conn.execute(query).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-def get_bank_account_by_id(account_id):
-    """جلب حساب بنكي محدد"""
-    conn = get_conn()
-    row = conn.execute("SELECT * FROM bank_accounts WHERE id = ?", (account_id,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
-
-def update_bank_balance(account_id):
-    """تحديث الرصيد الحالي للحساب بناءً على الحركات المسجلة"""
-    conn = get_conn()
-    try:
-        deposits = conn.execute(
-            "SELECT COALESCE(SUM(amount), 0) FROM bank_transactions WHERE bank_account_id = ? AND type = 'deposit'",
-            (account_id,)
-        ).fetchone()[0]
-        withdrawals = conn.execute(
-            "SELECT COALESCE(SUM(amount), 0) FROM bank_transactions WHERE bank_account_id = ? AND type = 'withdrawal'",
-            (account_id,)
-        ).fetchone()[0]
-        transfers_in = conn.execute(
-            "SELECT COALESCE(SUM(amount), 0) FROM bank_transactions WHERE bank_account_id = ? AND type = 'transfer_in'",
-            (account_id,)
-        ).fetchone()[0]
-        transfers_out = conn.execute(
-            "SELECT COALESCE(SUM(amount), 0) FROM bank_transactions WHERE bank_account_id = ? AND type = 'transfer_out'",
-            (account_id,)
-        ).fetchone()[0]
-        
-        account = get_bank_account_by_id(account_id)
-        if not account:
-            return 0.0
-        
-        current_balance = account['opening_balance'] + deposits + transfers_in - withdrawals - transfers_out
-        
-        conn.execute("BEGIN")
-        conn.execute("UPDATE bank_accounts SET current_balance = ? WHERE id = ?", (current_balance, account_id))
-        conn.commit()
-        return current_balance
-    except Exception as e:
-        conn.rollback()
-        raise e
-    finally:
-        conn.close()
-
-# ===================== الحركات البنكية والقيود الآلية =====================
-
-def add_bank_transaction(bank_account_id, transaction_date, description, trans_type, amount, reference="", contra_account_code=None):
+def save_journal_entry(description, lines, entry_date=None, cost_center_allocations=None, conn=None):
     """
-    إضافة حركة بنكية مع إنشاء قيد محاسبي تلقائي وتحديث الرصيد (القيد إلزامي دائماً).
+    حفظ قيد يومية جديد.
+    إذا تم تمرير conn خارجي، لا يتم إنشاء معاملة منفصلة (المعاملة تدار خارجياً).
     """
-    if trans_type not in ('deposit', 'withdrawal', 'transfer_in', 'transfer_out'):
-        raise ValueError("نوع الحركة غير صالح")
+    if entry_date is None:
+        entry_date = date.today().strftime("%Y-%m-%d")
     
-    bank_acc = get_bank_account_by_id(bank_account_id)
-    if not bank_acc:
-        raise ValueError("الحساب البنكي غير موجود")
-    
-    bank_account_code = bank_acc.get('account_code') or get_functional_account("bank")
-    currency = bank_acc.get('currency_code', 'YER')
-    
-    # ✅ الحل الاحترافي لسعر الصرف
-    base_currency = get_base_currency()
-    if currency == base_currency['code']:
-        exchange_rate = 1.0
-    else:
-        exchange_rate = get_exchange_rate(currency, base_currency['code']) or 1.0
-    
-    # تحديد الحساب المقابل في القيد المحاسبي
-    target_contra_code = contra_account_code or get_functional_account("cash")
-    
-    lines = []
-    if trans_type in ('deposit', 'transfer_in'):
-        # إيداع: البنك مدين، والحساب المقابل دائن
-        lines.append({
-            "account": bank_account_code,      # <--- تم التغيير هنا (account_name → account)
-            "debit": amount,
-            "credit": 0.0,
-            "currency_code": currency,
-            "exchange_rate": exchange_rate
-        })
-        lines.append({
-            "account": target_contra_code,     # <--- تم التغيير هنا
-            "debit": 0.0,
-            "credit": amount,
-            "currency_code": currency,
-            "exchange_rate": exchange_rate
-        })
-    else:
-        # سحب/تحويل للخارج: الحساب المقابل مدين، والبنك دائن
-        lines.append({
-            "account": target_contra_code,     # <--- تم التغيير هنا
-            "debit": amount,
-            "credit": 0.0,
-            "currency_code": currency,
-            "exchange_rate": exchange_rate
-        })
-        lines.append({
-            "account": bank_account_code,      # <--- تم التغيير هنا
-            "debit": 0.0,
-            "credit": amount,
-            "currency_code": currency,
-            "exchange_rate": exchange_rate
-        })
-        
-    # 🔧 التعديل الجديد: معالجة القيمة المرتجعة من save_journal_entry
-    _journal_result = save_journal_entry(
-        entry_date=transaction_date,
-        description=f"{description} ({reference})".strip(),
-        lines=lines
-    )
-    
-    # التأكد من أن القيمة رقم وليس tuple
-    if isinstance(_journal_result, tuple):
-        journal_id = _journal_result[0]
-    else:
-        journal_id = _journal_result
-
-    conn = get_conn()
-    try:
-        conn.execute("BEGIN")
-        reconciled_flag = 1 if journal_id else 0
-        conn.execute(
-            """INSERT INTO bank_transactions (bank_account_id, transaction_date, description, type, amount, reference, reconciled, journal_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (bank_account_id, transaction_date, description, trans_type, amount, reference, reconciled_flag, journal_id)
-        )
-        conn.commit()
-        
-        # تحديث الرصيد بعد إضافة الحركة
-        update_bank_balance(bank_account_id)
-        return True
-    except Exception as e:
-        conn.rollback()
-        raise e
-    finally:
-        conn.close()
-
-def transfer_between_banks(from_account_id, to_account_id, amount, transfer_date, description="تحويل بين حسابات بنكية", reference=""):
-    """تحويل مالي بين حسابين بنكيين مع القيد المحاسبي المزدوج"""
-    from_acc = get_bank_account_by_id(from_account_id)
-    to_acc = get_bank_account_by_id(to_account_id)
-    
-    if not from_acc or not to_acc:
-        raise ValueError("أحد الحسابات البنكية غير موجود")
-    
-    from_code = from_acc.get('account_code') or get_functional_account("bank")
-    to_code = to_acc.get('account_code') or get_functional_account("bank")
-    
-    from_curr = from_acc.get('currency_code', 'YER')
-    to_curr = to_acc.get('currency_code', 'YER')
-    
-    from_rate = get_exchange_rate(from_curr)
-    to_rate = get_exchange_rate(to_curr)
-    
-    # القيمة بالعملة المحلية للطرف المحول منه
-    base_amount = amount * from_rate
-    # القيمة المحولة لحساب المستلم
-    converted_to_amount = base_amount / to_rate if to_rate else amount
-
-    # إنشاء قيد التحويل المباشر
-    lines = [
-        {
-            "account": to_code,          # <--- تم التغيير هنا
-            "debit": converted_to_amount,
-            "credit": 0.0,
-            "currency_code": to_curr,
-            "exchange_rate": to_rate
-        },
-        {
-            "account": from_code,        # <--- تم التغيير هنا
-            "debit": 0.0,
-            "credit": amount,
-            "currency_code": from_curr,
-            "exchange_rate": from_rate
-        }
-    ]
-    
-    journal_id = save_journal_entry(
-        entry_date=transfer_date,
-        description=f"{description} من {from_acc['bank_name']} إلى {to_acc['bank_name']}",
-        lines=lines
-    )
-    
-    # تسجيل الحركتين في الجدول المصرفي
-    add_bank_transaction(from_account_id, transfer_date, f"تحويل إلى {to_acc['bank_name']}", 'transfer_out', amount, reference)
-    add_bank_transaction(to_account_id, transfer_date, f"تحويل من {from_acc['bank_name']}", 'transfer_in', converted_to_amount, reference)
-    
-    return journal_id
-
-def get_bank_transactions(bank_account_id=None, limit=50):
-    """جلب الحركات البنكية (لحساب معين أو للكل)"""
-    conn = get_conn()
-    if bank_account_id:
-        rows = conn.execute(
-            """SELECT bt.*, ba.bank_name, ba.account_number
-               FROM bank_transactions bt
-               JOIN bank_accounts ba ON bt.bank_account_id = ba.id
-               WHERE bt.bank_account_id = ?
-               ORDER BY bt.transaction_date DESC, bt.id DESC
-               LIMIT ?""",
-            (bank_account_id, limit)
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            """SELECT bt.*, ba.bank_name, ba.account_number
-               FROM bank_transactions bt
-               JOIN bank_accounts ba ON bt.bank_account_id = ba.id
-               ORDER BY bt.transaction_date DESC, bt.id DESC
-               LIMIT ?""",
-            (limit,)
-        ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-def reconcile_transaction(transaction_id, journal_line_id=None):
-    """تسوية حركة بنكية (ربطها بقيد محاسبي)"""
-    conn = get_conn()
-    try:
-        conn.execute("BEGIN")
-        if journal_line_id:
-            conn.execute(
-                "UPDATE bank_transactions SET reconciled = 1, journal_line_id = ? WHERE id = ?",
-                (journal_line_id, transaction_id)
-            )
-        else:
-            conn.execute(
-                "UPDATE bank_transactions SET reconciled = 1 WHERE id = ?",
-                (transaction_id,)
-            )
-        conn.commit()
-        return True
-    except Exception as e:
-        conn.rollback()
-        raise e
-    finally:
-        conn.close()
-
-def get_unreconciled_transactions(bank_account_id):
-    """جلب الحركات غير المسواة لحساب معين"""
-    conn = get_conn()
-    rows = conn.execute(
-        """SELECT * FROM bank_transactions
-           WHERE bank_account_id = ? AND reconciled = 0
-           ORDER BY transaction_date""",
-        (bank_account_id,)
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-# ===================== المصالحة البنكية =====================
-
-def create_bank_reconciliation(bank_account_id, reconciliation_date, statement_balance):
-    """إنشاء تسوية بنكية جديدة"""
-    conn = get_conn()
-    try:
-        account = get_bank_account_by_id(bank_account_id)
-        if not account:
-            raise ValueError("الحساب البنكي غير موجود")
-        
-        book_balance = account['current_balance']
-        difference = statement_balance - book_balance
-        
-        conn.execute("BEGIN")
-        conn.execute(
-            """INSERT INTO bank_reconciliations (bank_account_id, reconciliation_date, statement_balance, book_balance, difference, status)
-               VALUES (?, ?, ?, ?, ?, 'completed')""",
-            (bank_account_id, reconciliation_date, statement_balance, book_balance, difference)
-        )
-        conn.commit()
-        return True, difference
-    except Exception as e:
-        conn.rollback()
-        raise e
-    finally:
-        conn.close()
-
-def get_reconciliation_history(bank_account_id=None):
-    """جلب سجل المصالحات البنكية"""
-    conn = get_conn()
-    if bank_account_id:
-        rows = conn.execute(
-            """SELECT br.*, ba.bank_name, ba.account_number
-               FROM bank_reconciliations br
-               JOIN bank_accounts ba ON br.bank_account_id = ba.id
-               WHERE br.bank_account_id = ?
-               ORDER BY br.reconciliation_date DESC""",
-            (bank_account_id,)
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            """SELECT br.*, ba.bank_name, ba.account_number
-               FROM bank_reconciliations br
-               JOIN bank_accounts ba ON br.bank_account_id = ba.id
-               ORDER BY br.reconciliation_date DESC"""
-        ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-# ===================== دوال مساعدة =====================
-
-def get_bank_balance_summary():
-    """ملخص أرصدة جميع الحسابات البنكية النشطة"""
-    accounts = get_all_bank_accounts(active_only=True)
-    summary = []
-    total_balance_base = 0.0
     base_currency = get_base_currency()
     base_code = base_currency['code'] if base_currency else 'YER'
     
-    for acc in accounts:
-        balance = acc['current_balance']
-        currency = acc['currency_code']
-        if currency != base_code:
-            try:
-                balance_base = convert_amount(balance, currency, base_code)
-            except:
-                balance_base = balance
-        else:
-            balance_base = balance
-        
-        summary.append({
-            'bank_name': acc['bank_name'],
-            'account_number': acc['account_number'],
-            'currency': currency,
-            'balance': balance,
-            'balance_base': balance_base
-        })
-        total_balance_base += balance_base
+    own_conn = False
+    if conn is None:
+        conn = get_conn()
+        own_conn = True
     
-    return summary, total_balance_base
+    try:
+        if own_conn:
+            conn.execute("BEGIN")
+        
+        # ✅ مرجع فريد احترافي لكل قيد
+        reference = f"ENT-{entry_date}-{uuid.uuid4().hex[:8]}"
+        
+        cur = conn.execute(
+            "INSERT INTO journal_entries (date, description, reference) VALUES (?, ?, ?)",
+            (entry_date, description, reference)
+        )
+        entry_id = cur.lastrowid
+        
+        line_ids = []
+        for idx, line in enumerate(lines):
+            account_name = line["account"]
+            if not account_name.isdigit():
+                # تمرير نفس الاتصال لتجنب فتح اتصال جديد
+                code = get_account_code(account_name, conn)
+                if code:
+                    account_name = code
+            
+            currency_code = line.get("currency_code", base_code)
+            exchange_rate = line.get("exchange_rate", 1.0)
+            if currency_code != base_code and exchange_rate == 1.0:
+                fetched_rate = get_exchange_rate(currency_code, base_code)
+                if fetched_rate:
+                    exchange_rate = fetched_rate
+            
+            cur_line = conn.execute(
+                "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, ?, ?, ?, ?)",
+                (entry_id, account_name, line["debit"], line["credit"], currency_code, exchange_rate)
+            )
+            line_ids.append(cur_line.lastrowid)
+        
+        if cost_center_allocations:
+            for alloc_entry in cost_center_allocations:
+                line_index = alloc_entry.get('line_index', 0)
+                if line_index < len(line_ids):
+                    journal_line_id = line_ids[line_index]
+                    allocations = alloc_entry.get('allocations', [])
+                    if allocations:
+                        cost_center_service.allocate_journal_line(journal_line_id, allocations)
+        
+        if own_conn:
+            conn.commit()
+        return entry_id, None
+    except Exception as e:
+        if own_conn:
+            conn.rollback()
+        return None, str(e)
+    finally:
+        if own_conn:
+            conn.close()
+
+def update_journal_entry(entry_id, description, lines, entry_date=None, cost_center_allocations=None):
+    """تحديث قيد موجود مع دعم العملات"""
+    if entry_date is None:
+        entry_date = date.today().strftime("%Y-%m-%d")
+    
+    base_currency = get_base_currency()
+    base_code = base_currency['code'] if base_currency else 'YER'
+    
+    conn = get_conn()
+    try:
+        conn.execute("BEGIN")
+        
+        conn.execute(
+            "UPDATE journal_entries SET date = ?, description = ? WHERE id = ?",
+            (entry_date, description, entry_id)
+        )
+        
+        old_lines = conn.execute("SELECT id FROM journal_lines WHERE entry_id = ?", (entry_id,)).fetchall()
+        for ol in old_lines:
+            conn.execute("DELETE FROM cost_center_allocations WHERE journal_line_id = ?", (ol['id'],))
+        conn.execute("DELETE FROM journal_lines WHERE entry_id = ?", (entry_id,))
+        
+        line_ids = []
+        for idx, line in enumerate(lines):
+            account_name = line["account"]
+            if not account_name.isdigit():
+                code = get_account_code(account_name, conn)
+                if code:
+                    account_name = code
+            
+            currency_code = line.get("currency_code", base_code)
+            exchange_rate = line.get("exchange_rate", 1.0)
+            if currency_code != base_code and exchange_rate == 1.0:
+                fetched_rate = get_exchange_rate(currency_code, base_code)
+                if fetched_rate:
+                    exchange_rate = fetched_rate
+            
+            cur_line = conn.execute(
+                "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, ?, ?, ?, ?)",
+                (entry_id, account_name, line["debit"], line["credit"], currency_code, exchange_rate)
+            )
+            line_ids.append(cur_line.lastrowid)
+        
+        if cost_center_allocations:
+            for alloc_entry in cost_center_allocations:
+                line_index = alloc_entry.get('line_index', 0)
+                if line_index < len(line_ids):
+                    journal_line_id = line_ids[line_index]
+                    allocations = alloc_entry.get('allocations', [])
+                    if allocations:
+                        cost_center_service.allocate_journal_line(journal_line_id, allocations)
+        
+        conn.commit()
+        return True, None
+    except Exception as e:
+        conn.rollback()
+        return False, str(e)
+    finally:
+        conn.close()
+
+def get_recent_entries(limit=10):
+    """آخر قيود اليومية"""
+    conn = get_conn()
+    entries = conn.execute(
+        "SELECT id, date, description, reference FROM journal_entries ORDER BY id DESC LIMIT ?",
+        (limit,)
+    ).fetchall()
+    conn.close()
+    return [dict(e) for e in entries]
+
+def get_entry_details(entry_id):
+    """تفاصيل قيد محدد مع توزيعات مراكز التكلفة وبيانات العملة"""
+    conn = get_conn()
+    lines = conn.execute(
+        "SELECT id, account_name, debit, credit, currency_code, exchange_rate FROM journal_lines WHERE entry_id = ?",
+        (entry_id,)
+    ).fetchall()
+    
+    result = []
+    for l in lines:
+        line_dict = dict(l)
+        allocations = conn.execute("""
+            SELECT cca.id, cca.cost_center_id, cc.name as center_name, cc.code as center_code,
+                   cca.amount, cca.percentage
+            FROM cost_center_allocations cca
+            JOIN cost_centers cc ON cca.cost_center_id = cc.id
+            WHERE cca.journal_line_id = ?
+        """, (l['id'],)).fetchall()
+        line_dict['cost_center_allocations'] = [dict(a) for a in allocations] if allocations else []
+        result.append(line_dict)
+    
+    conn.close()
+    return result
+
+def get_ledger(account_name):
+    """دفتر الأستاذ لحساب محدد"""
+    conn = get_conn()
+    ledger = conn.execute("""
+        SELECT je.date, je.description, jl.debit, jl.credit, jl.currency_code, jl.exchange_rate
+        FROM journal_lines jl
+        JOIN journal_entries je ON jl.entry_id = je.id
+        WHERE jl.account_name = ?
+        ORDER BY je.date, je.id
+    """, (account_name,)).fetchall()
+    conn.close()
+    return [dict(l) for l in ledger]
+
+def get_trial_balance():
+    """ميزان المراجعة (بالعملة الأساسية من خلال ضرب المبالغ بسعر الصرف)"""
+    conn = get_conn()
+    tb = conn.execute("""
+        SELECT account_name,
+               SUM(debit * exchange_rate) as total_debit,
+               SUM(credit * exchange_rate) as total_credit
+        FROM journal_lines
+        GROUP BY account_name
+        ORDER BY account_name
+    """).fetchall()
+    conn.close()
+    return [dict(t) for t in tb]
+
+def get_distinct_accounts():
+    """جميع الحسابات المستخدمة في القيود"""
+    conn = get_conn()
+    accounts = conn.execute(
+        "SELECT DISTINCT account_name FROM journal_lines ORDER BY account_name"
+    ).fetchall()
+    conn.close()
+    return [a["account_name"] for a in accounts]
+
+def get_entry_with_allocations(entry_id):
+    """جلب القيد كاملاً مع توزيعات مراكز التكلفة"""
+    return cost_center_service.get_allocations_for_entry(entry_id)
