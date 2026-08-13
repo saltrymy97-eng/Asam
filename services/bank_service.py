@@ -27,6 +27,33 @@ def create_bank_account(bank_name, account_number, account_name="", currency_cod
             (bank_name, account_number, account_name, currency_code, opening_balance, opening_balance, final_account_code)
         )
         conn.commit()
+        
+        # ✅ إذا كان الرصيد الافتتاحي > 0، قم بإنشاء قيد محاسبي تلقائياً
+        if opening_balance > 0:
+            # الحساب المقابل (حقوق الملكية) للرصيد الافتتاحي
+            capital_account_code = get_functional_account("capital")
+            lines = [
+                {
+                    "account": final_account_code,
+                    "debit": opening_balance,
+                    "credit": 0.0,
+                    "currency_code": currency_code,
+                    "exchange_rate": 1.0
+                },
+                {
+                    "account": capital_account_code,
+                    "debit": 0.0,
+                    "credit": opening_balance,
+                    "currency_code": currency_code,
+                    "exchange_rate": 1.0
+                }
+            ]
+            save_journal_entry(
+                description=f"رصيد افتتاحي لحساب بنكي {bank_name} ({account_number})",
+                lines=lines,
+                entry_date=date.today().strftime("%Y-%m-%d")
+            )
+        
         return True
     except Exception as e:
         conn.rollback()
@@ -142,14 +169,14 @@ def add_bank_transaction(bank_account_id, transaction_date, description, trans_t
     if trans_type in ('deposit', 'transfer_in'):
         # إيداع: البنك مدين، والحساب المقابل دائن
         lines.append({
-            "account": bank_account_code,      # <--- تم التغيير هنا (account_name → account)
+            "account": bank_account_code,      
             "debit": amount,
             "credit": 0.0,
             "currency_code": currency,
             "exchange_rate": exchange_rate
         })
         lines.append({
-            "account": target_contra_code,     # <--- تم التغيير هنا
+            "account": target_contra_code,     
             "debit": 0.0,
             "credit": amount,
             "currency_code": currency,
@@ -158,14 +185,14 @@ def add_bank_transaction(bank_account_id, transaction_date, description, trans_t
     else:
         # سحب/تحويل للخارج: الحساب المقابل مدين، والبنك دائن
         lines.append({
-            "account": target_contra_code,     # <--- تم التغيير هنا
+            "account": target_contra_code,     
             "debit": amount,
             "credit": 0.0,
             "currency_code": currency,
             "exchange_rate": exchange_rate
         })
         lines.append({
-            "account": bank_account_code,      # <--- تم التغيير هنا
+            "account": bank_account_code,      
             "debit": 0.0,
             "credit": amount,
             "currency_code": currency,
@@ -230,14 +257,14 @@ def transfer_between_banks(from_account_id, to_account_id, amount, transfer_date
     # إنشاء قيد التحويل المباشر
     lines = [
         {
-            "account": to_code,          # <--- تم التغيير هنا
+            "account": to_code,          
             "debit": converted_to_amount,
             "credit": 0.0,
             "currency_code": to_curr,
             "exchange_rate": to_rate
         },
         {
-            "account": from_code,        # <--- تم التغيير هنا
+            "account": from_code,        
             "debit": 0.0,
             "credit": amount,
             "currency_code": from_curr,
