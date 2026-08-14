@@ -549,10 +549,17 @@ def init_db():
         type TEXT NOT NULL CHECK(type IN ('deposit','withdrawal')),
         amount REAL NOT NULL CHECK(amount > 0),
         reference TEXT,
+        journal_id INTEGER,          # <--- تم إضافة هذا السطر هنا
         journal_line_id INTEGER,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (cash_account_id) REFERENCES cash_accounts(id)
     )''')
+
+    # إضافة العمود journal_id بأمان إذا لم يكن موجوداً في الجدول الحالي
+    c.execute("PRAGMA table_info(cash_transactions)")
+    columns = [col[1] for col in c.fetchall()]
+    if "journal_id" not in columns:
+        c.execute("ALTER TABLE cash_transactions ADD COLUMN journal_id INTEGER")
 
     # ========== 17. الفهارس (Indexes) لتحسين الأداء ==========
     c.execute("CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)")
