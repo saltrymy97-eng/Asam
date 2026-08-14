@@ -40,6 +40,7 @@ FUNCTIONAL_TYPES = {
     "مصروف الإهلاك (depreciation_expense)": "depreciation_expense",
     "مجمع الإهلاك (accumulated_depreciation)": "accumulated_depreciation",
     "مصروف الرواتب (salaries_expense)": "salaries_expense",  # <--- تم إضافة هذا السطر
+    "المصروفات المستحقة (accrued_expenses)": "accrued_expenses",
 }
 
 def show():
