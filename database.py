@@ -549,7 +549,7 @@ def init_db():
         type TEXT NOT NULL CHECK(type IN ('deposit','withdrawal')),
         amount REAL NOT NULL CHECK(amount > 0),
         reference TEXT,
-        journal_id INTEGER,          # <--- تم إضافة هذا السطر هنا
+        journal_id INTEGER,          
         journal_line_id INTEGER,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (cash_account_id) REFERENCES cash_accounts(id)
