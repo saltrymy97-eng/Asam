@@ -38,7 +38,8 @@ FUNCTIONAL_TYPES = {
     "رأس المال (capital)": "capital",
     "الأرباح المبقاة (retained_earnings)": "retained_earnings",
     "مصروف الإهلاك (depreciation_expense)": "depreciation_expense",
-    "مجمع الإهلاك (accumulated_depreciation)": "accumulated_depreciation",  # <--- تم إضافة هذا السطر
+    "مجمع الإهلاك (accumulated_depreciation)": "accumulated_depreciation",
+    "مصروف الرواتب (salaries_expense)": "salaries_expense",  # <--- تم إضافة هذا السطر
 }
 
 def show():
