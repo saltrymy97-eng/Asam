@@ -5,7 +5,7 @@ import os
 from datetime import date
 from services import cost_center_service
 from services.currency_service import get_base_currency, get_exchange_rate
-from services.period_service import is_period_closed  # <--- تم استيراد دالة التحقق من الفترات
+from services.period_service import is_period_closed
 
 DB_PATH = os.path.join("data", "erp.db")
 
@@ -47,16 +47,17 @@ def get_account_code(account_input, conn=None):
     
     return None
 
-def save_journal_entry(description, lines, entry_date=None, cost_center_allocations=None, conn=None):
+def save_journal_entry(description, lines, entry_date=None, cost_center_allocations=None, conn=None, skip_period_check=False):
     """
     حفظ قيد يومية جديد.
     إذا تم تمرير conn خارجي، لا يتم إنشاء معاملة منفصلة (المعاملة تدار خارجياً).
+    skip_period_check: إذا كان True، يتم تخطي التحقق من الفترات المغلقة.
     """
     if entry_date is None:
         entry_date = date.today().strftime("%Y-%m-%d")
     
-    # ✅ التحقق مما إذا كانت الفترة مغلقة قبل الحفظ
-    if is_period_closed(entry_date):
+    # ✅ التحقق مما إذا كانت الفترة مغلقة (إلا إذا كان الطلب يتطلب تخطي الفحص)
+    if not skip_period_check and is_period_closed(entry_date):
         return None, f"لا يمكن حفظ القيد في فترة مغلقة: {entry_date}. يرجى فتح الفترة أولاً."
     
     base_currency = get_base_currency()
@@ -127,7 +128,6 @@ def update_journal_entry(entry_id, description, lines, entry_date=None, cost_cen
     if entry_date is None:
         entry_date = date.today().strftime("%Y-%m-%d")
     
-    # ✅ التحقق مما إذا كانت الفترة مغلقة قبل التحديث
     if is_period_closed(entry_date):
         return False, f"لا يمكن تحديث قيد في فترة مغلقة: {entry_date}. يرجى فتح الفترة أولاً."
     
