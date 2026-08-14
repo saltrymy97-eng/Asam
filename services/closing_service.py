@@ -4,6 +4,28 @@ from database import get_connection
 from services import cost_center_service as ccs
 from services.audit_service import log_action
 
+def create_closing_table():
+    """إنشاء جدول لإدارة عمليات الإغلاق إذا لم يكن موجوداً"""
+    conn = get_connection()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS closing_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            year TEXT NOT NULL,
+            cost_center_id INTEGER,
+            entry_id INTEGER NOT NULL,
+            net_income REAL NOT NULL,
+            closed_at TEXT NOT NULL,
+            closed_by TEXT NOT NULL,
+            UNIQUE(year, cost_center_id)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def ensure_closing_table():
+    """ضمان وجود الجدول (يُستدعى عند بدء التطبيق)"""
+    create_closing_table()
+
 def get_account_balance(account_code):
     """جلب رصيد حساب محدد (عام)"""
     conn = get_connection()
