@@ -19,6 +19,10 @@ def create_periods_table():
     conn.commit()
     conn.close()
 
+def ensure_periods_table():
+    """ضمان وجود الجدول (يُستدعى عند بدء التطبيق)"""
+    create_periods_table()
+
 def is_period_closed(date_str):
     """التحقق مما إذا كان التاريخ يقع ضمن فترة مغلقة"""
     conn = get_connection()
