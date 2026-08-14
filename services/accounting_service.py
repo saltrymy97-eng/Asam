@@ -5,6 +5,7 @@ import os
 from datetime import date
 from services import cost_center_service
 from services.currency_service import get_base_currency, get_exchange_rate
+from services.period_service import is_period_closed  # <--- تم استيراد دالة التحقق من الفترات
 
 DB_PATH = os.path.join("data", "erp.db")
 
@@ -53,6 +54,10 @@ def save_journal_entry(description, lines, entry_date=None, cost_center_allocati
     """
     if entry_date is None:
         entry_date = date.today().strftime("%Y-%m-%d")
+    
+    # ✅ التحقق مما إذا كانت الفترة مغلقة قبل الحفظ
+    if is_period_closed(entry_date):
+        return None, f"لا يمكن حفظ القيد في فترة مغلقة: {entry_date}. يرجى فتح الفترة أولاً."
     
     base_currency = get_base_currency()
     base_code = base_currency['code'] if base_currency else 'YER'
@@ -121,6 +126,10 @@ def update_journal_entry(entry_id, description, lines, entry_date=None, cost_cen
     """تحديث قيد موجود مع دعم العملات"""
     if entry_date is None:
         entry_date = date.today().strftime("%Y-%m-%d")
+    
+    # ✅ التحقق مما إذا كانت الفترة مغلقة قبل التحديث
+    if is_period_closed(entry_date):
+        return False, f"لا يمكن تحديث قيد في فترة مغلقة: {entry_date}. يرجى فتح الفترة أولاً."
     
     base_currency = get_base_currency()
     base_code = base_currency['code'] if base_currency else 'YER'
