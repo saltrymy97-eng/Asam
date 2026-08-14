@@ -1,5 +1,6 @@
-# services/financial_service.py - القوائم المالية (مع دعم مراكز التكلفة والحسابات الوظيفية والعملات)
+# services/financial_service.py - القوائم المالية (مع دعم مراكز التكلفة والحسابات الوظيفية والعملات واختيار الفترة)
 import sqlite3
+from datetime import datetime
 from database import get_connection
 from services.chart_service import get_functional_account
 
@@ -89,8 +90,27 @@ def get_all_active_accounts(cost_center_id=None):
     conn.close()
     return accounts
 
-def get_income_statement(cost_center_id=None, from_date=None, to_date=None):
-    """قائمة الدخل (بالعملة الأساسية)"""
+def get_income_statement(cost_center_id=None, year=None, month=None):
+    """
+    قائمة الدخل (بالعملة الأساسية) - مع دعم اختيار الفترة (السنة/الشهر).
+    """
+    # حساب نطاق التواريخ بناءً على السنة والشهر المختارين
+    from_date = None
+    to_date = None
+    if year:
+        if month:
+            from_date = f"{year}-{month}-01"
+            # حساب آخر يوم في الشهر
+            next_month = int(month) + 1
+            next_year = year
+            if next_month > 12:
+                next_month = 1
+                next_year = year + 1
+            to_date = f"{next_year}-{next_month:02d}-01"
+        else:
+            from_date = f"{year}-01-01"
+            to_date = f"{year}-12-31"
+
     all_accounts = get_all_active_accounts(cost_center_id)
     revenue_list = []
     total_revenue = 0
@@ -138,8 +158,24 @@ def get_income_statement(cost_center_id=None, from_date=None, to_date=None):
         "net_income": total_revenue - total_expenses
     }
 
-def get_balance_sheet(cost_center_id=None, as_of_date=None):
-    """الميزانية العمومية (بالعملة الأساسية) - تصنيف دقيق ومتوازن اعتماداً على الحسابات الوظيفية"""
+def get_balance_sheet(cost_center_id=None, year=None, month=None):
+    """
+    الميزانية العمومية (بالعملة الأساسية) - مع دعم اختيار الفترة (السنة/الشهر).
+    """
+    # حساب تاريخ نهاية الفترة للميزانية العمومية
+    as_of_date = None
+    if year:
+        if month:
+            # حساب آخر يوم في الشهر المختار
+            next_month = int(month) + 1
+            next_year = year
+            if next_month > 12:
+                next_month = 1
+                next_year = year + 1
+            as_of_date = f"{next_year}-{next_month:02d}-01"
+        else:
+            as_of_date = f"{year}-12-31"
+
     all_accounts = get_all_active_accounts(cost_center_id)
     asset_list = []
     total_assets = 0
@@ -201,7 +237,7 @@ def get_balance_sheet(cost_center_id=None, as_of_date=None):
                 equity_list.append({"code": code, "name": acc["name"], "amount": amount})
 
     # احتساب صافي الدخل وإضافته إلى حقوق الملكية تحت كود الأرباح المحتجزة الوظيفي
-    income_stmt = get_income_statement(cost_center_id=cost_center_id, to_date=as_of_date)
+    income_stmt = get_income_statement(cost_center_id=cost_center_id, year=year, month=month)
     net_income = income_stmt['net_income']
     total_equity += net_income
     
