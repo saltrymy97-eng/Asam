@@ -19,6 +19,7 @@ FUNCTIONAL_TYPES = {
     "capital": "(capital) رأس المال",
     "retained_earnings": "(retained_earnings) الأرباح المبقاة",
     "depreciation_expense": "(depreciation_expense) مصروف الإهلاك",
+    "accumulated_depreciation": "(accumulated_depreciation) مجمع الإهلاك",
 }
 
 def create_accounts_table():
