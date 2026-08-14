@@ -170,11 +170,18 @@ def add_cash_transaction(cash_account_id, transaction_date, description, trans_t
                 "exchange_rate": exchange_rate
             })
 
-        journal_id = save_journal_entry(
+        # 🔧 الحل الاحترافي: معالجة القيمة المرتجعة من save_journal_entry
+        _journal_result = save_journal_entry(
             entry_date=transaction_date,
             description=f"{description} ({reference})".strip(),
             lines=lines
         )
+        
+        # التأكد من أن القيمة رقم وليس tuple
+        if isinstance(_journal_result, tuple):
+            journal_id = _journal_result[0]
+        else:
+            journal_id = _journal_result
 
     conn = get_connection()
     try:
