@@ -1,6 +1,7 @@
-# ui/financial_ui.py - واجهة القوائم المالية (تصميم زجاجي فخم + فلترة مراكز التكلفة)
+# ui/financial_ui.py - واجهة القوائم المالية (تصميم زجاجي فخم + فلترة مراكز التكلفة + اختيار الفترة)
 import streamlit as st
 import pandas as pd
+from datetime import datetime
 from services.financial_service import get_income_statement, get_balance_sheet
 from services import cost_center_service as ccs
 
@@ -40,6 +41,20 @@ def show():
     </div>
     """, unsafe_allow_html=True)
 
+    # 🆕 اختيار الفترة (السنة والشهر)
+    col_date1, col_date2 = st.columns(2)
+    with col_date1:
+        selected_year = st.selectbox("📅 اختر السنة", list(range(2023, datetime.now().year + 2)), index=3)
+    with col_date2:
+        selected_month = st.selectbox("📅 اختر الشهر", ["الكل"] + [f"{i:02d}" for i in range(1, 13)], index=0)
+
+    # بناء نص الفترة للعرض
+    period_label = f"{selected_year}"
+    if selected_month != "الكل":
+        period_label += f"-{selected_month}"
+        
+    st.caption(f"📌 عرض البيانات للفترة: **{period_label}**")
+
     # 🆕 فلتر مراكز التكلفة
     centers = ccs.get_all_cost_centers(active_only=True)
     center_options = {0: "كل الشركة (بدون تصفية)"}
@@ -60,7 +75,8 @@ def show():
     with tab1:
         st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>قائمة الدخل</h3>", unsafe_allow_html=True)
         
-        income = get_income_statement(cost_center_id)
+        # استدعاء قائمة الدخل مع الفترة المحددة
+        income = get_income_statement(cost_center_id, selected_year, selected_month if selected_month != "الكل" else None)
         
         # رسالة توضيحية إذا تم التصفية
         if cost_center_id:
@@ -103,7 +119,8 @@ def show():
     with tab2:
         st.markdown(f"<h3 style='color:{ACCENT_CYAN};'>الميزانية العمومية</h3>", unsafe_allow_html=True)
         
-        balance = get_balance_sheet(cost_center_id)
+        # استدعاء الميزانية العمومية مع الفترة المحددة
+        balance = get_balance_sheet(cost_center_id, selected_year, selected_month if selected_month != "الكل" else None)
         
         if cost_center_id and balance['total_assets'] == 0 and balance['total_liabilities'] == 0:
             st.warning("لا توجد بيانات ميزانية لهذا المركز. المراكز التكلفة تعرض عادة الإيرادات والمصروفات فقط.")
