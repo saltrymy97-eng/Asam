@@ -218,6 +218,17 @@ def init_db():
     )''')
 
     # ========== 8. إغلاق الفترات ==========
+    c.execute('''CREATE TABLE IF NOT EXISTS closing_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        year TEXT NOT NULL,
+        cost_center_id INTEGER,
+        entry_id INTEGER NOT NULL,
+        net_income REAL NOT NULL,
+        closed_at TEXT NOT NULL,
+        closed_by TEXT NOT NULL,
+        UNIQUE(year, cost_center_id)
+    )''')
+
     c.execute('''CREATE TABLE IF NOT EXISTS closed_periods (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         period_type TEXT NOT NULL,
