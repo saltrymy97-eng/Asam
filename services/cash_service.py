@@ -123,7 +123,14 @@ def add_cash_transaction(cash_account_id, transaction_date, description, trans_t
 
     cash_code = account.get('account_code') or get_functional_account("cash")
     currency = account.get('currency_code', 'YER')
-    exchange_rate = get_exchange_rate(currency)
+    
+    # ✅ الحل الاحترافي لسعر الصرف
+    base_currency = get_base_currency()
+    if currency == base_currency['code']:
+        exchange_rate = 1.0
+    else:
+        exchange_rate = get_exchange_rate(currency, base_currency['code']) or 1.0
+    
     journal_id = None
 
     if create_journal:
@@ -133,14 +140,14 @@ def add_cash_transaction(cash_account_id, transaction_date, description, trans_t
         if trans_type == 'deposit':
             # إيداع: الصندوق مدين، والحساب المقابل دائن
             lines.append({
-                "account": cash_code,  # تم التغيير من account_name إلى account
+                "account": cash_code,
                 "debit": amount,
                 "credit": 0.0,
                 "currency_code": currency,
                 "exchange_rate": exchange_rate
             })
             lines.append({
-                "account": target_contra_code,  # تم التغيير من account_name إلى account
+                "account": target_contra_code,
                 "debit": 0.0,
                 "credit": amount,
                 "currency_code": currency,
@@ -149,14 +156,14 @@ def add_cash_transaction(cash_account_id, transaction_date, description, trans_t
         else:
             # سحب: الحساب المقابل مدين، والصندوق دائن
             lines.append({
-                "account": target_contra_code,  # تم التغيير من account_name إلى account
+                "account": target_contra_code,
                 "debit": amount,
                 "credit": 0.0,
                 "currency_code": currency,
                 "exchange_rate": exchange_rate
             })
             lines.append({
-                "account": cash_code,  # تم التغيير من account_name إلى account
+                "account": cash_code,
                 "debit": 0.0,
                 "credit": amount,
                 "currency_code": currency,
