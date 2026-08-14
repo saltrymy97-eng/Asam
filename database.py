@@ -535,6 +535,12 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
+    # إضافة العمود account_code بأمان إذا لم يكن موجوداً في الجدول الحالي
+    c.execute("PRAGMA table_info(cash_accounts)")
+    columns = [col[1] for col in c.fetchall()]
+    if "account_code" not in columns:
+        c.execute("ALTER TABLE cash_accounts ADD COLUMN account_code TEXT")
+
     c.execute('''CREATE TABLE IF NOT EXISTS cash_transactions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         cash_account_id INTEGER NOT NULL,
