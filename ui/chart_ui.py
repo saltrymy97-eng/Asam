@@ -36,7 +36,8 @@ FUNCTIONAL_TYPES = {
     "ضريبة المشتريات/مدخلات (purchase_tax)": "purchase_tax",
     "المصروفات العامة (operating_expense)": "operating_expense",
     "رأس المال (capital)": "capital",
-    "الأرباح المبقاة (retained_earnings)": "retained_earnings"
+    "الأرباح المبقاة (retained_earnings)": "retained_earnings",
+    "مصروف الإهلاك (depreciation_expense)": "depreciation_expense",  # <--- تم إضافة هذا السطر
 }
 
 def show():
