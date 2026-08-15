@@ -15,11 +15,11 @@ def get_account_balance(account_code, cost_center_id=None, as_of_date=None, from
     params = [account_code]
     date_filter = ""
     if from_date:
-        date_filter += " AND jl.date >= ?"  # ✅ تم التصحيح: entry_date → date
+        date_filter += " AND je.entry_date >= ?"
         params.append(from_date)
     if to_date or as_of_date:
         target_date = to_date or as_of_date
-        date_filter += " AND jl.date <= ?"  # ✅ تم التصحيح: entry_date → date
+        date_filter += " AND je.entry_date <= ?"
         params.append(target_date)
 
     if cost_center_id:
@@ -29,15 +29,17 @@ def get_account_balance(account_code, cost_center_id=None, as_of_date=None, from
                 COALESCE(SUM(CASE WHEN jl.credit > 0 THEN cca.amount * COALESCE(jl.exchange_rate, 1.0) ELSE 0 END), 0) AS total_credit
             FROM cost_center_allocations cca
             JOIN journal_lines jl ON cca.journal_line_id = jl.id
+            JOIN journal_entries je ON jl.journal_id = je.id  
             WHERE jl.account_name = ? AND cca.cost_center_id = ? {date_filter}
         """
         params.insert(1, cost_center_id)
     else:
         query = f"""
             SELECT 
-                COALESCE(SUM(debit * COALESCE(exchange_rate, 1.0)), 0) AS total_debit,
-                COALESCE(SUM(credit * COALESCE(exchange_rate, 1.0)), 0) AS total_credit
+                COALESCE(SUM(jl.debit * COALESCE(jl.exchange_rate, 1.0)), 0) AS total_debit,
+                COALESCE(SUM(jl.credit * COALESCE(jl.exchange_rate, 1.0)), 0) AS total_credit
             FROM journal_lines jl
+            JOIN journal_entries je ON jl.journal_id = je.id  
             WHERE jl.account_name = ? {date_filter}
         """
 
