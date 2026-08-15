@@ -29,7 +29,7 @@ def get_account_balance(account_code, cost_center_id=None, as_of_date=None, from
                 COALESCE(SUM(CASE WHEN jl.credit > 0 THEN cca.amount * COALESCE(jl.exchange_rate, 1.0) ELSE 0 END), 0) AS total_credit
             FROM cost_center_allocations cca
             JOIN journal_lines jl ON cca.journal_line_id = jl.id
-            JOIN journal_entries je ON jl.journal_id = je.id  
+            JOIN journal_entries je ON jl.entry_id = je.id  # ✅ تم التصحيح هنا
             WHERE jl.account_name = ? AND cca.cost_center_id = ? {date_filter}
         """
         params.insert(1, cost_center_id)
@@ -39,7 +39,7 @@ def get_account_balance(account_code, cost_center_id=None, as_of_date=None, from
                 COALESCE(SUM(jl.debit * COALESCE(jl.exchange_rate, 1.0)), 0) AS total_debit,
                 COALESCE(SUM(jl.credit * COALESCE(jl.exchange_rate, 1.0)), 0) AS total_credit
             FROM journal_lines jl
-            JOIN journal_entries je ON jl.journal_id = je.id  
+            JOIN journal_entries je ON jl.entry_id = je.id  # ✅ تم التصحيح هنا
             WHERE jl.account_name = ? {date_filter}
         """
 
