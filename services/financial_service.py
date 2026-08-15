@@ -15,11 +15,11 @@ def get_account_balance(account_code, cost_center_id=None, as_of_date=None, from
     params = [account_code]
     date_filter = ""
     if from_date:
-        date_filter += " AND jl.entry_date >= ?"
+        date_filter += " AND jl.date >= ?"  # ✅ تم التصحيح: entry_date → date
         params.append(from_date)
     if to_date or as_of_date:
         target_date = to_date or as_of_date
-        date_filter += " AND jl.entry_date <= ?"
+        date_filter += " AND jl.date <= ?"  # ✅ تم التصحيح: entry_date → date
         params.append(target_date)
 
     if cost_center_id:
