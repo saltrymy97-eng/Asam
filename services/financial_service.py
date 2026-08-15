@@ -1,5 +1,5 @@
-# services/financial_service.py - القوائم المالية (مع دعم مراكز التكلفة والحسابات الوظيفية والعملات واختيار الفترة)
 import sqlite3
+import calendar
 from datetime import datetime
 from database import get_connection
 from services.chart_service import get_functional_account
@@ -14,12 +14,13 @@ def get_account_balance(account_code, cost_center_id=None, as_of_date=None, from
     
     params = [account_code]
     date_filter = ""
+    
     if from_date:
-        date_filter += " AND je.entry_date >= ?"
+        date_filter += " AND je.date >= ?"
         params.append(from_date)
     if to_date or as_of_date:
         target_date = to_date or as_of_date
-        date_filter += " AND je.entry_date <= ?"
+        date_filter += " AND je.date <= ?"
         params.append(target_date)
 
     if cost_center_id:
@@ -29,7 +30,7 @@ def get_account_balance(account_code, cost_center_id=None, as_of_date=None, from
                 COALESCE(SUM(CASE WHEN jl.credit > 0 THEN cca.amount * COALESCE(jl.exchange_rate, 1.0) ELSE 0 END), 0) AS total_credit
             FROM cost_center_allocations cca
             JOIN journal_lines jl ON cca.journal_line_id = jl.id
-            JOIN journal_entries je ON jl.entry_id = je.id  # ✅ تم التصحيح هنا
+            JOIN journal_entries je ON jl.entry_id = je.id  -- تم استخدام entry_id لأنه NOT NULL في قاعدة البيانات
             WHERE jl.account_name = ? AND cca.cost_center_id = ? {date_filter}
         """
         params.insert(1, cost_center_id)
@@ -39,7 +40,7 @@ def get_account_balance(account_code, cost_center_id=None, as_of_date=None, from
                 COALESCE(SUM(jl.debit * COALESCE(jl.exchange_rate, 1.0)), 0) AS total_debit,
                 COALESCE(SUM(jl.credit * COALESCE(jl.exchange_rate, 1.0)), 0) AS total_credit
             FROM journal_lines jl
-            JOIN journal_entries je ON jl.entry_id = je.id  # ✅ تم التصحيح هنا
+            JOIN journal_entries je ON jl.entry_id = je.id  -- تم استخدام entry_id
             WHERE jl.account_name = ? {date_filter}
         """
 
@@ -96,19 +97,16 @@ def get_income_statement(cost_center_id=None, year=None, month=None):
     """
     قائمة الدخل (بالعملة الأساسية) - مع دعم اختيار الفترة (السنة/الشهر).
     """
-    # حساب نطاق التواريخ بناءً على السنة والشهر المختارين
     from_date = None
     to_date = None
     if year:
+        year = int(year)
         if month:
-            from_date = f"{year}-{month}-01"
-            # حساب آخر يوم في الشهر
-            next_month = int(month) + 1
-            next_year = year
-            if next_month > 12:
-                next_month = 1
-                next_year = year + 1
-            to_date = f"{next_year}-{next_month:02d}-01"
+            month = int(month)
+            from_date = f"{year}-{month:02d}-01"
+            # الحل الدقيق لحساب آخر يوم في الشهر
+            last_day = calendar.monthrange(year, month)[1]
+            to_date = f"{year}-{month:02d}-{last_day:02d}"
         else:
             from_date = f"{year}-01-01"
             to_date = f"{year}-12-31"
@@ -146,7 +144,7 @@ def get_income_statement(cost_center_id=None, year=None, month=None):
             if amount != 0:
                 total_revenue += amount
                 revenue_list.append({"code": code, "name": acc["name"], "amount": amount})
-        else:  # المصروفات
+        else:
             amount = debit - credit
             if amount != 0:
                 total_expenses += amount
@@ -164,17 +162,14 @@ def get_balance_sheet(cost_center_id=None, year=None, month=None):
     """
     الميزانية العمومية (بالعملة الأساسية) - مع دعم اختيار الفترة (السنة/الشهر).
     """
-    # حساب تاريخ نهاية الفترة للميزانية العمومية
     as_of_date = None
     if year:
+        year = int(year)
         if month:
-            # حساب آخر يوم في الشهر المختار
-            next_month = int(month) + 1
-            next_year = year
-            if next_month > 12:
-                next_month = 1
-                next_year = year + 1
-            as_of_date = f"{next_year}-{next_month:02d}-01"
+            month = int(month)
+            # الحل الدقيق لحساب آخر يوم في الشهر
+            last_day = calendar.monthrange(year, month)[1]
+            as_of_date = f"{year}-{month:02d}-{last_day:02d}"
         else:
             as_of_date = f"{year}-12-31"
 
@@ -209,7 +204,6 @@ def get_balance_sheet(cost_center_id=None, year=None, month=None):
             elif prefix == "3":
                 category = "Equity"
         else:
-            # حساب غير رقمي (عميل / مورد): يصنف حسب الطبيعة
             debit, credit = get_account_balance(code, cost_center_id=cost_center_id, as_of_date=as_of_date)
             net = debit - credit
             if net > 0:
@@ -238,12 +232,11 @@ def get_balance_sheet(cost_center_id=None, year=None, month=None):
                 total_equity += amount
                 equity_list.append({"code": code, "name": acc["name"], "amount": amount})
 
-    # احتساب صافي الدخل وإضافته إلى حقوق الملكية تحت كود الأرباح المحتجزة الوظيفي
+    # احتساب صافي الدخل وإضافته إلى حقوق الملكية
     income_stmt = get_income_statement(cost_center_id=cost_center_id, year=year, month=month)
     net_income = income_stmt['net_income']
     total_equity += net_income
     
-    # جلب اسم حساب الأرباح المحتجزة
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     retained_acc = conn.execute("SELECT name FROM accounts WHERE code = ?", (retained_earnings_code,)).fetchone()
