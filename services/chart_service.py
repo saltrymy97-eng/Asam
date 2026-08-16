@@ -22,7 +22,8 @@ FUNCTIONAL_TYPES = {
     "accumulated_depreciation": "(accumulated_depreciation) مجمع الإهلاك",
     "salaries_expense": "(salaries_expense) مصروف الرواتب",
     "accrued_expenses": "(accrued_expenses) المصروفات المستحقة",
-    "inventory_gain": "(inventory_gain) عجز/خسائر المخزون"
+    "inventory_gain": "(inventory_gain) عجز/خسائر المخزون",
+    "inventory_loss": "(inventory_loss) خسائر/نقص الجرد", # <--- تمت إضافة هذا السطر بناءً على الخطأ الجديد
 }
 
 def create_accounts_table():
