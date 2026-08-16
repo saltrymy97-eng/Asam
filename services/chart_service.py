@@ -23,7 +23,7 @@ FUNCTIONAL_TYPES = {
     "salaries_expense": "(salaries_expense) مصروف الرواتب",
     "accrued_expenses": "(accrued_expenses) المصروفات المستحقة",
     "inventory_gain": "(inventory_gain) عجز/خسائر المخزون",
-    "inventory_loss": "(inventory_loss) خسائر/نقص الجرد", # <--- تمت إضافة هذا السطر بناءً على الخطأ الجديد
+    "inventory_loss": "(inventory_loss) خسائر/نقص الجرد",
 }
 
 def create_accounts_table():
@@ -57,6 +57,7 @@ def add_account(code, name, parent_id=None, account_type=None, functional_type=N
             level = parent["level"] + 1
         conn.close()
     
+    # تحديد طبيعة الحساب (مدين / دائن)
     is_debit = "credit" if code.startswith(("2", "3", "4")) else "debit"
     
     conn = get_connection()
@@ -87,10 +88,18 @@ def add_account(code, name, parent_id=None, account_type=None, functional_type=N
         conn.close()
 
 def get_accounts_tree():
-    """جلب جميع الحسابات مرتبة مع التصنيف والنوع الوظيفي"""
+    """
+    جلب جميع الحسابات مرتبة مع التصنيف والنوع الوظيفي.
+    تم تعديل الـ ORDER BY ليعمل ترتيباً رقمياً للنقاط العشرية.
+    """
     conn = get_connection()
     conn.row_factory = sqlite3.Row
-    accounts = conn.execute("SELECT id, code, name, parent_id, level, is_debit, is_active, account_type, functional_type FROM accounts ORDER BY code").fetchall()
+    # ✨ التعديل الاحترافي: جعل الترتيب يستخدم طول الكود ثم الكود لضمان الترتيب الصحيح (1.2 قبل 1.10)
+    accounts = conn.execute("""
+        SELECT id, code, name, parent_id, level, is_debit, is_active, account_type, functional_type 
+        FROM accounts 
+        ORDER BY LENGTH(code), code
+    """).fetchall()
     conn.close()
     return accounts
 
