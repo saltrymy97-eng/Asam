@@ -83,9 +83,14 @@ def save_journal_entry(description, lines, entry_date=None, cost_center_allocati
         
         line_ids = []
         for idx, line in enumerate(lines):
-            account_name = line["account"]
+            # ✨ التعديل الاحترافي: دعم مرن لكل من 'account' و 'account_id'
+            account_name = line.get("account") or line.get("account_id")
+            
+            if not account_name:
+                return None, "خطأ: سطر القيد يفتقد إلى معرف الحساب (account أو account_id)"
+            
+            # إذا كان معرف الحساب (id) ولا يوجد اسم، حاول جلب اسمه من قاعدة البيانات
             if not account_name.isdigit():
-                # تمرير نفس الاتصال لتجنب فتح اتصال جديد
                 code = get_account_code(account_name, conn)
                 if code:
                     account_name = code
@@ -150,7 +155,12 @@ def update_journal_entry(entry_id, description, lines, entry_date=None, cost_cen
         
         line_ids = []
         for idx, line in enumerate(lines):
-            account_name = line["account"]
+            # ✨ دعم مرن للتحديث
+            account_name = line.get("account") or line.get("account_id")
+            
+            if not account_name:
+                return False, "خطأ: سطر القيد يفتقد إلى معرف الحساب (account أو account_id)"
+            
             if not account_name.isdigit():
                 code = get_account_code(account_name, conn)
                 if code:
