@@ -380,7 +380,7 @@ def init_db():
     )''')
     c.execute("INSERT OR IGNORE INTO vat_config (id, rate, is_active) VALUES (1, 0.15, 1)")
 
-    # ========== 13. السندات والمصروفات والتسويات ==========
+    # ========== 13. السندات والمصروفات والتسويات والأرصدة الافتتاحية ==========
     c.execute('''CREATE TABLE IF NOT EXISTS vouchers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
@@ -430,16 +430,19 @@ def init_db():
         FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
     )''')
 
+    # ✅ تم تحديث جدول الأرصدة الافتتاحية ليدعم كلاً من account_id و account_code
     c.execute('''CREATE TABLE IF NOT EXISTS opening_balances (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         entry_date TEXT NOT NULL DEFAULT (date('now')),
+        account_id INTEGER NOT NULL,
         account_code TEXT NOT NULL,
         account_name TEXT,
         debit REAL DEFAULT 0,
         credit REAL DEFAULT 0,
         journal_entry_id INTEGER,
         created_by TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (account_id) REFERENCES accounts(id)
     )''')
 
     c.execute('''CREATE TABLE IF NOT EXISTS opening_inventory (
