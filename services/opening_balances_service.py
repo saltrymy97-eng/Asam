@@ -23,7 +23,7 @@ def create_opening_tables():
                 journal_entry_id INTEGER,
                 created_by TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (account_id) REFERENCES chart_of_accounts(id)
+                FOREIGN KEY (account_id) REFERENCES accounts(id)
             )
         """)
         conn.execute("""
@@ -44,14 +44,19 @@ def create_opening_tables():
         conn.close()
 
 def get_accounts_for_opening():
-    """جلب جميع الحسابات الفرعية القابلة لإدخال الأرصدة من شجرة الحسابات"""
+    """
+    جلب الحسابات المناسبة لإدخال الأرصدة الافتتاحية (أصول، خصوم، حقوق ملكية).
+    يتم تجاهل حسابات الإيرادات والمصروفات لأنها تبدأ من الصفر مالياً.
+    """
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     try:
+        # استعلام محسن: نستخدم جدول accounts الصحيح، ونستبعد الحسابات التجميعية
         accounts = conn.execute("""
-            SELECT id, code, name, type, is_sub
-            FROM chart_of_accounts
-            WHERE is_sub = 1
+            SELECT id, code, name, account_type as type, level
+            FROM accounts
+            WHERE account_type IN ('Asset', 'Liability', 'Equity')
+              AND level >= 2
             ORDER BY code
         """).fetchall()
         return [dict(a) for a in accounts]
