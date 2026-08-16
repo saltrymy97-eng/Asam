@@ -79,32 +79,45 @@ def get_products_for_opening():
 
 def _resolve_account_id(conn, account_identifier):
     """
-    دالة مساعدة ذكية لتحويل أي معرف حساب إلى الـ ID الرقمي الأساسي.
-    تدعم إما account_id مباشر أو كود الحساب (مثل '1100').
+    ✨ دالة ذكية جداً لتحويل أي معرف حساب إلى الـ ID الرقمي الأساسي.
+    تدعم:
+    - رقم صحيح (int) مباشر.
+    - كود نصي (مثل '1.1' أو '1100').
+    - اسم الحساب بالعربي (مثل 'صندوق النقدية' أو 'العملاء').
     """
     if not account_identifier:
         return None
     
-    # إذا كان الرقم هو الـ ID المباشر (رقم صحيح)
+    # 1. إذا كان المعرف رقمياً صحيحاً
     if isinstance(account_identifier, int):
         return account_identifier
     
-    # تحويله لنص لفحصه
-    account_identifier = str(account_identifier).strip()
+    # 2. تحويله إلى نص للفحص
+    identifier = str(account_identifier).strip()
     
-    # محاولة تحويل النص إلى ID
-    if account_identifier.isdigit():
-        # قد يكون ID أو Code، نفضل البحث عن ID أولاً (لأنه أكثر دقة)
-        row = conn.execute("SELECT id FROM accounts WHERE id = ?", (account_identifier,)).fetchone()
-        if row:
-            return row["id"]
-        
-        # إن لم يكن ID، نجرب البحث كـ Code
-        row = conn.execute("SELECT id FROM accounts WHERE code = ?", (account_identifier,)).fetchone()
-        if row:
-            return row["id"]
+    # 3. محاولة البحث بالتتابع حسب نوع البيانات المرسلة
     
-    # إن لم يجد، يرجع None
+    # (أ) البحث كـ ID مباشر
+    row = conn.execute("SELECT id FROM accounts WHERE id = ?", (identifier,)).fetchone()
+    if row:
+        return row["id"]
+    
+    # (ب) البحث كـ Code (مثل 1.1 أو 1100)
+    row = conn.execute("SELECT id FROM accounts WHERE code = ?", (identifier,)).fetchone()
+    if row:
+        return row["id"]
+    
+    # (ج) البحث كـ Name بالضبط
+    row = conn.execute("SELECT id FROM accounts WHERE name = ?", (identifier,)).fetchone()
+    if row:
+        return row["id"]
+    
+    # (د) البحث كـ Name باستخدام (جزئي) مثل "صندوق" بدلاً من "صندوق النقدية"
+    row = conn.execute("SELECT id FROM accounts WHERE name LIKE ?", (f"%{identifier}%",)).fetchone()
+    if row:
+        return row["id"]
+    
+    # 4. إذا لم يتم العثور بأي طريقة
     return None
 
 def create_opening_balances(account_balances, inventory_items, entry_date, created_by="admin"):
@@ -163,12 +176,13 @@ def create_opening_balances(account_balances, inventory_items, entry_date, creat
             if debit_val == 0 and credit_val == 0:
                 continue
             
-            # استخراج معرف الحساب باستخدام الدالة المساعدة الذكية
+            # استخراج معرف الحساب باستخدام الدالة المساعدة الذكية جداً
             identifier = bal.get('account_id') or bal.get('code') or bal.get('account_code')
             acc_id = _resolve_account_id(conn, identifier)
             
             if not acc_id:
-                raise Exception(f"لم يتم العثور على حساب برمز: {bal.get('code') or bal.get('account_id')}")
+                # رسالة خطأ توضيحية
+                raise Exception(f"لم يتم العثور على حساب بالمعرف: {identifier}. تأكد من إضافة الحساب في شجرة الحسابات.")
 
             lines.append({
                 "account_id": acc_id,
