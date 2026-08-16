@@ -7,7 +7,7 @@ from services.chart_service import (
     get_accounts_tree,
     build_tree,
     get_account_options,
-    delete_account  # <--- تم استيراد دالة الحذف
+    delete_account
 )
 
 # ========== ألوان التصميم ==========
@@ -41,7 +41,8 @@ FUNCTIONAL_TYPES = {
     "مجمع الإهلاك (accumulated_depreciation)": "accumulated_depreciation",
     "مصروف الرواتب (salaries_expense)": "salaries_expense",
     "المصروفات المستحقة (accrued_expenses)": "accrued_expenses",
-    "عجز/خسائر المخزون (inventory_gain)": "inventory_gain", # <--- تمت إضافة هذا السطر
+    "عجز/خسائر المخزون (inventory_gain)": "inventory_gain",
+    "خسائر/نقص الجرد (inventory_loss)": "inventory_loss", # <--- تمت إضافة هذا السطر
 }
 
 def show():
@@ -64,7 +65,6 @@ def show():
             df = pd.DataFrame(tree)
             df["display_name"] = df.apply(lambda r: " " * r["indent"] + r["name"], axis=1)
             
-            # تحديد أين يظهر الحساب بناءً على تصنيفه
             def where_appears(acc_type):
                 if acc_type in ("Asset", "Liability", "Equity"):
                     return "الميزانية العمومية"
@@ -75,11 +75,9 @@ def show():
             
             df["يظهر في"] = df["account_type"].apply(where_appears)
             
-            # إضافة عمود النوع الوظيفي إذا كان متوفراً في DataFrame
             if "functional_type" not in df.columns:
                 df["functional_type"] = "-"
 
-            # إعادة ترتيب وتسمية الأعمدة للعرض
             df_display = df[["code", "display_name", "level", "account_type", "functional_type", "يظهر في"]].rename(
                 columns={
                     "code": "الكود",
@@ -91,10 +89,8 @@ def show():
                 }
             )
             
-            # عرض الجدول مع أزرار الحذف (تعديل جديد)
             st.dataframe(df_display, use_container_width=True, hide_index=True)
             
-            # إضافة أزرار الحذف أسفل الجدول أو بجانب كل صف
             st.markdown("---")
             st.subheader("🗑️ إدارة الحسابات")
             for acc in accounts:
@@ -137,7 +133,6 @@ def show():
             help="إذا كان هذا الحساب مخصصاً لاستقبال فواتير المبيعات/المشتريات أو الصندوق تلقائياً اختر نوعه هنا"
         )
         
-        # تحويل القيم المعروضة إلى القيمة التخزينية
         account_type_map = {
             "Asset - أصل": "Asset",
             "Liability - خصم": "Liability",
@@ -152,7 +147,6 @@ def show():
             if not code or not name:
                 st.error("الكود والاسم مطلوبان")
             else:
-                # ملاحظة: تم إرسال functional_type لدالة add_account
                 success, error = add_account(code, name, parent_id, selected_account_type, functional_type=functional_type)
                 if success:
                     st.success(f"تم إضافة الحساب {code} - {name} بنجاح!")
