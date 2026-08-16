@@ -85,12 +85,14 @@ def _resolve_account_id(conn, account_identifier):
     if not account_identifier:
         return None
     
-    # إذا كان الرقم هو الـ ID المباشر
+    # إذا كان الرقم هو الـ ID المباشر (رقم صحيح)
     if isinstance(account_identifier, int):
         return account_identifier
     
-    # محاولة تحويل النص إلى ID
+    # تحويله لنص لفحصه
     account_identifier = str(account_identifier).strip()
+    
+    # محاولة تحويل النص إلى ID
     if account_identifier.isdigit():
         # قد يكون ID أو Code، نفضل البحث عن ID أولاً (لأنه أكثر دقة)
         row = conn.execute("SELECT id FROM accounts WHERE id = ?", (account_identifier,)).fetchone()
