@@ -261,14 +261,17 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
                     raise Exception(f"فشل خصم FIFO: {err}")
                 total_fifo_cost += cost
         
-        # 7. إنشاء القيد المحاسبي (قبل commit) - ✅ استخدام الحسابات الوظيفية
+        # 7. إنشاء القيد المحاسبي (قبل commit)
         from services.accounting_service import save_journal_entry
         
         if invoice_type == "sale":
-            # جلب الحسابات الوظيفية لمرتجع المبيعات
-            acc_sales_return = get_functional_account("sales_return")
-            acc_vat_payable = get_functional_account("vat_payable")
-            acc_receivables = get_functional_account("receivables")
+            # جلب الحسابات الوظيفية لمرتجع المبيعات (المعدلة لتطابق المصطلحات الأساسية)
+            # sales_return → sales_revenue
+            # vat_payable → sales_tax
+            # receivables → accounts_receivable
+            acc_sales_return = get_functional_account("sales_revenue")
+            acc_vat_payable = get_functional_account("sales_tax")
+            acc_receivables = get_functional_account("accounts_receivable")
             acc_inventory = get_functional_account("inventory")
             acc_cogs = get_functional_account("cogs")
 
@@ -285,10 +288,13 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date, reaso
                  "currency_code": currency_code, "exchange_rate": exchange_rate}
             ]
         else:
-            # جلب الحسابات الوظيفية لمرتجع المشتريات
-            acc_payables = get_functional_account("suppliers")
-            acc_purchase_return = get_functional_account("purchase_return")
-            acc_vat_payable = get_functional_account("vat_payable")
+            # جلب الحسابات الوظيفية لمرتجع المشتريات (المعدلة لتطابق المصطلحات الأساسية)
+            # suppliers → accounts_payable
+            # purchase_return → purchase_tax
+            # vat_payable → sales_tax
+            acc_payables = get_functional_account("accounts_payable")
+            acc_purchase_return = get_functional_account("purchase_tax")
+            acc_vat_payable = get_functional_account("sales_tax")
 
             lines = [
                 {"account": acc_payables, "debit": total_return, "credit": 0,
