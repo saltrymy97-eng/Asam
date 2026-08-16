@@ -87,11 +87,9 @@ def create_opening_balances(account_balances, inventory_items, entry_date, creat
     
     # جلب الحسابات الوظيفية المطلوبة للمخزون والتسوية
     inventory_acc_id = get_functional_account("inventory")
-    opening_diff_acc_id = (
-        get_functional_account("opening_balance_equity") or 
-        get_functional_account("retained_earnings") or 
-        get_functional_account("equity")
-    )
+    
+    # ✅ التعديل الاحترافي: استخدام الحساب الموجود فعلياً (retained_earnings)
+    opening_diff_acc_id = get_functional_account("retained_earnings")
 
     conn = get_connection()
     conn.row_factory = sqlite3.Row
@@ -168,7 +166,7 @@ def create_opening_balances(account_balances, inventory_items, entry_date, creat
         diff = round(total_debit - total_credit, 2)
         if abs(diff) > 0.01:
             if not opening_diff_acc_id:
-                raise Exception("حساب تسوية الأرصدة الافتتاحية الوظيفي (opening_balance_equity) غير معرف في الشجرة")
+                raise Exception("حساب الأرباح المبقاة الوظيفي (retained_earnings) غير معرف في الشجرة")
 
             if diff > 0:
                 lines.append({
