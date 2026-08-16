@@ -15,11 +15,17 @@ def get_conn():
     return conn
 
 def get_account_code(account_input, conn=None):
-    """تحويل اسم الحساب إلى كود، أو إرجاع الكود إذا كان رقماً (يدعم اتصال خارجي)"""
-    if not account_input or not account_input.strip():
+    """
+    تحويل اسم الحساب أو كوده إلى كود نصي موحد.
+    تدخل هذه الدالة سواء استلمت رقماً صحيحاً (int) أو نصاً (str).
+    """
+    if account_input is None:
         return None
     
-    account_input = account_input.strip()
+    # تحويل الأرقام الصحيحة إلى نصوص للتعامل الموحد
+    account_input = str(account_input).strip()
+    if not account_input:
+        return None
     
     if account_input.isdigit():
         return account_input
@@ -40,6 +46,7 @@ def get_account_code(account_input, conn=None):
     if row:
         return row["code"]
     
+    # محاولة استخراج الكود من نص مثل "1100 - الصندوق"
     if account_input[0].isdigit():
         code_part = account_input.split("-")[0].strip()
         if code_part.isdigit():
@@ -86,11 +93,12 @@ def save_journal_entry(description, lines, entry_date=None, cost_center_allocati
             # ✨ التعديل الاحترافي: دعم مرن لكل من 'account' و 'account_id'
             account_name = line.get("account") or line.get("account_id")
             
-            if not account_name:
+            if account_name is None:
                 return None, "خطأ: سطر القيد يفتقد إلى معرف الحساب (account أو account_id)"
             
-            # إذا كان معرف الحساب (id) ولا يوجد اسم، حاول جلب اسمه من قاعدة البيانات
-            if not account_name.isdigit():
+            # 🔥 إصلاح خطأ 'isdigit': سنتعامل مع account_name كسلسلة نصية دائمًا
+            # إذا كان account_name رقمًا صحيحًا، فإن str(account_name).isdigit() يعود True
+            if isinstance(account_name, int) or (isinstance(account_name, str) and account_name.isdigit()):
                 code = get_account_code(account_name, conn)
                 if code:
                     account_name = code
@@ -158,10 +166,11 @@ def update_journal_entry(entry_id, description, lines, entry_date=None, cost_cen
             # ✨ دعم مرن للتحديث
             account_name = line.get("account") or line.get("account_id")
             
-            if not account_name:
+            if account_name is None:
                 return False, "خطأ: سطر القيد يفتقد إلى معرف الحساب (account أو account_id)"
             
-            if not account_name.isdigit():
+            # 🔥 إصلاح خطأ 'isdigit' هنا أيضًا
+            if isinstance(account_name, int) or (isinstance(account_name, str) and account_name.isdigit()):
                 code = get_account_code(account_name, conn)
                 if code:
                     account_name = code
