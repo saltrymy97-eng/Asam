@@ -77,6 +77,34 @@ def get_products_for_opening():
     finally:
         conn.close()
 
+def _resolve_account_id(conn, account_identifier):
+    """
+    دالة مساعدة ذكية لتحويل أي معرف حساب إلى الـ ID الرقمي الأساسي.
+    تدعم إما account_id مباشر أو كود الحساب (مثل '1100').
+    """
+    if not account_identifier:
+        return None
+    
+    # إذا كان الرقم هو الـ ID المباشر
+    if isinstance(account_identifier, int):
+        return account_identifier
+    
+    # محاولة تحويل النص إلى ID
+    account_identifier = str(account_identifier).strip()
+    if account_identifier.isdigit():
+        # قد يكون ID أو Code، نفضل البحث عن ID أولاً (لأنه أكثر دقة)
+        row = conn.execute("SELECT id FROM accounts WHERE id = ?", (account_identifier,)).fetchone()
+        if row:
+            return row["id"]
+        
+        # إن لم يكن ID، نجرب البحث كـ Code
+        row = conn.execute("SELECT id FROM accounts WHERE code = ?", (account_identifier,)).fetchone()
+        if row:
+            return row["id"]
+    
+    # إن لم يجد، يرجع None
+    return None
+
 def create_opening_balances(account_balances, inventory_items, entry_date, created_by="admin"):
     """
     إنشاء الأرصدة الافتتاحية مرة واحدة باستخدام الحسابات الوظيفية والمباشرة.
@@ -87,8 +115,6 @@ def create_opening_balances(account_balances, inventory_items, entry_date, creat
     
     # جلب الحسابات الوظيفية المطلوبة للمخزون والتسوية
     inventory_acc_id = get_functional_account("inventory")
-    
-    # ✅ التعديل الاحترافي: استخدام الحساب الموجود فعلياً (retained_earnings)
     opening_diff_acc_id = get_functional_account("retained_earnings")
 
     conn = get_connection()
@@ -123,7 +149,7 @@ def create_opening_balances(account_balances, inventory_items, entry_date, creat
                 VALUES (?, ?, ?, ?, ?)
             """, (entry_date, item['product_id'], qty, cost, created_by))
         
-        # 2. بناء سطور القيد باستخدام account_id
+        # 2. بناء سطور القيد
         lines = []
         total_debit = 0.0
         total_credit = 0.0
@@ -131,12 +157,16 @@ def create_opening_balances(account_balances, inventory_items, entry_date, creat
         for bal in account_balances:
             debit_val = round(float(bal.get('debit', 0.0)), 2)
             credit_val = round(float(bal.get('credit', 0.0)), 2)
-            acc_id = bal.get('account_id')
             
             if debit_val == 0 and credit_val == 0:
                 continue
+            
+            # استخراج معرف الحساب باستخدام الدالة المساعدة الذكية
+            identifier = bal.get('account_id') or bal.get('code') or bal.get('account_code')
+            acc_id = _resolve_account_id(conn, identifier)
+            
             if not acc_id:
-                raise Exception(f"معرف الحساب مفقود للحساب رمز: {bal.get('code')}")
+                raise Exception(f"لم يتم العثور على حساب برمز: {bal.get('code') or bal.get('account_id')}")
 
             lines.append({
                 "account_id": acc_id,
@@ -162,7 +192,7 @@ def create_opening_balances(account_balances, inventory_items, entry_date, creat
             })
             total_debit += round(total_inventory_cost, 2)
         
-        # موازنة القيد: إذا كان هناك فرق، نضعه في حساب "فروق الأرصدة الافتتاحية / رأس المال"
+        # موازنة القيد: إذا كان هناك فرق، نضعه في حساب الأرباح المبقاة
         diff = round(total_debit - total_credit, 2)
         if abs(diff) > 0.01:
             if not opening_diff_acc_id:
@@ -202,10 +232,13 @@ def create_opening_balances(account_balances, inventory_items, entry_date, creat
             if debit_val == 0 and credit_val == 0:
                 continue
             
+            # نستخدم الرمز للحفظ
+            account_code = bal.get('code') or bal.get('account_code') or str(bal.get('account_id'))
+            
             conn.execute("""
                 INSERT INTO opening_balances (entry_date, account_id, account_code, account_name, debit, credit, journal_entry_id, created_by)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (entry_date, bal['account_id'], bal['code'], bal.get('name', ''), debit_val, credit_val, entry_id, created_by))
+            """, (entry_date, acc_id, account_code, bal.get('name', ''), debit_val, credit_val, entry_id, created_by))
         
         # تحديث opening_inventory برقم القيد
         conn.execute("UPDATE opening_inventory SET journal_entry_id=? WHERE entry_date=? AND journal_entry_id IS NULL",
