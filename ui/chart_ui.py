@@ -42,7 +42,7 @@ FUNCTIONAL_TYPES = {
     "مصروف الرواتب (salaries_expense)": "salaries_expense",
     "المصروفات المستحقة (accrued_expenses)": "accrued_expenses",
     "عجز/خسائر المخزون (inventory_gain)": "inventory_gain",
-    "خسائر/نقص الجرد (inventory_loss)": "inventory_loss", # <--- تمت إضافة هذا السطر
+    "خسائر/نقص الجرد (inventory_loss)": "inventory_loss",
 }
 
 def show():
@@ -60,11 +60,17 @@ def show():
     with tab1:
         st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>شجرة الحسابات</h3>", unsafe_allow_html=True)
         accounts = get_accounts_tree()
+        
         if accounts:
+            # ✨ التعديل الاحترافي: فرز الشجرة بترتيب هرمي دقيق (1، 1.1، 1.2، 1.10...)
+            # يتم الفرز حسب طول الكود أولاً، ثم الكود نفسه.
+            accounts = sorted(accounts, key=lambda x: (len(x["code"]), x["code"]))
+            
             tree = build_tree(accounts)
             df = pd.DataFrame(tree)
             df["display_name"] = df.apply(lambda r: " " * r["indent"] + r["name"], axis=1)
             
+            # تحديد أين يظهر الحساب بناءً على تصنيفه
             def where_appears(acc_type):
                 if acc_type in ("Asset", "Liability", "Equity"):
                     return "الميزانية العمومية"
@@ -78,6 +84,7 @@ def show():
             if "functional_type" not in df.columns:
                 df["functional_type"] = "-"
 
+            # تحويل البيانات للعرض مع إضافة الهوامش
             df_display = df[["code", "display_name", "level", "account_type", "functional_type", "يظهر في"]].rename(
                 columns={
                     "code": "الكود",
