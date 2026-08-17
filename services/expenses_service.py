@@ -1,3 +1,4 @@
+# services/expenses_service.py – منطق المصروفات (محاسبة متكاملة + حسابات وظيفية)
 import sqlite3
 from datetime import date
 from database import get_connection
