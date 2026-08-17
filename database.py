@@ -397,6 +397,7 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
+    # ✅ تم إضافة العمود المفقود party_name هنا
     c.execute('''CREATE TABLE IF NOT EXISTS expenses (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         date TEXT NOT NULL DEFAULT (date('now')),
@@ -406,6 +407,7 @@ def init_db():
         payment_method TEXT NOT NULL,
         party_type TEXT,
         party_id INTEGER,
+        party_name TEXT,
         invoice_ref TEXT,
         notes TEXT,
         journal_entry_id INTEGER,
