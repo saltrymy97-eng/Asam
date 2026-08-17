@@ -1,4 +1,3 @@
-# services/expenses_service.py – منطق المصروفات (محاسبة متكاملة + حسابات وظيفية)
 import sqlite3
 from datetime import date
 from database import get_connection
@@ -20,6 +19,7 @@ def create_expenses_table():
                 payment_method TEXT NOT NULL,
                 party_type TEXT,
                 party_id INTEGER,
+                party_name TEXT,
                 invoice_ref TEXT,
                 notes TEXT,
                 journal_entry_id INTEGER,
@@ -34,19 +34,43 @@ def create_expenses_table():
 def get_expense_categories():
     """جلب فئات المصروفات الشائعة"""
     return [
-        "إيجار",
-        "كهرباء",
-        "مياه",
-        "إنترنت",
-        "رواتب",
-        "صيانة",
-        "نقل",
-        "قرطاسية",
-        "دعاية وإعلان",
-        "أخرى"
+        {"code": "إيجار", "name": "إيجار"},
+        {"code": "كهرباء", "name": "كهرباء"},
+        {"code": "مياه", "name": "مياه"},
+        {"code": "إنترنت", "name": "إنترنت"},
+        {"code": "رواتب", "name": "رواتب"},
+        {"code": "صيانة", "name": "صيانة"},
+        {"code": "نقل", "name": "نقل"},
+        {"code": "قرطاسية", "name": "قرطاسية"},
+        {"code": "دعاية وإعلان", "name": "دعاية وإعلان"},
+        {"code": "أخرى", "name": "أخرى"}
     ]
 
-def add_expense(date_val, category, amount, account_code, payment_method,
+def get_cash_accounts():
+    """جلب حسابات النقدية والبنوك من شجرة الحسابات"""
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    try:
+        accounts = conn.execute("""
+            SELECT id, code, name
+            FROM accounts
+            WHERE code IN ('1.1', '1.2') OR name LIKE '%نقد%' OR name LIKE '%بنك%'
+        """).fetchall()
+        return [dict(a) for a in accounts]
+    finally:
+        conn.close()
+
+def get_suppliers_for_expense():
+    """جلب الموردين للقائمة المنسدلة"""
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    try:
+        suppliers = conn.execute("SELECT id, name FROM suppliers ORDER BY name").fetchall()
+        return [dict(s) for s in suppliers]
+    finally:
+        conn.close()
+
+def create_expense(date_val, category, amount, account_code, payment_method,
                 party_type=None, party_id=None, invoice_ref=None, notes=None,
                 created_by="admin"):
     """
@@ -62,33 +86,36 @@ def add_expense(date_val, category, amount, account_code, payment_method,
     try:
         conn.execute("BEGIN")
 
-        # 1. إدراج المصروف في قاعدة البيانات
+        # 1. جلب اسم المورد إذا كان موجوداً
+        party_name = None
+        if party_type == 'supplier' and party_id:
+            sup = conn.execute("SELECT name FROM suppliers WHERE id=?", (party_id,)).fetchone()
+            party_name = sup['name'] if sup else None
+
+        # 2. إدراج المصروف في قاعدة البيانات
         cur = conn.execute("""
             INSERT INTO expenses (date, category, amount, account_code, payment_method,
-                                  party_type, party_id, invoice_ref, notes, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  party_type, party_id, party_name, invoice_ref, notes, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (date_val, category, amount, account_code, payment_method,
-              party_type, party_id, invoice_ref, notes, created_by))
+              party_type, party_id, party_name, invoice_ref, notes, created_by))
         expense_id = cur.lastrowid
 
-        # 2. الحسابات الوظيفية (تم تعديلها لتطابق شجرتك)
-        # ✅ استخدام operating_expense بدلاً من expense
+        # 3. الحسابات الوظيفية (معدلة لتطابق شجرتك)
         expense_account = get_functional_account("operating_expense")
         
-        # ✅ استخدام accounts_payable بدلاً من suppliers
         if payment_method == 'credit' and party_type == 'supplier' and party_id:
             credit_account = get_functional_account("accounts_payable")
         else:
-            # إذا كان الدفع نقداً، نستخدم الكود المرسل (صندوق/بنك)
             credit_account = account_code
 
         if not expense_account:
             return None, "لم يتم العثور على حساب المصروفات الوظيفي (operating_expense)"
 
-        # 3. بناء سطور القيد المحاسبي
+        # 4. بناء سطور القيد المحاسبي
         lines = [
             {
-                "account": expense_account,  # تم التعديل هنا
+                "account": expense_account,
                 "debit": float(amount),
                 "credit": 0.0,
                 "currency_code": "YER",
@@ -103,7 +130,7 @@ def add_expense(date_val, category, amount, account_code, payment_method,
             }
         ]
 
-        # 4. إنشاء القيد
+        # 5. إنشاء القيد
         entry_id, error = save_journal_entry(
             description=f"مصروف {category} - {date_val}",
             lines=lines,
@@ -113,7 +140,7 @@ def add_expense(date_val, category, amount, account_code, payment_method,
         if error:
             raise Exception(f"فشل إنشاء القيد المحاسبي: {error}")
 
-        # 5. تحديث سجل المصروف برقم القيد
+        # 6. تحديث سجل المصروف برقم القيد
         conn.execute("UPDATE expenses SET journal_entry_id=? WHERE id=?", (entry_id, expense_id))
 
         conn.commit()
