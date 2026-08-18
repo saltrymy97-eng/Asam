@@ -274,10 +274,16 @@ def show():
                 df_ledger["رصيد مدين"] = df_ledger["رصيد مدين"].apply(lambda x: x if x > 0 else 0)
                 df_ledger["رصيد دائن"] = df_ledger["رصيد دائن"].apply(lambda x: x if x > 0 else 0)
                 
-                # 🔧 تحويل أسماء الحسابات في دفتر الأستاذ
-                df_ledger["account_name"] = df_ledger["account_name"].apply(get_account_display_name)
+                # ✅ التعديل الاحترافي: التأكد من وجود العمود قبل تحويله
+                if "account_name" in df_ledger.columns:
+                    df_ledger["account_name"] = df_ledger["account_name"].apply(get_account_display_name)
                 
-                df_ledger = df_ledger[["date", "description", "account_name", "debit", "credit", "رصيد مدين", "رصيد دائن", "currency_code", "exchange_rate"]]
+                # إعادة ترتيب الأعمدة للعرض (مع التأكد من وجود account_name)
+                cols = ["date", "description", "debit", "credit", "رصيد مدين", "رصيد دائن", "currency_code", "exchange_rate"]
+                if "account_name" in df_ledger.columns:
+                    cols.insert(2, "account_name")  # إضافة اسم الحساب في المكان المناسب
+                
+                df_ledger = df_ledger[cols]
                 st.dataframe(df_ledger, use_container_width=True, hide_index=True)
                 
                 final_balance = (df_ledger["debit"].sum() - df_ledger["credit"].sum())
