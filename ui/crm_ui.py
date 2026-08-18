@@ -108,7 +108,8 @@ def show():
         opportunities = get_opportunities()
         if opportunities:
             df = pd.DataFrame(opportunities)
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            # ✅ تم حذف عمود الملاحظات من العرض هنا
+            st.dataframe(df.drop(columns=['notes'], errors='ignore'), use_container_width=True, hide_index=True)
         else:
             st.info("لا توجد فرص بيعية بعد")
 
