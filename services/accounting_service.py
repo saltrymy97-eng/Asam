@@ -22,7 +22,6 @@ def get_account_code(account_input, conn=None):
     if account_input is None:
         return None
     
-    # تحويل الأرقام الصحيحة إلى نصوص للتعامل الموحد
     account_input = str(account_input).strip()
     if not account_input:
         return None
@@ -46,7 +45,6 @@ def get_account_code(account_input, conn=None):
     if row:
         return row["code"]
     
-    # محاولة استخراج الكود من نص مثل "1100 - الصندوق"
     if account_input[0].isdigit():
         code_part = account_input.split("-")[0].strip()
         if code_part.isdigit():
@@ -58,12 +56,10 @@ def save_journal_entry(description, lines, entry_date=None, cost_center_allocati
     """
     حفظ قيد يومية جديد مع دعم العملات المتعددة والتحويل التلقائي.
     إذا تم تمرير conn خارجي، لا يتم إنشاء معاملة منفصلة (المعاملة تدار خارجياً).
-    skip_period_check: إذا كان True، يتم تخطي التحقق من الفترات المغلقة.
     """
     if entry_date is None:
         entry_date = date.today().strftime("%Y-%m-%d")
     
-    # ✅ التحقق مما إذا كانت الفترة مغلقة (إلا إذا كان الطلب يتطلب تخطي الفحص)
     if not skip_period_check and is_period_closed(entry_date):
         return None, f"لا يمكن حفظ القيد في فترة مغلقة: {entry_date}. يرجى فتح الفترة أولاً."
     
@@ -79,9 +75,7 @@ def save_journal_entry(description, lines, entry_date=None, cost_center_allocati
         if own_conn:
             conn.execute("BEGIN")
         
-        # ✅ مرجع فريد احترافي لكل قيد
         reference = f"ENT-{entry_date}-{uuid.uuid4().hex[:8]}"
-        
         cur = conn.execute(
             "INSERT INTO journal_entries (date, description, reference) VALUES (?, ?, ?)",
             (entry_date, description, reference)
@@ -92,15 +86,11 @@ def save_journal_entry(description, lines, entry_date=None, cost_center_allocati
         total_debit_base = 0.0
         total_credit_base = 0.0
         
-        for idx, line in enumerate(lines):
-            # ✨ التعديل الاحترافي: دعم مرن لكل من 'account' و 'account_id'
+        for line in lines:
             account_name = line.get("account") or line.get("account_id")
-            
             if account_name is None:
-                return None, "خطأ: سطر القيد يفتقد إلى معرف الحساب (account أو account_id)"
+                return None, "خطأ: سطر القيد يفتقد إلى معرف الحساب."
             
-            # 🔥 إصلاح خطأ 'isdigit': سنتعامل مع account_name كسلسلة نصية دائمًا
-            # إذا كان account_name رقمًا صحيحًا، فإن str(account_name).isdigit() يعود True
             if isinstance(account_name, int) or (isinstance(account_name, str) and account_name.isdigit()):
                 code = get_account_code(account_name, conn)
                 if code:
@@ -108,15 +98,19 @@ def save_journal_entry(description, lines, entry_date=None, cost_center_allocati
             
             currency_code = line.get("currency_code", base_code)
             exchange_rate = line.get("exchange_rate", 1.0)
-            if currency_code != base_code and exchange_rate == 1.0:
+            
+            # ✅ تحسين احترافي: ضمان استخدام السعر الصحيح
+            if currency_code != base_code:
                 fetched_rate = get_exchange_rate(currency_code, base_code)
                 if fetched_rate:
                     exchange_rate = fetched_rate
+                    # تحديث السطر لضمان حفظ السعر الصحيح في القيد
+                    line['exchange_rate'] = exchange_rate
             
             debit = line["debit"]
             credit = line["credit"]
             
-            # ✅ حساب المبالغ بالعملة الأساسية للتوازن
+            # حساب المبالغ بالعملة الأساسية للتوازن
             if currency_code != base_code:
                 debit_base = debit * exchange_rate
                 credit_base = credit * exchange_rate
@@ -133,7 +127,6 @@ def save_journal_entry(description, lines, entry_date=None, cost_center_allocati
             )
             line_ids.append(cur_line.lastrowid)
         
-        # ✅ التحقق من التوازن بالعملة الأساسية
         if abs(total_debit_base - total_credit_base) > 0.001:
             return None, f"القيد غير متوازن! المدين الأساسي: {total_debit_base:,.2f} ، الدائن الأساسي: {total_credit_base:,.2f}"
         
@@ -171,12 +164,7 @@ def update_journal_entry(entry_id, description, lines, entry_date=None, cost_cen
     conn = get_conn()
     try:
         conn.execute("BEGIN")
-        
-        conn.execute(
-            "UPDATE journal_entries SET date = ?, description = ? WHERE id = ?",
-            (entry_date, description, entry_id)
-        )
-        
+        conn.execute("UPDATE journal_entries SET date = ?, description = ? WHERE id = ?", (entry_date, description, entry_id))
         old_lines = conn.execute("SELECT id FROM journal_lines WHERE entry_id = ?", (entry_id,)).fetchall()
         for ol in old_lines:
             conn.execute("DELETE FROM cost_center_allocations WHERE journal_line_id = ?", (ol['id'],))
@@ -185,14 +173,10 @@ def update_journal_entry(entry_id, description, lines, entry_date=None, cost_cen
         line_ids = []
         total_debit_base = 0.0
         total_credit_base = 0.0
-        for idx, line in enumerate(lines):
-            # ✨ دعم مرن للتحديث
+        for line in lines:
             account_name = line.get("account") or line.get("account_id")
-            
             if account_name is None:
-                return False, "خطأ: سطر القيد يفتقد إلى معرف الحساب (account أو account_id)"
-            
-            # 🔥 إصلاح خطأ 'isdigit' هنا أيضًا
+                return False, "خطأ: سطر القيد يفتقد إلى معرف الحساب."
             if isinstance(account_name, int) or (isinstance(account_name, str) and account_name.isdigit()):
                 code = get_account_code(account_name, conn)
                 if code:
@@ -200,22 +184,20 @@ def update_journal_entry(entry_id, description, lines, entry_date=None, cost_cen
             
             currency_code = line.get("currency_code", base_code)
             exchange_rate = line.get("exchange_rate", 1.0)
-            if currency_code != base_code and exchange_rate == 1.0:
+            if currency_code != base_code:
                 fetched_rate = get_exchange_rate(currency_code, base_code)
                 if fetched_rate:
                     exchange_rate = fetched_rate
+                    line['exchange_rate'] = exchange_rate
             
             debit = line["debit"]
             credit = line["credit"]
-            
-            # ✅ حساب المبالغ بالعملة الأساسية للتوازن
             if currency_code != base_code:
                 debit_base = debit * exchange_rate
                 credit_base = credit * exchange_rate
             else:
                 debit_base = debit
                 credit_base = credit
-            
             total_debit_base += debit_base
             total_credit_base += credit_base
             
@@ -225,10 +207,8 @@ def update_journal_entry(entry_id, description, lines, entry_date=None, cost_cen
             )
             line_ids.append(cur_line.lastrowid)
         
-        # ✅ التحقق من التوازن بالعملة الأساسية
         if abs(total_debit_base - total_credit_base) > 0.001:
             return False, f"القيد غير متوازن! المدين الأساسي: {total_debit_base:,.2f} ، الدائن الأساسي: {total_credit_base:,.2f}"
-        
         if cost_center_allocations:
             for alloc_entry in cost_center_allocations:
                 line_index = alloc_entry.get('line_index', 0)
@@ -237,7 +217,6 @@ def update_journal_entry(entry_id, description, lines, entry_date=None, cost_cen
                     allocations = alloc_entry.get('allocations', [])
                     if allocations:
                         cost_center_service.allocate_journal_line(journal_line_id, allocations)
-        
         conn.commit()
         return True, None
     except Exception as e:
@@ -247,23 +226,14 @@ def update_journal_entry(entry_id, description, lines, entry_date=None, cost_cen
         conn.close()
 
 def get_recent_entries(limit=10):
-    """آخر قيود اليومية"""
     conn = get_conn()
-    entries = conn.execute(
-        "SELECT id, date, description, reference FROM journal_entries ORDER BY id DESC LIMIT ?",
-        (limit,)
-    ).fetchall()
+    entries = conn.execute("SELECT id, date, description, reference FROM journal_entries ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
     conn.close()
     return [dict(e) for e in entries]
 
 def get_entry_details(entry_id):
-    """تفاصيل قيد محدد مع توزيعات مراكز التكلفة وبيانات العملة"""
     conn = get_conn()
-    lines = conn.execute(
-        "SELECT id, account_name, debit, credit, currency_code, exchange_rate FROM journal_lines WHERE entry_id = ?",
-        (entry_id,)
-    ).fetchall()
-    
+    lines = conn.execute("SELECT id, account_name, debit, credit, currency_code, exchange_rate FROM journal_lines WHERE entry_id = ?", (entry_id,)).fetchall()
     result = []
     for l in lines:
         line_dict = dict(l)
@@ -276,12 +246,10 @@ def get_entry_details(entry_id):
         """, (l['id'],)).fetchall()
         line_dict['cost_center_allocations'] = [dict(a) for a in allocations] if allocations else []
         result.append(line_dict)
-    
     conn.close()
     return result
 
 def get_ledger(account_name):
-    """دفتر الأستاذ لحساب محدد"""
     conn = get_conn()
     ledger = conn.execute("""
         SELECT je.date, je.description, jl.debit, jl.credit, jl.currency_code, jl.exchange_rate
@@ -294,7 +262,6 @@ def get_ledger(account_name):
     return [dict(l) for l in ledger]
 
 def get_trial_balance():
-    """ميزان المراجعة (بالعملة الأساسية من خلال ضرب المبالغ بسعر الصرف)"""
     conn = get_conn()
     tb = conn.execute("""
         SELECT account_name,
@@ -308,14 +275,10 @@ def get_trial_balance():
     return [dict(t) for t in tb]
 
 def get_distinct_accounts():
-    """جميع الحسابات المستخدمة في القيود"""
     conn = get_conn()
-    accounts = conn.execute(
-        "SELECT DISTINCT account_name FROM journal_lines ORDER BY account_name"
-    ).fetchall()
+    accounts = conn.execute("SELECT DISTINCT account_name FROM journal_lines ORDER BY account_name").fetchall()
     conn.close()
     return [a["account_name"] for a in accounts]
 
 def get_entry_with_allocations(entry_id):
-    """جلب القيد كاملاً مع توزيعات مراكز التكلفة"""
     return cost_center_service.get_allocations_for_entry(entry_id)
