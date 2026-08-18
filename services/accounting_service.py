@@ -56,7 +56,7 @@ def get_account_code(account_input, conn=None):
 
 def save_journal_entry(description, lines, entry_date=None, cost_center_allocations=None, conn=None, skip_period_check=False):
     """
-    حفظ قيد يومية جديد.
+    حفظ قيد يومية جديد مع دعم العملات المتعددة والتحويل التلقائي.
     إذا تم تمرير conn خارجي، لا يتم إنشاء معاملة منفصلة (المعاملة تدار خارجياً).
     skip_period_check: إذا كان True، يتم تخطي التحقق من الفترات المغلقة.
     """
@@ -89,6 +89,9 @@ def save_journal_entry(description, lines, entry_date=None, cost_center_allocati
         entry_id = cur.lastrowid
         
         line_ids = []
+        total_debit_base = 0.0
+        total_credit_base = 0.0
+        
         for idx, line in enumerate(lines):
             # ✨ التعديل الاحترافي: دعم مرن لكل من 'account' و 'account_id'
             account_name = line.get("account") or line.get("account_id")
@@ -110,11 +113,29 @@ def save_journal_entry(description, lines, entry_date=None, cost_center_allocati
                 if fetched_rate:
                     exchange_rate = fetched_rate
             
+            debit = line["debit"]
+            credit = line["credit"]
+            
+            # ✅ حساب المبالغ بالعملة الأساسية للتوازن
+            if currency_code != base_code:
+                debit_base = debit * exchange_rate
+                credit_base = credit * exchange_rate
+            else:
+                debit_base = debit
+                credit_base = credit
+            
+            total_debit_base += debit_base
+            total_credit_base += credit_base
+            
             cur_line = conn.execute(
                 "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, ?, ?, ?, ?)",
-                (entry_id, account_name, line["debit"], line["credit"], currency_code, exchange_rate)
+                (entry_id, account_name, debit, credit, currency_code, exchange_rate)
             )
             line_ids.append(cur_line.lastrowid)
+        
+        # ✅ التحقق من التوازن بالعملة الأساسية
+        if abs(total_debit_base - total_credit_base) > 0.001:
+            return None, f"القيد غير متوازن! المدين الأساسي: {total_debit_base:,.2f} ، الدائن الأساسي: {total_credit_base:,.2f}"
         
         if cost_center_allocations:
             for alloc_entry in cost_center_allocations:
@@ -162,6 +183,8 @@ def update_journal_entry(entry_id, description, lines, entry_date=None, cost_cen
         conn.execute("DELETE FROM journal_lines WHERE entry_id = ?", (entry_id,))
         
         line_ids = []
+        total_debit_base = 0.0
+        total_credit_base = 0.0
         for idx, line in enumerate(lines):
             # ✨ دعم مرن للتحديث
             account_name = line.get("account") or line.get("account_id")
@@ -182,11 +205,29 @@ def update_journal_entry(entry_id, description, lines, entry_date=None, cost_cen
                 if fetched_rate:
                     exchange_rate = fetched_rate
             
+            debit = line["debit"]
+            credit = line["credit"]
+            
+            # ✅ حساب المبالغ بالعملة الأساسية للتوازن
+            if currency_code != base_code:
+                debit_base = debit * exchange_rate
+                credit_base = credit * exchange_rate
+            else:
+                debit_base = debit
+                credit_base = credit
+            
+            total_debit_base += debit_base
+            total_credit_base += credit_base
+            
             cur_line = conn.execute(
                 "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, ?, ?, ?, ?)",
-                (entry_id, account_name, line["debit"], line["credit"], currency_code, exchange_rate)
+                (entry_id, account_name, debit, credit, currency_code, exchange_rate)
             )
             line_ids.append(cur_line.lastrowid)
+        
+        # ✅ التحقق من التوازن بالعملة الأساسية
+        if abs(total_debit_base - total_credit_base) > 0.001:
+            return False, f"القيد غير متوازن! المدين الأساسي: {total_debit_base:,.2f} ، الدائن الأساسي: {total_credit_base:,.2f}"
         
         if cost_center_allocations:
             for alloc_entry in cost_center_allocations:
