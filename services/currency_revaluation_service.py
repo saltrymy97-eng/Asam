@@ -8,14 +8,21 @@ from services.chart_service import get_functional_account
 from services.accounting_service import save_journal_entry
 
 def create_revaluation_table():
-    """إنشاء جدول إعادة التقييم إذا لم يكن موجوداً"""
+    """
+    إنشاء أو تحديث جدول إعادة التقييم تلقائياً.
+    هذه الدالة تعمل كـ Auto-Migration: إذا كان الجدول موجوداً لكنه يفتقد account_id،
+    سيقوم بإضافته دون حذف قاعدة البيانات.
+    """
     conn = get_connection()
     try:
+        conn.execute("BEGIN")
+        
+        # 1. إنشاء الجدول إذا لم يكن موجوداً
         conn.execute("""
             CREATE TABLE IF NOT EXISTS currency_revaluations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 date TEXT NOT NULL,
-                account_id INTEGER NOT NULL,
+                account_id INTEGER,
                 account_name TEXT NOT NULL,
                 currency_code TEXT NOT NULL,
                 old_rate REAL,
@@ -30,15 +37,27 @@ def create_revaluation_table():
                 FOREIGN KEY (account_id) REFERENCES accounts(id)
             )
         """)
+        
+        # 2. التحقق مما إذا كان العمود account_id موجوداً
+        col_check = conn.execute("PRAGMA table_info(currency_revaluations)").fetchall()
+        col_names = [col[1] for col in col_check]
+        
+        # 3. إذا كان غير موجود، قم بإضافته
+        if 'account_id' not in col_names:
+            conn.execute("ALTER TABLE currency_revaluations ADD COLUMN account_id INTEGER")
+            conn.execute("ALTER TABLE currency_revaluations ADD COLUMN account_name TEXT DEFAULT ''")
+            conn.execute("ALTER TABLE currency_revaluations ADD COLUMN currency_code TEXT DEFAULT 'YER'")
+        
         conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Error creating revaluation table: {e}")
     finally:
         conn.close()
 
 def get_accounts_with_foreign_currency():
     """
-    جلب الحسابات التي لها تاريخ مع العملات الأجنبية، بغض النظر عن رصيدها الحالي.
-    هذا هو الإصدار الاحترافي الذي يعرض جميع الحسابات للمستخدم،
-    وتقوم الواجهة بإظهار الرصيد الحالي لكل حساب.
+    جلب الحسابات التي لها تاريخ مع العملات الأجنبية.
     """
     base = get_base_currency()
     base_code = base['code'] if base else 'YER'
@@ -46,19 +65,22 @@ def get_accounts_with_foreign_currency():
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     try:
-        # ✅ إزالة شرط الرصيد غير الصفري. الآن نعرض كل الحسابات.
+        # ✅ البحث المرن مع UPPER و TRIM
         accounts = conn.execute("""
             SELECT DISTINCT 
                 a.id as account_id, 
                 a.name as account_name, 
                 a.code as account_code,
-                jl.currency_code
+                UPPER(TRIM(jl.currency_code)) as currency_code
             FROM journal_lines jl
-            JOIN accounts a ON (jl.account_id = a.id OR jl.account_name = a.name)
+            JOIN accounts a ON (
+                jl.account_id = a.id OR 
+                jl.account_name LIKE '%' || a.name || '%'
+            )
             WHERE jl.currency_code IS NOT NULL 
-              AND jl.currency_code != ''
-              AND jl.currency_code != ?
-            ORDER BY a.name
+              AND TRIM(jl.currency_code) != ''
+              AND UPPER(TRIM(jl.currency_code)) != UPPER(?)
+            ORDER BY a.code
         """, (base_code,)).fetchall()
         return [dict(a) for a in accounts]
     except Exception:
@@ -67,10 +89,7 @@ def get_accounts_with_foreign_currency():
         conn.close()
 
 def get_foreign_balance(account_id, currency_code):
-    """
-    حساب رصيد الحساب بالعملة الأجنبية (صافي debit - credit بالعملة الأصلية)
-    وحساب القيمة المحلية المسجلة حالياً (باستخدام أسعار الصرف التاريخية)
-    """
+    """حساب الرصيد والقيمة المحلية"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     try:
@@ -93,21 +112,15 @@ def get_foreign_balance(account_id, currency_code):
         conn.close()
 
 def perform_revaluation(account_id, currency_code, new_rate, revaluation_date, created_by="admin"):
-    """
-    تنفيذ إعادة تقييم لحساب معين بعملة أجنبية.
-    - يحسب الفرق بين القيمة القديمة والجديدة.
-    - ينشئ قيد تعديل (فروق عملة) باستخدام الحسابات الوظيفية.
-    """
+    """تنفيذ إعادة التقييم"""
     create_revaluation_table()
     base = get_base_currency()
     base_code = base['code'] if base else 'YER'
     
-    # 1. جلب الحساب الوظيفي لأرباح وخسائر فروق العملة
     fx_account_info = get_functional_account("exchange_difference")
     if not fx_account_info:
         return None, "حساب فروق العملة الوظيفي (exchange_difference) غير معرف في شجرة الحسابات"
 
-    # 2. جلب بيانات الحساب والرصيد والقيمة الحالية
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     try:
@@ -118,19 +131,15 @@ def perform_revaluation(account_id, currency_code, new_rate, revaluation_date, c
         account_name = acc_info['name']
         foreign_balance, old_local_value = get_foreign_balance(account_id, currency_code)
         
-        # إذا كان الرصيد صفر، نبلغ المستخدم ولكن لا نمنع العملية
         if abs(foreign_balance) < 0.001:
             return None, "الرصيد صفر، لا حاجة لإعادة التقييم"
         
-        # حساب القيمة الجديدة باستخدام السعر الجديد
         new_local_value = round(foreign_balance * new_rate, 2)
         difference = round(new_local_value - old_local_value, 2)
         
-        # إذا كان الفرق طفيف جداً
         if abs(difference) < 0.01:
             return None, f"لا يوجد فرق جوهري لسعر صرف {currency_code} (الفرق أقل من 0.01)"
         
-        # 3. بناء القيد المحاسبي
         fx_account_name = fx_account_info if isinstance(fx_account_info, str) else fx_account_info.get('name', 'أرباح وخسائر فروق العملة')
         
         if difference > 0:
@@ -149,13 +158,8 @@ def perform_revaluation(account_id, currency_code, new_rate, revaluation_date, c
             ]
         
         desc = f"إعادة تقييم {account_name} - {currency_code} (سعر جديد: {new_rate})"
-        entry_id = save_journal_entry(
-            description=desc,
-            lines=lines,
-            entry_date=revaluation_date
-        )
+        entry_id = save_journal_entry(description=desc, lines=lines, entry_date=revaluation_date)
         
-        # 4. تسجيل العملية في جدول revaluations
         old_calculated_rate = old_local_value / foreign_balance if foreign_balance != 0 else 0
         conn.execute("""
             INSERT INTO currency_revaluations 
