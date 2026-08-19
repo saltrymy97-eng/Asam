@@ -206,3 +206,7 @@ def convert_amount(amount, from_currency, to_currency, rate_date=None):
 
 # ===================== تشغيل الفحص التلقائي =====================
 init_currency_system(default_base="YER")
+
+# ===================== توافق مع الإصدارات السابقة =====================
+# ✅ تمت إضافة هذا السطر للحفاظ على التوافق مع الملفات القديمة التي تستورد create_default_currencies
+create_default_currencies = init_currency_system
