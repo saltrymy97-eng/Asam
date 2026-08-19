@@ -36,8 +36,8 @@ def create_revaluation_table():
 
 def get_accounts_with_foreign_currency():
     """
-    جلب الحسابات (عملاء/موردين/بنوك) التي لها حركات بعملة غير العملة الأساسية.
-    نعتمد على journal_lines لربط الحساب مع رمز العملة.
+    جلب ديناميكياً أي حساب لديه رصيد فعلي غير صفري بعملة أجنبية.
+    هذا هو الإصدار المنتجي الذي لا يعتمد على تصنيف الحسابات.
     """
     base = get_base_currency()
     base_code = base['code'] if base else 'YER'
@@ -56,6 +56,12 @@ def get_accounts_with_foreign_currency():
             WHERE jl.currency_code IS NOT NULL 
               AND jl.currency_code != ''
               AND jl.currency_code != ?
+              AND (
+                  SELECT SUM(debit) - SUM(credit)
+                  FROM journal_lines jl2
+                  WHERE (jl2.account_id = a.id OR jl2.account_name = a.name)
+                  AND jl2.currency_code = jl.currency_code
+              ) != 0
             ORDER BY a.name
         """, (base_code,)).fetchall()
         return [dict(a) for a in accounts]
@@ -101,9 +107,9 @@ def perform_revaluation(account_id, currency_code, new_rate, revaluation_date, c
     base_code = base['code'] if base else 'YER'
     
     # 1. جلب الحساب الوظيفي لأرباح وخسائر فروق العملة
-    fx_account_info = get_functional_account("fx_gain_loss") or get_functional_account("fx_gain")
+    fx_account_info = get_functional_account("exchange_difference")
     if not fx_account_info:
-        return None, "حساب فروق العملة الوظيفي (fx_gain_loss) غير معرف في شجرة الحسابات"
+        return None, "حساب فروق العملة الوظيفي (exchange_difference) غير معرف في شجرة الحسابات"
 
     # 2. جلب بيانات الحساب والرصيد والقيمة الحالية
     conn = get_connection()
