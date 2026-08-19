@@ -35,13 +35,16 @@ def show():
         if not accounts:
             st.info("لا توجد حسابات لديها معاملات بعملات أجنبية")
         else:
-            account_names = [a['account_name'] for a in accounts]
-            selected_account = st.selectbox("اختر الحساب", account_names)
+            # ✅ التعديل الاحترافي: عرض الكود والاسم معاً
+            account_options = {f"{a['account_code']} - {a['account_name']}": a for a in accounts}
+            selected_display = st.selectbox("اختر الحساب", list(account_options.keys()))
             
-            account_data = next(a for a in accounts if a['account_name'] == selected_account)
+            account_data = account_options[selected_display]
+            account_id = account_data['account_id']
+            account_name = account_data['account_name']
             currency = account_data['currency_code']
             
-            foreign_bal, current_local = get_foreign_balance(selected_account, currency)
+            foreign_bal, current_local = get_foreign_balance(account_id, currency)
             
             st.markdown(f"""
             <div style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:10px; padding:15px; margin:10px 0;">
@@ -82,7 +85,7 @@ def show():
                         
                         if st.session_state.saving_revaluation:
                             entry_id, err = perform_revaluation(
-                                selected_account, currency, new_rate,
+                                account_id, currency, new_rate,
                                 rev_date.strftime("%Y-%m-%d"),
                                 st.session_state.user.get('username', 'admin')
                             )
