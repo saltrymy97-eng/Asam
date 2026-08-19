@@ -204,6 +204,18 @@ def convert_amount(amount, from_currency, to_currency, rate_date=None):
         raise ValueError(f"لا يوجد سعر صرف مسجل بين {from_currency} و {to_currency}")
     return float(amount) * rate
 
+# ===================== دوال إضافية للواجهة =====================
+
+def get_exchange_rate_history(from_currency, to_currency, limit=30):
+    """جلب تاريخ أسعار الصرف لعرضها في الواجهة"""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT date, rate FROM exchange_rates WHERE from_currency = ? AND to_currency = ? ORDER BY date DESC LIMIT ?",
+        (from_currency.upper(), to_currency.upper(), limit)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
 # ===================== تشغيل الفحص التلقائي =====================
 init_currency_system(default_base="YER")
 
