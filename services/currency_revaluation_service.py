@@ -4,7 +4,6 @@ from datetime import date
 from database import get_connection
 from services.audit_service import log_action
 from services.currency_service import get_base_currency, get_exchange_rate
-from services.chart_service import get_functional_account
 from services.accounting_service import save_journal_entry
 
 def get_accounts_with_foreign_currency():
@@ -65,23 +64,29 @@ def get_foreign_balance(account_id, currency_code):
         conn.close()
 
 def perform_revaluation(account_id, currency_code, new_rate, revaluation_date, created_by="admin"):
-    """تنفيذ عملية إعادة التقييم وإنشاء القيود المحاسبية تلقائياً (نسخة مصححة ومحدثة)"""
+    """تنفيذ عملية إعادة التقييم وإنشاء القيود المحاسبية تلقائياً (نسخة نهائية ومستقرة)"""
     
     base = get_base_currency()
     base_code = base['code'] if base else 'YER'
     
-    fx_account_info = get_functional_account("exchange_difference")
-    if not fx_account_info:
-        return None, "حساب فروق العملة الوظيفي (exchange_difference) غير معرف في شجرة الحسابات."
-
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     try:
+        # 1. جلب بيانات الحساب المراد تقييمه (مثل حساب العملاء)
         acc_info = conn.execute("SELECT id, name FROM accounts WHERE id=?", (account_id,)).fetchone()
         if not acc_info:
             return None, "الحساب المحدد غير موجود في شجرة الحسابات."
-        
         account_name = acc_info['name']
+
+        # 2. جلب بيانات حساب فروق أسعار الصرف بشكل دقيق من قاعدة البيانات (ID و Name)
+        fx_acc = conn.execute("SELECT id, name FROM accounts WHERE functional_type = 'exchange_difference' LIMIT 1").fetchone()
+        if not fx_acc:
+            return None, "لم يتم العثور على حساب 'فروق أسعار الصرف' في شجرة الحسابات. يرجى التأكد من تحديد النوع الوظيفي (exchange_difference) للحساب."
+        
+        fx_account_id = fx_acc['id']
+        fx_account_name = fx_acc['name']
+        
+        # 3. حساب الأرصدة والفروقات
         foreign_balance, old_local_value = get_foreign_balance(account_id, currency_code)
         
         if abs(foreign_balance) < 0.001:
@@ -93,19 +98,17 @@ def perform_revaluation(account_id, currency_code, new_rate, revaluation_date, c
         if abs(difference) < 0.01:
             return None, f"لا يوجد فرق جوهري لسعر صرف {currency_code} (الفرق أقل من 0.01)."
         
-        fx_account_name = fx_account_info if isinstance(fx_account_info, str) else fx_account_info.get('name', 'أرباح وخسائر فروق العملة')
-        
-        # إنشاء بنود القيد المحاسبي بناءً على الربح أو الخسارة
+        # 4. بناء أسطر القيد (الآن نمرر account_id لكلا الحسابين)
         if difference > 0: # ربح أو زيادة في قيمة الأصل
             lines = [
                 {"account_id": account_id, "account_name": account_name, "debit": difference, "credit": 0.0,
                  "currency_code": base_code, "exchange_rate": 1.0},
-                {"account_name": fx_account_name, "debit": 0.0, "credit": difference,
+                {"account_id": fx_account_id, "account_name": fx_account_name, "debit": 0.0, "credit": difference,
                  "currency_code": base_code, "exchange_rate": 1.0}
             ]
         else: # خسارة أو نقص في قيمة الأصل
             lines = [
-                {"account_name": fx_account_name, "debit": abs(difference), "credit": 0.0,
+                {"account_id": fx_account_id, "account_name": fx_account_name, "debit": abs(difference), "credit": 0.0,
                  "currency_code": base_code, "exchange_rate": 1.0},
                 {"account_id": account_id, "account_name": account_name, "debit": 0.0, "credit": abs(difference),
                  "currency_code": base_code, "exchange_rate": 1.0}
@@ -113,10 +116,9 @@ def perform_revaluation(account_id, currency_code, new_rate, revaluation_date, c
         
         desc = f"إعادة تقييم {account_name} - {currency_code} (سعر جديد: {new_rate:,.2f})"
         
-        # حفظ القيد المحاسبي واستلام النتيجة (سواء كانت tuple أو ID مباشر)
+        # 5. حفظ القيد المحاسبي ومعالجة القيمة المرتجعة
         journal_result = save_journal_entry(description=desc, lines=lines, entry_date=revaluation_date)
         
-        # معالجة القيمة المرتجعة لتفادي خطأ 'tuple' is not supported
         if isinstance(journal_result, tuple):
             entry_id = journal_result[0]
             error_msg = journal_result[1] if len(journal_result) > 1 else None
@@ -125,13 +127,12 @@ def perform_revaluation(account_id, currency_code, new_rate, revaluation_date, c
         else:
             entry_id = journal_result
             
-        # تحقق إضافي لضمان وجود ID صحيح للقيد
         if not entry_id:
             return None, "تعذر استخراج رقم القيد المحاسبي بعد عملية الحفظ."
 
         old_calculated_rate = old_local_value / foreign_balance if foreign_balance != 0 else 0
         
-        # إدراج السجل في جدول التقييم بـ 12 معاملاً يتطابقون مع 12 علامة استفهام
+        # 6. إدراج السجل في جدول التقييم (بـ 12 معاملاً)
         conn.execute("""
             INSERT INTO currency_revaluations 
             (date, account_id, account_name, currency_code, old_rate, new_rate, foreign_balance, old_local_value, new_local_value, difference, journal_entry_id, created_by)
@@ -142,7 +143,7 @@ def perform_revaluation(account_id, currency_code, new_rate, revaluation_date, c
         
         conn.commit()
         
-        # تسجيل الحركة في سجل التدقيق
+        # 7. تسجيل الحركة في سجل التدقيق
         log_action(username=created_by, action="إعادة تقييم عملة",
                   table_name="currency_revaluations", record_id=entry_id,
                   new_value=f"{account_name} ({currency_code}): فرق {difference:,.2f}")
