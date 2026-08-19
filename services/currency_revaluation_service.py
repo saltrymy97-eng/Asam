@@ -9,7 +9,7 @@ from services.accounting_service import save_journal_entry
 def get_accounts_with_foreign_currency():
     """
     جلب الحسابات التي لها حركات بالعملات الأجنبية.
-    (تم تحسينها لتعتمد على account_id فقط لضمان دقة الأرصدة)
+    (تم دعم الربط بـ account_id أو تطابق الاسم الدقيق account_name لضمان ظهور الحسابات المسجلة مسبقاً)
     """
     base = get_base_currency()
     base_code = base['code'] if base else 'YER'
@@ -17,7 +17,6 @@ def get_accounts_with_foreign_currency():
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     try:
-        # إزالة الربط عبر الـ LIKE والاعتماد حصرياً على المعرف
         accounts = conn.execute("""
             SELECT DISTINCT 
                 a.id as account_id, 
@@ -25,7 +24,10 @@ def get_accounts_with_foreign_currency():
                 a.code as account_code,
                 UPPER(TRIM(jl.currency_code)) as currency_code
             FROM journal_lines jl
-            JOIN accounts a ON jl.account_id = a.id
+            JOIN accounts a ON (
+                jl.account_id = a.id OR 
+                jl.account_name = a.name
+            )
             WHERE jl.currency_code IS NOT NULL 
               AND TRIM(jl.currency_code) != ''
               AND UPPER(TRIM(jl.currency_code)) != UPPER(?)
@@ -39,19 +41,22 @@ def get_accounts_with_foreign_currency():
         conn.close()
 
 def get_foreign_balance(account_id, currency_code):
-    """حساب الرصيد الأجنبي والقيمة المحلية السابقة بدقة"""
+    """حساب الرصيد الأجنبي والقيمة المحلية السابقة بدقة مع دعم مطابقة الاسم الاحتياطية"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     try:
-        # إزالة الربط عبر الأسماء لمنع تداخل أرصدة الحسابات المتشابهة
+        # جلب اسم الحساب أولاً لضمان البحث الآمن
+        acc = conn.execute("SELECT name FROM accounts WHERE id = ?", (account_id,)).fetchone()
+        acc_name = acc['name'] if acc else ""
+
         row = conn.execute("""
             SELECT 
                 COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) as foreign_balance,
                 COALESCE(SUM(debit * exchange_rate), 0) - COALESCE(SUM(credit * exchange_rate), 0) as local_value
             FROM journal_lines
-            WHERE account_id = ? 
+            WHERE (account_id = ? OR account_name = ?) 
               AND UPPER(TRIM(currency_code)) = UPPER(TRIM(?))
-        """, (account_id, currency_code)).fetchone()
+        """, (account_id, acc_name, currency_code)).fetchone()
         
         foreign_balance = row['foreign_balance'] if row else 0.0
         old_local_value = row['local_value'] if row else 0.0
@@ -64,7 +69,7 @@ def get_foreign_balance(account_id, currency_code):
         conn.close()
 
 def perform_revaluation(account_id, currency_code, new_rate, revaluation_date, created_by="admin"):
-    """تنفيذ عملية إعادة التقييم وإنشاء القيود المحاسبية تلقائياً (نسخة الإنتاج المستقرة)"""
+    """تنفيذ عملية إعادة التقييم وإنشاء القيود المحاسبية تلقائياً"""
     
     base = get_base_currency()
     base_code = base['code'] if base else 'YER'
