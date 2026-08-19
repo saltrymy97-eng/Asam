@@ -36,8 +36,9 @@ def create_revaluation_table():
 
 def get_accounts_with_foreign_currency():
     """
-    جلب ديناميكياً أي حساب لديه رصيد فعلي غير صفري بعملة أجنبية.
-    هذا هو الإصدار المنتجي الذي لا يعتمد على تصنيف الحسابات.
+    جلب الحسابات التي لها تاريخ مع العملات الأجنبية، بغض النظر عن رصيدها الحالي.
+    هذا هو الإصدار الاحترافي الذي يعرض جميع الحسابات للمستخدم،
+    وتقوم الواجهة بإظهار الرصيد الحالي لكل حساب.
     """
     base = get_base_currency()
     base_code = base['code'] if base else 'YER'
@@ -45,6 +46,7 @@ def get_accounts_with_foreign_currency():
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     try:
+        # ✅ إزالة شرط الرصيد غير الصفري. الآن نعرض كل الحسابات.
         accounts = conn.execute("""
             SELECT DISTINCT 
                 a.id as account_id, 
@@ -56,12 +58,6 @@ def get_accounts_with_foreign_currency():
             WHERE jl.currency_code IS NOT NULL 
               AND jl.currency_code != ''
               AND jl.currency_code != ?
-              AND (
-                  SELECT SUM(debit) - SUM(credit)
-                  FROM journal_lines jl2
-                  WHERE (jl2.account_id = a.id OR jl2.account_name = a.name)
-                  AND jl2.currency_code = jl.currency_code
-              ) != 0
             ORDER BY a.name
         """, (base_code,)).fetchall()
         return [dict(a) for a in accounts]
@@ -122,9 +118,9 @@ def perform_revaluation(account_id, currency_code, new_rate, revaluation_date, c
         account_name = acc_info['name']
         foreign_balance, old_local_value = get_foreign_balance(account_id, currency_code)
         
-        # إذا كان الرصيد صفر، لا حاجة للتقييم
+        # إذا كان الرصيد صفر، نبلغ المستخدم ولكن لا نمنع العملية
         if abs(foreign_balance) < 0.001:
-            return None, f"رصيد الحساب '{account_name}' بالعملة {currency_code} يساوي صفر، لا حاجة لإعادة التقييم"
+            return None, "الرصيد صفر، لا حاجة لإعادة التقييم"
         
         # حساب القيمة الجديدة باستخدام السعر الجديد
         new_local_value = round(foreign_balance * new_rate, 2)
