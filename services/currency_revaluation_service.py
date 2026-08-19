@@ -7,56 +7,6 @@ from services.currency_service import get_base_currency, get_exchange_rate
 from services.chart_service import get_functional_account
 from services.accounting_service import save_journal_entry
 
-def create_revaluation_table():
-    """
-    إنشاء أو تحديث جدول إعادة التقييم تلقائياً.
-    هذه الدالة تعمل كـ Auto-Migration وتضمن وجود كافة الأعمدة المطلوبة
-    دون التأثير على البيانات السابقة أو إحداث تعارضات.
-    """
-    conn = get_connection()
-    try:
-        # 1. إنشاء الجدول الأساسي إذا لم يكن موجوداً
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS currency_revaluations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL,
-                account_id INTEGER,
-                account_name TEXT NOT NULL,
-                currency_code TEXT NOT NULL,
-                old_rate REAL,
-                new_rate REAL,
-                foreign_balance REAL,
-                old_local_value REAL,
-                new_local_value REAL,
-                difference REAL,
-                journal_entry_id INTEGER,
-                created_by TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (account_id) REFERENCES accounts(id)
-            )
-        """)
-        
-        # 2. فحص الأعمدة الموجودة للترقية الآمنة (Migration)
-        col_check = conn.execute("PRAGMA table_info(currency_revaluations)").fetchall()
-        col_names = [col[1] for col in col_check]
-        
-        # 3. إضافة الأعمدة الناقصة باستقلالية تامة لتجنب أخطاء (Duplicate Column)
-        if 'account_id' not in col_names:
-            conn.execute("ALTER TABLE currency_revaluations ADD COLUMN account_id INTEGER")
-            
-        if 'account_name' not in col_names:
-            conn.execute("ALTER TABLE currency_revaluations ADD COLUMN account_name TEXT DEFAULT ''")
-            
-        if 'currency_code' not in col_names:
-            conn.execute("ALTER TABLE currency_revaluations ADD COLUMN currency_code TEXT DEFAULT 'YER'")
-        
-        conn.commit()
-    except Exception as e:
-        # طباعة الخطأ في الكونسول للمطور دون إيقاف تشغيل النظام
-        print(f"Error checking/updating revaluation table: {e}")
-    finally:
-        conn.close()
-
 def get_accounts_with_foreign_currency():
     """
     جلب الحسابات التي لها حركات بالعملات الأجنبية.
@@ -117,9 +67,6 @@ def get_foreign_balance(account_id, currency_code):
 def perform_revaluation(account_id, currency_code, new_rate, revaluation_date, created_by="admin"):
     """تنفيذ عملية إعادة التقييم وإنشاء القيود المحاسبية تلقائياً"""
     
-    # ✅ استدعاء دالة بناء/تحديث الجدول هنا لضمان وجود الأعمدة قبل أي عملية حفظ
-    create_revaluation_table()
-    
     base = get_base_currency()
     base_code = base['code'] if base else 'YER'
     
@@ -169,7 +116,7 @@ def perform_revaluation(account_id, currency_code, new_rate, revaluation_date, c
         
         old_calculated_rate = old_local_value / foreign_balance if foreign_balance != 0 else 0
         
-        # إدراج السجل في جدول التقييم (لن يظهر خطأ account_id بعد الآن)
+        # إدراج السجل في جدول التقييم (الجدول موجود بالفعل في قاعدة البيانات)
         conn.execute("""
             INSERT INTO currency_revaluations 
             (date, account_id, account_name, currency_code, old_rate, new_rate, foreign_balance, old_local_value, new_local_value, difference, journal_entry_id, created_by)
