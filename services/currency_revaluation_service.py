@@ -10,14 +10,12 @@ from services.accounting_service import save_journal_entry
 def create_revaluation_table():
     """
     إنشاء أو تحديث جدول إعادة التقييم تلقائياً.
-    هذه الدالة تعمل كـ Auto-Migration: إذا كان الجدول موجوداً لكنه يفتقد account_id،
-    سيقوم بإضافته دون حذف قاعدة البيانات.
+    هذه الدالة تعمل كـ Auto-Migration وتضمن وجود كافة الأعمدة المطلوبة
+    دون التأثير على البيانات السابقة أو إحداث تعارضات.
     """
     conn = get_connection()
     try:
-        conn.execute("BEGIN")
-        
-        # 1. إنشاء الجدول إذا لم يكن موجوداً
+        # 1. إنشاء الجدول الأساسي إذا لم يكن موجوداً
         conn.execute("""
             CREATE TABLE IF NOT EXISTS currency_revaluations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,26 +36,30 @@ def create_revaluation_table():
             )
         """)
         
-        # 2. التحقق مما إذا كان العمود account_id موجوداً
+        # 2. فحص الأعمدة الموجودة للترقية الآمنة (Migration)
         col_check = conn.execute("PRAGMA table_info(currency_revaluations)").fetchall()
         col_names = [col[1] for col in col_check]
         
-        # 3. إذا كان غير موجود، قم بإضافته
+        # 3. إضافة الأعمدة الناقصة باستقلالية تامة لتجنب أخطاء (Duplicate Column)
         if 'account_id' not in col_names:
             conn.execute("ALTER TABLE currency_revaluations ADD COLUMN account_id INTEGER")
+            
+        if 'account_name' not in col_names:
             conn.execute("ALTER TABLE currency_revaluations ADD COLUMN account_name TEXT DEFAULT ''")
+            
+        if 'currency_code' not in col_names:
             conn.execute("ALTER TABLE currency_revaluations ADD COLUMN currency_code TEXT DEFAULT 'YER'")
         
         conn.commit()
     except Exception as e:
-        conn.rollback()
-        print(f"Error creating revaluation table: {e}")
+        # طباعة الخطأ في الكونسول للمطور دون إيقاف تشغيل النظام
+        print(f"Error checking/updating revaluation table: {e}")
     finally:
         conn.close()
 
 def get_accounts_with_foreign_currency():
     """
-    جلب الحسابات التي لها تاريخ مع العملات الأجنبية.
+    جلب الحسابات التي لها حركات بالعملات الأجنبية.
     """
     base = get_base_currency()
     base_code = base['code'] if base else 'YER'
@@ -65,7 +67,6 @@ def get_accounts_with_foreign_currency():
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     try:
-        # ✅ البحث المرن مع UPPER و TRIM
         accounts = conn.execute("""
             SELECT DISTINCT 
                 a.id as account_id, 
@@ -83,13 +84,14 @@ def get_accounts_with_foreign_currency():
             ORDER BY a.code
         """, (base_code,)).fetchall()
         return [dict(a) for a in accounts]
-    except Exception:
+    except Exception as e:
+        print(f"Error fetching foreign currency accounts: {e}")
         return []
     finally:
         conn.close()
 
 def get_foreign_balance(account_id, currency_code):
-    """حساب الرصيد والقيمة المحلية"""
+    """حساب الرصيد الأجنبي والقيمة المحلية السابقة"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     try:
@@ -106,14 +108,18 @@ def get_foreign_balance(account_id, currency_code):
         old_local_value = row['local_value'] if row else 0.0
         
         return foreign_balance, old_local_value
-    except Exception:
+    except Exception as e:
+        print(f"Error calculating foreign balance: {e}")
         return 0.0, 0.0
     finally:
         conn.close()
 
 def perform_revaluation(account_id, currency_code, new_rate, revaluation_date, created_by="admin"):
-    """تنفيذ إعادة التقييم"""
+    """تنفيذ عملية إعادة التقييم وإنشاء القيود المحاسبية تلقائياً"""
+    
+    # ✅ استدعاء دالة بناء/تحديث الجدول هنا لضمان وجود الأعمدة قبل أي عملية حفظ
     create_revaluation_table()
+    
     base = get_base_currency()
     base_code = base['code'] if base else 'YER'
     
@@ -142,6 +148,7 @@ def perform_revaluation(account_id, currency_code, new_rate, revaluation_date, c
         
         fx_account_name = fx_account_info if isinstance(fx_account_info, str) else fx_account_info.get('name', 'أرباح وخسائر فروق العملة')
         
+        # إنشاء بنود القيد المحاسبي بناءً على الربح أو الخسارة
         if difference > 0:
             lines = [
                 {"account_id": account_id, "account_name": account_name, "debit": difference, "credit": 0.0,
@@ -161,6 +168,8 @@ def perform_revaluation(account_id, currency_code, new_rate, revaluation_date, c
         entry_id = save_journal_entry(description=desc, lines=lines, entry_date=revaluation_date)
         
         old_calculated_rate = old_local_value / foreign_balance if foreign_balance != 0 else 0
+        
+        # إدراج السجل في جدول التقييم (لن يظهر خطأ account_id بعد الآن)
         conn.execute("""
             INSERT INTO currency_revaluations 
             (date, account_id, account_name, currency_code, old_rate, new_rate, foreign_balance, old_local_value, new_local_value, difference, journal_entry_id, created_by)
@@ -171,6 +180,7 @@ def perform_revaluation(account_id, currency_code, new_rate, revaluation_date, c
         
         conn.commit()
         
+        # تسجيل الحركة في سجل التدقيق
         log_action(username=created_by, action="إعادة تقييم عملة",
                   table_name="currency_revaluations", record_id=entry_id,
                   new_value=f"{account_name} ({currency_code}): فرق {difference:,.2f}")
@@ -183,7 +193,7 @@ def perform_revaluation(account_id, currency_code, new_rate, revaluation_date, c
         conn.close()
 
 def get_revaluation_history(limit=50):
-    """سجل عمليات إعادة التقييم"""
+    """سجل عمليات إعادة التقييم المنجزة"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     try:
@@ -193,7 +203,8 @@ def get_revaluation_history(limit=50):
             LIMIT ?
         """, (limit,)).fetchall()
         return [dict(h) for h in history]
-    except Exception:
+    except Exception as e:
+        print(f"Error fetching revaluation history: {e}")
         return []
     finally:
         conn.close()
