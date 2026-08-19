@@ -459,9 +459,11 @@ def init_db():
         FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
     )''')
 
+    # ✅ الجدول الناقص الذي تم إصلاحه (إضافة account_id و Foreign Key)
     c.execute('''CREATE TABLE IF NOT EXISTS currency_revaluations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         date TEXT NOT NULL DEFAULT (date('now')),
+        account_id INTEGER NOT NULL,
         account_name TEXT NOT NULL,
         currency_code TEXT NOT NULL,
         old_rate REAL,
@@ -472,7 +474,8 @@ def init_db():
         difference REAL,
         journal_entry_id INTEGER,
         created_by TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (account_id) REFERENCES accounts(id)
     )''')
 
     # ========== 14. الأصول الثابتة ==========
