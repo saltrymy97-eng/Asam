@@ -113,8 +113,14 @@ def save_journal_entry(description, lines, entry_date=None, cost_center_allocati
                 else:
                     return None, f"لم يتم العثور على سعر صرف للعملة {currency_code} بتاريخ {entry_date}."
             
-            debit_base = debit * exchange_rate
-            credit_base = credit * exchange_rate
+            # ✅ التعديل الاحترافي: تحويل العملة الأجنبية فقط إلى العملة الأساسية
+            if currency_code != base_code:
+                debit_base = debit * exchange_rate
+                credit_base = credit * exchange_rate
+            else:
+                # العملة الأساسية تبقى كما هي
+                debit_base = debit
+                credit_base = credit
             
             total_debit_base += debit_base
             total_credit_base += credit_base
@@ -196,8 +202,13 @@ def update_journal_entry(entry_id, description, lines, entry_date=None, cost_cen
                 else:
                     return False, f"لم يتم العثور على سعر صرف للعملة {currency_code} بتاريخ {entry_date}."
             
-            debit_base = debit * exchange_rate
-            credit_base = credit * exchange_rate
+            # ✅ التعديل الاحترافي: تحويل العملة الأجنبية فقط إلى العملة الأساسية
+            if currency_code != base_code:
+                debit_base = debit * exchange_rate
+                credit_base = credit * exchange_rate
+            else:
+                debit_base = debit
+                credit_base = credit
             
             total_debit_base += debit_base
             total_credit_base += credit_base
