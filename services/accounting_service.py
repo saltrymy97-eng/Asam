@@ -1,4 +1,4 @@
-# services/accounting_service.py - منطق الحسابات وقيود اليومية (مع دعم الاتصال الخارجي – إصدار احترافي)
+# services/accounting_service.py - منطق الحسابات وقيود اليومية (إصدار مكتمل ومعدل مع دعم متعدد العملات)
 import sqlite3
 import uuid
 import os
@@ -17,7 +17,7 @@ def get_conn():
 def get_account_code(account_input, conn=None):
     """
     تحويل اسم الحساب أو كوده إلى كود نصي موحد.
-    تدخل هذه الدالة سواء استلمت رقماً صحيحاً (int) أو نصاً (str).
+    تتعامل الدالة مع الرقم الصحيح أو النص.
     """
     if account_input is None:
         return None
@@ -54,8 +54,7 @@ def get_account_code(account_input, conn=None):
 
 def save_journal_entry(description, lines, entry_date=None, cost_center_allocations=None, conn=None, skip_period_check=False):
     """
-    حفظ قيد يومية جديد مع دعم العملات المتعددة والتحويل التلقائي.
-    إذا تم تمرير conn خارجي، لا يتم إنشاء معاملة منفصلة (المعاملة تدار خارجياً).
+    حفظ قيد يومية جديد مع دعم التحويل التلقائي للعملات الأجنبية والتحقق من التوازن بالعملة الأساسية.
     """
     if entry_date is None:
         entry_date = date.today().strftime("%Y-%m-%d")
@@ -97,26 +96,25 @@ def save_journal_entry(description, lines, entry_date=None, cost_center_allocati
                     account_name = code
             
             currency_code = line.get("currency_code", base_code)
-            exchange_rate = line.get("exchange_rate", 1.0)
             
-            # ✅ تحسين احترافي: ضمان استخدام السعر الصحيح
-            if currency_code != base_code:
-                fetched_rate = get_exchange_rate(currency_code, base_code)
+            # تحويل القيم بأمان إلى أرقام عشرية
+            debit = float(line.get("debit", 0.0) or 0.0)
+            credit = float(line.get("credit", 0.0) or 0.0)
+            
+            raw_rate = line.get("exchange_rate")
+            exchange_rate = float(raw_rate) if raw_rate not in [None, ""] else 1.0
+            
+            # جلب سعر الصرف بناءً على العملة وتاريخ القيد عند الحاجة
+            if currency_code != base_code and exchange_rate == 1.0:
+                fetched_rate = get_exchange_rate(currency_code, base_code, entry_date)
                 if fetched_rate:
-                    exchange_rate = fetched_rate
-                    # تحديث السطر لضمان حفظ السعر الصحيح في القيد
+                    exchange_rate = float(fetched_rate)
                     line['exchange_rate'] = exchange_rate
+                else:
+                    return None, f"لم يتم العثور على سعر صرف للعملة {currency_code} بتاريخ {entry_date}."
             
-            debit = line["debit"]
-            credit = line["credit"]
-            
-            # حساب المبالغ بالعملة الأساسية للتوازن
-            if currency_code != base_code:
-                debit_base = debit * exchange_rate
-                credit_base = credit * exchange_rate
-            else:
-                debit_base = debit
-                credit_base = credit
+            debit_base = debit * exchange_rate
+            credit_base = credit * exchange_rate
             
             total_debit_base += debit_base
             total_credit_base += credit_base
@@ -127,7 +125,8 @@ def save_journal_entry(description, lines, entry_date=None, cost_center_allocati
             )
             line_ids.append(cur_line.lastrowid)
         
-        if abs(total_debit_base - total_credit_base) > 0.001:
+        # التحقق من توازن القيد بالعملة الأساسية
+        if round(abs(total_debit_base - total_credit_base), 2) > 0.01:
             return None, f"القيد غير متوازن! المدين الأساسي: {total_debit_base:,.2f} ، الدائن الأساسي: {total_credit_base:,.2f}"
         
         if cost_center_allocations:
@@ -151,7 +150,7 @@ def save_journal_entry(description, lines, entry_date=None, cost_center_allocati
             conn.close()
 
 def update_journal_entry(entry_id, description, lines, entry_date=None, cost_center_allocations=None):
-    """تحديث قيد موجود مع دعم العملات"""
+    """تحديث قيد موجود مع دعم العملات متعددة والتحويل التلقائي"""
     if entry_date is None:
         entry_date = date.today().strftime("%Y-%m-%d")
     
@@ -183,21 +182,23 @@ def update_journal_entry(entry_id, description, lines, entry_date=None, cost_cen
                     account_name = code
             
             currency_code = line.get("currency_code", base_code)
-            exchange_rate = line.get("exchange_rate", 1.0)
-            if currency_code != base_code:
-                fetched_rate = get_exchange_rate(currency_code, base_code)
-                if fetched_rate:
-                    exchange_rate = fetched_rate
-                    line['exchange_rate'] = exchange_rate
+            debit = float(line.get("debit", 0.0) or 0.0)
+            credit = float(line.get("credit", 0.0) or 0.0)
             
-            debit = line["debit"]
-            credit = line["credit"]
-            if currency_code != base_code:
-                debit_base = debit * exchange_rate
-                credit_base = credit * exchange_rate
-            else:
-                debit_base = debit
-                credit_base = credit
+            raw_rate = line.get("exchange_rate")
+            exchange_rate = float(raw_rate) if raw_rate not in [None, ""] else 1.0
+            
+            if currency_code != base_code and exchange_rate == 1.0:
+                fetched_rate = get_exchange_rate(currency_code, base_code, entry_date)
+                if fetched_rate:
+                    exchange_rate = float(fetched_rate)
+                    line['exchange_rate'] = exchange_rate
+                else:
+                    return False, f"لم يتم العثور على سعر صرف للعملة {currency_code} بتاريخ {entry_date}."
+            
+            debit_base = debit * exchange_rate
+            credit_base = credit * exchange_rate
+            
             total_debit_base += debit_base
             total_credit_base += credit_base
             
@@ -207,8 +208,9 @@ def update_journal_entry(entry_id, description, lines, entry_date=None, cost_cen
             )
             line_ids.append(cur_line.lastrowid)
         
-        if abs(total_debit_base - total_credit_base) > 0.001:
+        if round(abs(total_debit_base - total_credit_base), 2) > 0.01:
             return False, f"القيد غير متوازن! المدين الأساسي: {total_debit_base:,.2f} ، الدائن الأساسي: {total_credit_base:,.2f}"
+            
         if cost_center_allocations:
             for alloc_entry in cost_center_allocations:
                 line_index = alloc_entry.get('line_index', 0)
