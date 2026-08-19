@@ -86,7 +86,12 @@ def save_journal_entry(description, lines, entry_date=None, cost_center_allocati
         total_credit_base = 0.0
         
         for line in lines:
-            account_name = line.get("account") or line.get("account_id")
+            # ✅ التعديل الاحترافي: إعطاء الأولوية للاسم إذا كان موجوداً
+            if line.get("account"):
+                account_name = line["account"]
+            else:
+                account_name = line.get("account_id")
+            
             if account_name is None:
                 return None, "خطأ: سطر القيد يفتقد إلى معرف الحساب."
             
@@ -179,7 +184,12 @@ def update_journal_entry(entry_id, description, lines, entry_date=None, cost_cen
         total_debit_base = 0.0
         total_credit_base = 0.0
         for line in lines:
-            account_name = line.get("account") or line.get("account_id")
+            # ✅ التعديل الاحترافي: إعطاء الأولوية للاسم إذا كان موجوداً
+            if line.get("account"):
+                account_name = line["account"]
+            else:
+                account_name = line.get("account_id")
+            
             if account_name is None:
                 return False, "خطأ: سطر القيد يفتقد إلى معرف الحساب."
             if isinstance(account_name, int) or (isinstance(account_name, str) and account_name.isdigit()):
