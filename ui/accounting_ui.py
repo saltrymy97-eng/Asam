@@ -194,27 +194,28 @@ def show():
                     elif not lines:
                         st.error("أضف سطراً محاسبياً واحداً على الأقل")
                     else:
-                        total_debit = sum(l["debit"] for l in lines)
-                        total_credit = sum(l["credit"] for l in lines)
-                        if abs(total_debit - total_credit) > 0.001:
-                            st.error(f"القيد غير متوازن! المدين: {total_debit:,.2f} ، الدائن: {total_credit:,.2f}")
+                        # 🚀 إرسال البيانات مباشرة للخدمة الخلفية (Backend) التي تدعم العملات
+                        # (تم إزالة شرط التحقق المبدئي الذي كان يمنع العملات الأجنبية)
+                        entry_id, error = save_journal_entry(
+                            description, lines, entry_date.strftime("%Y-%m-%d"),
+                            cost_center_allocations=cost_center_allocations if cost_center_allocations else None
+                        )
+                        
+                        if error:
+                            # ستظهر هنا رسالة الخطأ الذكية التي تأتي من accounting_service (بالعملة الأساسية)
+                            st.error(error)
                         else:
-                            entry_id, error = save_journal_entry(
-                                description, lines, entry_date.strftime("%Y-%m-%d"),
-                                cost_center_allocations=cost_center_allocations if cost_center_allocations else None
+                            # جلب اسم المستخدم بأمان من الجلسة لتفادي أخطاء المفاتيح
+                            username = st.session_state.user.get('username', 'admin') if 'user' in st.session_state else 'admin'
+                            log_action(
+                                username=username,
+                                action="قيد يومية",
+                                table_name="journal_entries",
+                                record_id=entry_id,
+                                new_value=f"البيان: {description}"
                             )
-                            if error:
-                                st.error(f"فشل في حفظ القيد: {error}")
-                            else:
-                                log_action(
-                                    username=st.session_state.user.get('username', 'admin'),
-                                    action="قيد يومية",
-                                    table_name="journal_entries",
-                                    record_id=entry_id,
-                                    new_value=f"البيان: {description}"
-                                )
-                                st.success("تم تسجيل القيد بنجاح مع توزيعات مراكز التكلفة")
-                                st.rerun()
+                            st.success("تم تسجيل القيد بنجاح مع تحويل العملات وتوزيعات مراكز التكلفة ✅")
+                            st.rerun()
 
         # عرض آخر القيود
         st.markdown("---")
