@@ -9,7 +9,7 @@ from services.accounting_service import save_journal_entry
 def get_accounts_with_foreign_currency():
     """
     جلب الحسابات التي لها حركات بالعملات الأجنبية.
-    (تم دعم الربط بـ account_id أو تطابق الاسم الدقيق account_name لضمان ظهور الحسابات المسجلة مسبقاً)
+    (تم دعم الربط بـ account_id، أو تطابق الاسم account_name، أو كود الحساب account_code لضمان ظهور كافة الحسابات المسجلة)
     """
     base = get_base_currency()
     base_code = base['code'] if base else 'YER'
@@ -26,7 +26,8 @@ def get_accounts_with_foreign_currency():
             FROM journal_lines jl
             JOIN accounts a ON (
                 jl.account_id = a.id OR 
-                jl.account_name = a.name
+                jl.account_name = a.name OR
+                jl.account_name = a.code
             )
             WHERE jl.currency_code IS NOT NULL 
               AND TRIM(jl.currency_code) != ''
@@ -41,22 +42,23 @@ def get_accounts_with_foreign_currency():
         conn.close()
 
 def get_foreign_balance(account_id, currency_code):
-    """حساب الرصيد الأجنبي والقيمة المحلية السابقة بدقة مع دعم مطابقة الاسم الاحتياطية"""
+    """حساب الرصيد الأجنبي والقيمة المحلية السابقة بدقة مع دعم مطابقة ID، الاسم، أو الكود"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     try:
-        # جلب اسم الحساب أولاً لضمان البحث الآمن
-        acc = conn.execute("SELECT name FROM accounts WHERE id = ?", (account_id,)).fetchone()
+        # جلب اسم الحساب وكوده لضمان البحث الآمن وشمولية كافة الحركات المرتبطة
+        acc = conn.execute("SELECT name, code FROM accounts WHERE id = ?", (account_id,)).fetchone()
         acc_name = acc['name'] if acc else ""
+        acc_code = acc['code'] if acc else ""
 
         row = conn.execute("""
             SELECT 
                 COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) as foreign_balance,
                 COALESCE(SUM(debit * exchange_rate), 0) - COALESCE(SUM(credit * exchange_rate), 0) as local_value
             FROM journal_lines
-            WHERE (account_id = ? OR account_name = ?) 
+            WHERE (account_id = ? OR account_name = ? OR account_name = ?) 
               AND UPPER(TRIM(currency_code)) = UPPER(TRIM(?))
-        """, (account_id, acc_name, currency_code)).fetchone()
+        """, (account_id, acc_name, acc_code, currency_code)).fetchone()
         
         foreign_balance = row['foreign_balance'] if row else 0.0
         old_local_value = row['local_value'] if row else 0.0
