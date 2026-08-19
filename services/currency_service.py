@@ -1,17 +1,78 @@
-# services/currency_service.py – منطق تعدد العملات وأسعار الصرف (مع إدارة العمليات)
+# services/currency_service.py – إدارة العملات وأسعار الصرف (إصدار محترف مع تحويل عكسي وتثبيت تلقائي)
 import sqlite3
-import database
-from datetime import date, datetime
+import os
+from datetime import date
+
+DB_PATH = os.path.join("data", "erp.db")
 
 def get_conn():
-    conn = database.get_connection()
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+# ===================== التثبيت التلقائي والصيانة =====================
+
+def init_currency_system(default_base="YER"):
+    """
+    فحص وتثبيت نظام العملات تلقائياً عند التشغيل:
+    1. إنشاء العملات الافتراضية إذا كان الجدول فارغاً.
+    2. التأكد من وجود عملة أساسية واحدة فقط مسجلة في النظام.
+    """
+    conn = get_conn()
+    try:
+        conn.execute("BEGIN")
+        # إنشاء جدول العملات إن لم يكن موجوداً
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS currencies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                symbol TEXT,
+                is_base INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1
+            )
+        """)
+        
+        # إنشاء جدول أسعار الصرف إن لم يكن موجوداً
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS exchange_rates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_currency TEXT NOT NULL,
+                to_currency TEXT NOT NULL,
+                rate REAL NOT NULL,
+                date TEXT NOT NULL,
+                UNIQUE(from_currency, to_currency, date)
+            )
+        """)
+
+        # فحص هل توجد عملات
+        count = conn.execute("SELECT COUNT(*) FROM currencies").fetchone()[0]
+        if count == 0:
+            conn.execute("INSERT INTO currencies (code, name, symbol, is_base) VALUES ('YER', 'ريال يمني', '﷼', 1)")
+            conn.execute("INSERT INTO currencies (code, name, symbol, is_base) VALUES ('SAR', 'ريال سعودي', '﷼', 0)")
+            conn.execute("INSERT INTO currencies (code, name, symbol, is_base) VALUES ('USD', 'دولار أمريكي', '$', 0)")
+            conn.execute("INSERT INTO currencies (code, name, symbol, is_base) VALUES ('EUR', 'يورو', '€', 0)")
+        else:
+            # التأكد من وجود عملة أساسية واحدة فقط
+            base_count = conn.execute("SELECT COUNT(*) FROM currencies WHERE is_base = 1").fetchone()[0]
+            if base_count == 0:
+                conn.execute("UPDATE currencies SET is_base = 1 WHERE code = ?", (default_base.upper(),))
+            elif base_count > 1:
+                conn.execute("UPDATE currencies SET is_base = 0")
+                conn.execute("UPDATE currencies SET is_base = 1 WHERE code = ?", (default_base.upper(),))
+                
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"Error initializing currency system: {e}")
+    finally:
+        conn.close()
 
 # ===================== إدارة العملات =====================
 
 def create_currency(code, name, symbol="", is_base=False):
-    """إضافة عملة جديدة"""
+    """إضافة عملة جديدة مع ضبط العملة الأساسية عند الطلب"""
+    code = code.upper().strip()
     conn = get_conn()
     try:
         conn.execute("BEGIN")
@@ -19,7 +80,7 @@ def create_currency(code, name, symbol="", is_base=False):
             conn.execute("UPDATE currencies SET is_base = 0")
         conn.execute(
             "INSERT INTO currencies (code, name, symbol, is_base) VALUES (?, ?, ?, ?)",
-            (code.upper(), name, symbol, 1 if is_base else 0)
+            (code, name, symbol, 1 if is_base else 0)
         )
         conn.commit()
         return True
@@ -32,71 +93,53 @@ def create_currency(code, name, symbol="", is_base=False):
     finally:
         conn.close()
 
-def update_currency(currency_id, name=None, symbol=None, is_active=None, is_base=None):
-    """تحديث بيانات عملة"""
+def set_base_currency(currency_code):
+    """تغيير العملة الأساسية للنظام احترافياً"""
+    currency_code = currency_code.upper().strip()
     conn = get_conn()
-    fields = []
-    values = []
-    if name: fields.append("name = ?"); values.append(name)
-    if symbol: fields.append("symbol = ?"); values.append(symbol)
-    if is_active is not None: fields.append("is_active = ?"); values.append(1 if is_active else 0)
-    if is_base is not None and is_base: 
-        fields.append("is_base = 1")
-    if not fields: return
     try:
         conn.execute("BEGIN")
-        values.append(currency_id)
-        conn.execute(f"UPDATE currencies SET {', '.join(fields)} WHERE id = ?", values)
+        conn.execute("UPDATE currencies SET is_base = 0")
+        conn.execute("UPDATE currencies SET is_base = 1 WHERE code = ?", (currency_code,))
         conn.commit()
+        return True
     except Exception as e:
         conn.rollback()
-        raise e
+        return False
     finally:
         conn.close()
 
 def get_all_currencies(active_only=True):
-    """جلب قائمة العملات"""
+    """جلب جميع العملات مفروزة بحسب العملة الأساسية أولاً"""
     conn = get_conn()
     query = "SELECT * FROM currencies"
     if active_only:
         query += " WHERE is_active = 1"
-    query += " ORDER BY code"
+    query += " ORDER BY is_base DESC, code ASC"
     rows = conn.execute(query).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 def get_base_currency():
-    """جلب العملة الأساسية"""
+    """جلب بيانات العملة الأساسية الحالية"""
     conn = get_conn()
-    row = conn.execute("SELECT * FROM currencies WHERE is_base = 1").fetchone()
+    row = conn.execute("SELECT * FROM currencies WHERE is_base = 1 LIMIT 1").fetchone()
     conn.close()
-    return dict(row) if row else None
+    return dict(row) if row else {"code": "YER", "name": "ريال يمني", "symbol": "﷼", "is_base": 1}
 
-def create_default_currencies():
-    """إنشاء العملات الافتراضية إذا لم توجد عملات"""
-    conn = get_conn()
-    count = conn.execute("SELECT COUNT(*) FROM currencies").fetchone()[0]
-    conn.close()
-    if count == 0:
-        try:
-            create_currency("YER", "ريال يمني", "﷼", is_base=True)
-        except:
-            pass  # تجاهل الخطأ إذا كانت العملة موجودة
-        try:
-            create_currency("USD", "دولار أمريكي", "$")
-        except:
-            pass
-        try:
-            create_currency("SAR", "ريال سعودي", "﷼")
-        except:
-            pass
-
-# ===================== أسعار الصرف =====================
+# ===================== أسعار الصرف والتحويل الذكي =====================
 
 def set_exchange_rate(from_currency, to_currency, rate, rate_date=None):
-    """تحديد سعر صرف (مع إدارة العمليات)"""
+    """تسجيل أو تحديث سعر صرف لعملة"""
     if rate_date is None:
         rate_date = date.today().strftime("%Y-%m-%d")
+        
+    from_curr = from_currency.upper().strip()
+    to_curr = to_currency.upper().strip()
+    
+    if from_curr == to_curr:
+        return True
+
     conn = get_conn()
     try:
         conn.execute("BEGIN")
@@ -104,7 +147,7 @@ def set_exchange_rate(from_currency, to_currency, rate, rate_date=None):
             """INSERT INTO exchange_rates (from_currency, to_currency, rate, date)
                VALUES (?, ?, ?, ?)
                ON CONFLICT(from_currency, to_currency, date) DO UPDATE SET rate = ?""",
-            (from_currency.upper(), to_currency.upper(), rate, rate_date, rate)
+            (from_curr, to_curr, float(rate), rate_date, float(rate))
         )
         conn.commit()
         return True
@@ -115,42 +158,51 @@ def set_exchange_rate(from_currency, to_currency, rate, rate_date=None):
         conn.close()
 
 def get_exchange_rate(from_currency, to_currency, rate_date=None):
-    """جلب سعر الصرف لتاريخ محدد (أو آخر سعر متاح)"""
+    """
+    جلب سعر الصرف المحسوب ذكياً:
+    1. إرجاع 1.0 إذا كانت العملتان متطابقتين.
+    2. البحث عن سعر مباشر (Direct Rate) لتاريخ القيد أو أحدث تاريخ قبله.
+    3. البحث عن سعر عكسي (Inverse Rate) وحساب المقلوب (1 / Rate) تلقائياً.
+    """
+    from_curr = from_currency.upper().strip()
+    to_curr = to_currency.upper().strip()
+    
+    if from_curr == to_curr:
+        return 1.0
+        
     if rate_date is None:
         rate_date = date.today().strftime("%Y-%m-%d")
+        
     conn = get_conn()
+    
+    # 1. البحث عن سعر مباشر
     row = conn.execute(
-        "SELECT rate FROM exchange_rates WHERE from_currency = ? AND to_currency = ? AND date = ?",
-        (from_currency.upper(), to_currency.upper(), rate_date)
+        "SELECT rate FROM exchange_rates WHERE from_currency = ? AND to_currency = ? AND date <= ? ORDER BY date DESC LIMIT 1",
+        (from_curr, to_curr, rate_date)
     ).fetchone()
-    if not row:
-        row = conn.execute(
-            "SELECT rate FROM exchange_rates WHERE from_currency = ? AND to_currency = ? ORDER BY date DESC LIMIT 1",
-            (from_currency.upper(), to_currency.upper())
-        ).fetchone()
+    
+    if row and row['rate']:
+        conn.close()
+        return float(row['rate'])
+        
+    # 2. البحث عن سعر عكسي وحسابه تلقائياً
+    inv_row = conn.execute(
+        "SELECT rate FROM exchange_rates WHERE from_currency = ? AND to_currency = ? AND date <= ? ORDER BY date DESC LIMIT 1",
+        (to_curr, from_curr, rate_date)
+    ).fetchone()
+    
     conn.close()
-    return row['rate'] if row else None
+    if inv_row and inv_row['rate'] and float(inv_row['rate']) > 0:
+        return 1.0 / float(inv_row['rate'])
+        
+    return None
 
 def convert_amount(amount, from_currency, to_currency, rate_date=None):
-    """تحويل مبلغ بين عملتين"""
+    """تحويل مبلغ مالياً بين عملتين بناءً على أحدث سعر صرف متوفر"""
     rate = get_exchange_rate(from_currency, to_currency, rate_date)
     if rate is None:
-        raise ValueError(f"لا يوجد سعر صرف من {from_currency} إلى {to_currency}")
-    return amount * rate
+        raise ValueError(f"لا يوجد سعر صرف مسجل بين {from_currency} و {to_currency}")
+    return float(amount) * rate
 
-def get_exchange_rate_history(from_currency, to_currency, limit=30):
-    """سجل أسعار الصرف"""
-    conn = get_conn()
-    rows = conn.execute(
-        "SELECT * FROM exchange_rates WHERE from_currency = ? AND to_currency = ? ORDER BY date DESC LIMIT ?",
-        (from_currency.upper(), to_currency.upper(), limit)
-    ).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-# ===================== دوال مساعدة =====================
-
-def get_currency_choices():
-    """قائمة مناسبة لـ selectbox في الواجهات"""
-    currencies = get_all_currencies()
-    return {f"{c['code']} - {c['name']}": c['code'] for c in currencies}
+# ===================== تشغيل الفحص التلقائي =====================
+init_currency_system(default_base="YER")
