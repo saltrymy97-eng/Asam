@@ -1,5 +1,6 @@
-# services/fifo_service.py – منطق FIFO للمخزون (إصدار تجاري: دعم المرتجعات الدقيقة)
+# services/fifo_service.py – منطق FIFO للمخزون (إصدار تجاري: دعم المرتجعات الدقيقة وتواريخ العمليات)
 import sqlite3
+from datetime import date
 from database import get_connection
 
 def create_fifo_tables():
@@ -107,13 +108,17 @@ def get_fifo_cost(product_id, quantity, conn=None):
         return None
     return total_cost
 
-def consume_fifo(product_id, quantity, conn=None, reference=""):
-    """استهلاك المخزون حسب FIFO (يعمل ضمن معاملة خارجية)"""
+def consume_fifo(product_id, quantity, consumption_date=None, conn=None, reference=""):
+    """استهلاك المخزون حسب FIFO (يعمل ضمن معاملة خارجية ويدعم تحديد التاريخ)"""
     own_conn = False
     if conn is None:
         conn = get_connection()
         own_conn = True
         conn.execute("BEGIN")
+
+    # تحديد تاريخ اليوم كافتراضي إذا لم يتم تمرير تاريخ من الواجهة
+    if consumption_date is None:
+        consumption_date = date.today().strftime("%Y-%m-%d")
 
     try:
         batches = get_available_batches(product_id, conn)
@@ -128,9 +133,10 @@ def consume_fifo(product_id, quantity, conn=None, reference=""):
             cost = qty_to_take * batch["unit_cost"]
             total_cost += cost
 
+            # تم استبدال date('now') بالمتغير consumption_date
             conn.execute(
-                "INSERT INTO fifo_consumptions (batch_id, consumed_qty, consumption_date, reference) VALUES (?,?, date('now'), ?)",
-                (batch["id"], qty_to_take, reference)
+                "INSERT INTO fifo_consumptions (batch_id, consumed_qty, consumption_date, reference) VALUES (?,?,?,?)",
+                (batch["id"], qty_to_take, consumption_date, reference)
             )
             remaining_to_consume -= qty_to_take
 
@@ -151,9 +157,7 @@ def consume_fifo(product_id, quantity, conn=None, reference=""):
             conn.close()
 
 def return_fifo_to_original_batch(product_id, quantity, sale_invoice_id, conn=None, reference=""):
-    """
-    إعادة بضاعة مرتجع المبيعات لنفس دفعة الشراء الأصلية
-    """
+    """إعادة بضاعة مرتجع المبيعات لنفس دفعة الشراء الأصلية"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -226,17 +230,21 @@ def return_fifo_to_original_batch(product_id, quantity, sale_invoice_id, conn=No
         if own_conn:
             conn.close()
 
-def return_fifo(product_id, quantity, unit_cost, conn=None, reference=""):
-    """إعادة بضاعة للمخزون (إنشاء دفعة جديدة - للإصدار الأساسي)"""
+def return_fifo(product_id, quantity, unit_cost, batch_date=None, conn=None, reference=""):
+    """إعادة بضاعة للمخزون (إنشاء دفعة جديدة مع دعم تحديد التاريخ)"""
     own_conn = False
     if conn is None:
         conn = get_connection()
         own_conn = True
         conn.execute("BEGIN")
+        
+    if batch_date is None:
+        batch_date = date.today().strftime("%Y-%m-%d")
+        
     try:
         conn.execute(
-            "INSERT INTO inventory_batches (product_id, quantity, unit_cost, batch_date, reference) VALUES (?,?,?, date('now'), ?)",
-            (product_id, quantity, unit_cost, reference)
+            "INSERT INTO inventory_batches (product_id, quantity, unit_cost, batch_date, reference) VALUES (?,?,?,?,?)",
+            (product_id, quantity, unit_cost, batch_date, reference)
         )
         if own_conn:
             conn.commit()
@@ -249,13 +257,17 @@ def return_fifo(product_id, quantity, unit_cost, conn=None, reference=""):
         if own_conn:
             conn.close()
 
-def remove_last_batch(product_id, quantity, conn=None, reference=""):
-    """خصم دفعة من المخزون حسب LIFO (مرتجع مشتريات)"""
+def remove_last_batch(product_id, quantity, consumption_date=None, conn=None, reference=""):
+    """خصم دفعة من المخزون حسب LIFO (مرتجع مشتريات مع دعم تحديد التاريخ)"""
     own_conn = False
     if conn is None:
         conn = get_connection()
         own_conn = True
         conn.execute("BEGIN")
+        
+    if consumption_date is None:
+        consumption_date = date.today().strftime("%Y-%m-%d")
+        
     try:
         batches = get_available_batches(product_id, conn)
         if not batches:
@@ -268,9 +280,10 @@ def remove_last_batch(product_id, quantity, conn=None, reference=""):
                 conn.rollback()
             return None, f"الكمية المطلوبة ({quantity}) أكبر من أحدث دفعة ({latest['remaining']})"
         cost = quantity * latest["unit_cost"]
+        
         conn.execute(
-            "INSERT INTO fifo_consumptions (batch_id, consumed_qty, consumption_date, reference) VALUES (?,?, date('now'), ?)",
-            (latest["id"], quantity, reference)
+            "INSERT INTO fifo_consumptions (batch_id, consumed_qty, consumption_date, reference) VALUES (?,?,?,?)",
+            (latest["id"], quantity, consumption_date, reference)
         )
         if own_conn:
             conn.commit()
