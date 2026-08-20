@@ -32,7 +32,7 @@ def apply_enterprise_theme():
         /* تصميم التبويب النشط ليطابق شاشة التسويات ومراكز التكلفة */
         .stTabs [aria-selected="true"] {
             color: #F8FAFC !important;
-            border-bottom: 2px solid #EF4444 !important; /* خط سفلي أحمر/برتقالي أنيق */
+            border-bottom: 2px solid #EF4444 !important;
         }
         .stTabs [aria-selected="true"] p {
             color: #F8FAFC !important;
@@ -65,23 +65,12 @@ def show():
     # تفعيل الثيم المتناسق
     apply_enterprise_theme()
 
-    # إنشاء بطاقة الترويسة الفاخرة (مطابقة لشاشة مراكز التكلفة)
+    # الترويسة الفاخرة بدون فراغات أو تعليقات لتجنب خطأ Streamlit Markdown
     st.markdown("""
-    <div style="background: linear-gradient(135deg, rgba(26, 26, 64, 0.9) 0%, rgba(15, 23, 42, 0.95) 100%); 
-                padding: 40px 20px; 
-                border-radius: 20px; 
-                box-shadow: 0 10px 30px rgba(0,0,0,0.4); 
-                text-align: center; 
-                margin-bottom: 40px; 
-                border: 1px solid rgba(139, 92, 246, 0.15);
-                position: relative;
-                overflow: hidden;">
-        
-        <!-- تأثير توهج في الخلفية -->
+    <div style="background: linear-gradient(135deg, rgba(26, 26, 64, 0.9) 0%, rgba(15, 23, 42, 0.95) 100%); padding: 40px 20px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.4); text-align: center; margin-bottom: 40px; border: 1px solid rgba(139, 92, 246, 0.15); position: relative; overflow: hidden;">
         <div style="position: absolute; top: -50px; left: 50%; transform: translateX(-50%); width: 200px; height: 200px; background: radial-gradient(circle, rgba(139, 92, 246, 0.2) 0%, rgba(0,0,0,0) 70%); border-radius: 50%; z-index: 0;"></div>
-        
         <div style="position: relative; z-index: 1;">
-            <h1 style="color: #F8FAFC; font-size: 3rem; margin: 0 0 10px 0; font-weight: bold; text-shadow: 0 0 25px rgba(139, 92, 246, 0.7);">📦 وحدة المخزون (FIFO)</h1>
+            <h1 style="color: #F8FAFC; font-size: 2.8rem; margin: 0 0 10px 0; font-weight: bold; text-shadow: 0 0 25px rgba(139, 92, 246, 0.7);">📦 وحدة المخزون (FIFO)</h1>
             <p style="color: #94A3B8; font-size: 1.1rem; margin: 0;">نظام متقدم لإدارة وتقييم المخزون المالي بذكاء ودقة</p>
         </div>
     </div>
@@ -97,7 +86,6 @@ def show():
     product_dict = {p['id']: p['name'] for p in products}
     product_ids = list(product_dict.keys())
 
-    # تم تغيير الأيقونات لتكون أنظف وأكثر احترافية
     tab1, tab2, tab3 = st.tabs(["📥 تسجيل دفعة شراء", "📤 صرف مخزني", "📊 تفاصيل الدفعات (التقييم)"])
 
     with tab1:
@@ -114,7 +102,7 @@ def show():
         ref = col4.text_input("رقم المرجع (اختياري)")
         
         st.markdown("<br>", unsafe_allow_html=True)
-        # زر بتصميم يتناسب مع النظام
+        
         st.markdown("""
         <style>
         div[data-testid="stButton"] button {
@@ -200,7 +188,6 @@ def show():
             )
             
             total_cost = df["إجمالي القيمة"].sum()
-            # بطاقة إجمالي فخمة
             st.markdown(f"""
             <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); padding: 20px; border-radius: 12px; margin-top: 20px; display: flex; justify-content: space-between; align-items: center;">
                 <span style="color: #94A3B8; font-size: 1.2rem;">إجمالي القيمة الدفترية للمخزون:</span>
