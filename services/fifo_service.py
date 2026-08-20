@@ -1,4 +1,4 @@
-# services/fifo_service.py – منطق FIFO للمخزون (إصدار تجاري: دعم المرتجعات الدقيقة وتواريخ العمليات)
+# services/fifo_service.py – منطق FIFO للمخزون (إصدار تجاري متكامل ومستقر)
 import sqlite3
 from datetime import date
 from database import get_connection
@@ -31,19 +31,23 @@ def create_fifo_tables():
     conn.close()
 
 def add_batch(product_id, quantity, unit_cost, batch_date, reference="", conn=None):
-    """إضافة دفعة شراء مع حماية العملية (يدعم اتصال خارجي)"""
+    """إضافة دفعة شراء مع حماية العملية واعتماد الحفظ"""
     own_conn = False
     if conn is None:
         conn = get_connection()
         own_conn = True
     try:
-        # ملاحظة: لا نبدأ معاملة هنا، نتركها للمستدعي
         conn.execute(
             "INSERT INTO inventory_batches (product_id, quantity, unit_cost, batch_date, reference) VALUES (?,?,?,?,?)",
             (product_id, quantity, unit_cost, batch_date, reference)
         )
+        # تم إضافة الـ commit لحفظ البيانات فعلياً في قاعدة البيانات
+        if own_conn:
+            conn.commit()
         return True, None
     except Exception as e:
+        if own_conn:
+            conn.rollback()
         return False, str(e)
     finally:
         if own_conn:
@@ -94,7 +98,7 @@ def get_consumed_batches(product_id, conn=None):
     return batches
 
 def get_fifo_cost(product_id, quantity, conn=None):
-    """حساب تكلفة الكمية المطلوبة حسب FIFO (باستخدام الاتصال المعطى)"""
+    """حساب تكلفة الكمية المطلوبة حسب FIFO"""
     batches = get_available_batches(product_id, conn)
     total_cost = 0.0
     remaining = quantity
@@ -109,14 +113,13 @@ def get_fifo_cost(product_id, quantity, conn=None):
     return total_cost
 
 def consume_fifo(product_id, quantity, consumption_date=None, conn=None, reference=""):
-    """استهلاك المخزون حسب FIFO (يعمل ضمن معاملة خارجية ويدعم تحديد التاريخ)"""
+    """استهلاك المخزون حسب FIFO (يدعم التواريخ المخصصة)"""
     own_conn = False
     if conn is None:
         conn = get_connection()
         own_conn = True
         conn.execute("BEGIN")
 
-    # تحديد تاريخ اليوم كافتراضي إذا لم يتم تمرير تاريخ من الواجهة
     if consumption_date is None:
         consumption_date = date.today().strftime("%Y-%m-%d")
 
@@ -133,7 +136,6 @@ def consume_fifo(product_id, quantity, consumption_date=None, conn=None, referen
             cost = qty_to_take * batch["unit_cost"]
             total_cost += cost
 
-            # تم استبدال date('now') بالمتغير consumption_date
             conn.execute(
                 "INSERT INTO fifo_consumptions (batch_id, consumed_qty, consumption_date, reference) VALUES (?,?,?,?)",
                 (batch["id"], qty_to_take, consumption_date, reference)
