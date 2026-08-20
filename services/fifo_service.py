@@ -31,17 +31,32 @@ def create_fifo_tables():
     conn.close()
 
 def add_batch(product_id, quantity, unit_cost, batch_date, reference="", conn=None):
-    """إضافة دفعة شراء مع حماية العملية واعتماد الحفظ"""
+    """إضافة دفعة شراء مع ربطها تلقائياً بالمخزون الفعلي"""
     own_conn = False
     if conn is None:
         conn = get_connection()
         own_conn = True
+        conn.execute("BEGIN")
     try:
+        # 1. تسجيل الدفعة المالية (FIFO)
         conn.execute(
             "INSERT INTO inventory_batches (product_id, quantity, unit_cost, batch_date, reference) VALUES (?,?,?,?,?)",
             (product_id, quantity, unit_cost, batch_date, reference)
         )
-        # تم إضافة الـ commit لحفظ البيانات فعلياً في قاعدة البيانات
+        
+        # --- التكامل مع النظام العام للمخزون ---
+        # 2. تسجيل الحركة في سجل حركات المخزون (in)
+        conn.execute(
+            "INSERT INTO stock_movements (product_id, type, quantity, date, reference) VALUES (?, ?, ?, ?, ?)",
+            (product_id, "in", quantity, batch_date, reference)
+        )
+        # 3. تحديث الرصيد الكلي في جدول المنتجات
+        conn.execute(
+            "UPDATE products SET quantity = quantity + ? WHERE id = ?",
+            (quantity, product_id)
+        )
+        # ----------------------------------------
+        
         if own_conn:
             conn.commit()
         return True, None
@@ -54,7 +69,7 @@ def add_batch(product_id, quantity, unit_cost, batch_date, reference="", conn=No
             conn.close()
 
 def get_available_batches(product_id, conn=None):
-    """جلب الدفعات المتاحة لمنتج معين (يدعم اتصال خارجي)"""
+    """جلب الدفعات المتاحة لمنتج معين"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -113,7 +128,7 @@ def get_fifo_cost(product_id, quantity, conn=None):
     return total_cost
 
 def consume_fifo(product_id, quantity, consumption_date=None, conn=None, reference=""):
-    """استهلاك المخزون حسب FIFO (يدعم التواريخ المخصصة)"""
+    """استهلاك المخزون حسب FIFO مع ربطه بسجل الحركات العام"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -136,6 +151,7 @@ def consume_fifo(product_id, quantity, consumption_date=None, conn=None, referen
             cost = qty_to_take * batch["unit_cost"]
             total_cost += cost
 
+            # تسجيل استهلاك الدفعة لتقييم FIFO
             conn.execute(
                 "INSERT INTO fifo_consumptions (batch_id, consumed_qty, consumption_date, reference) VALUES (?,?,?,?)",
                 (batch["id"], qty_to_take, consumption_date, reference)
@@ -146,6 +162,18 @@ def consume_fifo(product_id, quantity, consumption_date=None, conn=None, referen
             if own_conn:
                 conn.rollback()
             return None, remaining_to_consume
+
+        # --- التكامل مع النظام العام للمخزون ---
+        # نضع حركة المخزون الكلية خارج حلقة التكرار لكي تظهر كحركة واحدة في سجل الحركات
+        conn.execute(
+            "INSERT INTO stock_movements (product_id, type, quantity, date, reference) VALUES (?, ?, ?, ?, ?)",
+            (product_id, "out", quantity, consumption_date, reference)
+        )
+        conn.execute(
+            "UPDATE products SET quantity = quantity - ? WHERE id = ?",
+            (quantity, product_id)
+        )
+        # ----------------------------------------
 
         if own_conn:
             conn.commit()
@@ -184,14 +212,15 @@ def return_fifo_to_original_batch(product_id, quantity, sale_invoice_id, conn=No
         total_consumed = sum(c["consumed_qty"] for c in consumptions)
         
         return_ref = f"مرتجع مبيعات"
-        already_returned = conn.execute("""
+        already_returned_query = conn.execute("""
             SELECT COALESCE(SUM(fc2.consumed_qty), 0)
             FROM fifo_consumptions fc2
             WHERE fc2.reference LIKE ? AND fc2.batch_id IN (
                 SELECT c.batch_id FROM fifo_consumptions c WHERE c.reference = ?
             )
-        """, (f"%{return_ref}%", sale_ref)).fetchone()[0]
-
+        """, (f"%{return_ref}%", sale_ref)).fetchone()
+        
+        already_returned = already_returned_query[0] if already_returned_query else 0
         available_to_return = total_consumed - already_returned
 
         if quantity > available_to_return:
@@ -220,6 +249,17 @@ def return_fifo_to_original_batch(product_id, quantity, sale_invoice_id, conn=No
 
             remaining -= take
 
+        # --- التكامل مع النظام العام للمخزون ---
+        conn.execute(
+            "INSERT INTO stock_movements (product_id, type, quantity, date, reference) VALUES (?, ?, ?, date('now'), ?)",
+            (product_id, "in", quantity, reference)
+        )
+        conn.execute(
+            "UPDATE products SET quantity = quantity + ? WHERE id = ?",
+            (quantity, product_id)
+        )
+        # ----------------------------------------
+
         if own_conn:
             conn.commit()
         return total_cost, 0
@@ -233,34 +273,11 @@ def return_fifo_to_original_batch(product_id, quantity, sale_invoice_id, conn=No
             conn.close()
 
 def return_fifo(product_id, quantity, unit_cost, batch_date=None, conn=None, reference=""):
-    """إعادة بضاعة للمخزون (إنشاء دفعة جديدة مع دعم تحديد التاريخ)"""
-    own_conn = False
-    if conn is None:
-        conn = get_connection()
-        own_conn = True
-        conn.execute("BEGIN")
-        
-    if batch_date is None:
-        batch_date = date.today().strftime("%Y-%m-%d")
-        
-    try:
-        conn.execute(
-            "INSERT INTO inventory_batches (product_id, quantity, unit_cost, batch_date, reference) VALUES (?,?,?,?,?)",
-            (product_id, quantity, unit_cost, batch_date, reference)
-        )
-        if own_conn:
-            conn.commit()
-        return True, None
-    except Exception as e:
-        if own_conn:
-            conn.rollback()
-        return False, str(e)
-    finally:
-        if own_conn:
-            conn.close()
+    """إعادة بضاعة للمخزون (مشتريات جديدة)"""
+    return add_batch(product_id, quantity, unit_cost, batch_date, reference, conn)
 
 def remove_last_batch(product_id, quantity, consumption_date=None, conn=None, reference=""):
-    """خصم دفعة من المخزون حسب LIFO (مرتجع مشتريات مع دعم تحديد التاريخ)"""
+    """خصم دفعة من المخزون حسب LIFO (مرتجع مشتريات)"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -287,6 +304,18 @@ def remove_last_batch(product_id, quantity, consumption_date=None, conn=None, re
             "INSERT INTO fifo_consumptions (batch_id, consumed_qty, consumption_date, reference) VALUES (?,?,?,?)",
             (latest["id"], quantity, consumption_date, reference)
         )
+        
+        # --- التكامل مع النظام العام للمخزون ---
+        conn.execute(
+            "INSERT INTO stock_movements (product_id, type, quantity, date, reference) VALUES (?, ?, ?, ?, ?)",
+            (product_id, "out", quantity, consumption_date, reference)
+        )
+        conn.execute(
+            "UPDATE products SET quantity = quantity - ? WHERE id = ?",
+            (quantity, product_id)
+        )
+        # ----------------------------------------
+
         if own_conn:
             conn.commit()
         return cost, 0
