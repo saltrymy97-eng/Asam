@@ -73,7 +73,7 @@ def query_groq(system_prompt, user_query, model="openai/gpt-oss-120b", max_token
                 {"role": "user", "content": user_query}
             ],
             temperature=temperature,
-            max_tokens=min(max_tokens, 1500)
+            max_tokens=min(max_tokens, 5000)
         )
         return response.choices[0].message.content
     except BadRequestError as e:
