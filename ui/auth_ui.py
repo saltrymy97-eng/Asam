@@ -19,8 +19,17 @@ def apply_ultra_premium_css():
     css_code = f"""<style>
 @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap');
 
+/* تعميم الخط مع حماية أيقونات النظام من التشويه */
 * {{
 font-family: 'Tajawal', sans-serif !important;
+}}
+
+/* إصلاح مشكلة ظهور كلمة visibility بإعادة خط الأيقونات الأصلي */
+.material-symbols-rounded, 
+.material-icons,
+[data-testid="stIconMaterial"],
+span[class*="material"] {{
+font-family: 'Material Symbols Rounded', 'Material Icons' !important;
 }}
 
 @keyframes subtleOrbit {{
@@ -51,7 +60,7 @@ border: 1px solid rgba(255, 255, 255, 0.08) !important;
 border-top: 1px solid rgba(167, 139, 250, 0.3) !important;
 border-bottom: 1px solid rgba(37, 99, 235, 0.2) !important;
 border-radius: 40px !important;
-padding: 3rem 2rem !important; /* تحسين الحواف لشاشات الجوال */
+padding: 3rem 2rem !important; 
 box-shadow: 0 40px 100px rgba(0, 0, 0, 0.95), inset 0 1px 0 rgba(255,255,255,0.1), 0 0 50px rgba(124, 58, 237, 0.15) !important;
 }}
 
@@ -123,7 +132,7 @@ box-shadow: 0 10px 25px rgba(0,0,0,0.5);
 }}
 
 /* ======================================================= */
-/* 🔮 هندسة الجرم السيادي - تم التكبير بشكل ملحوظ 🔮 */
+/* 🔮 هندسة الجرم السيادي 🔮 */
 /* ======================================================= */
 @keyframes floatAndPulse {{
 0% {{ transform: translateY(0) rotateX(5deg) rotateY(-5deg); box-shadow: 0 0 50px rgba(124, 58, 237, 0.4), inset 0 10px 30px rgba(124, 58, 237, 0.3), inset 0 -10px 30px rgba(37, 99, 235, 0.3); }}
@@ -140,8 +149,8 @@ box-shadow: 0 10px 25px rgba(0,0,0,0.5);
 
 .hukma-orb {{
 position: relative;
-width: 230px; /* تم التكبير هنا */
-height: 230px; /* تم التكبير هنا */
+width: 230px; 
+height: 230px; 
 margin: 0 auto 2.5rem auto;
 background: linear-gradient(135deg, rgba(124,58,237,0.2) 0%, rgba(37,99,235,0.1) 100%);
 backdrop-filter: blur(20px); 
@@ -173,7 +182,7 @@ z-index: 1;
 }}
 
 .hukma-text {{
-font-size: 4.8rem; /* تكبير النص ليتناسب مع الحجم الجديد */
+font-size: 3.2rem; /* تم تصغير النص ليتناسب تماماً ويحتويه الجرم الدائري */
 font-weight: 900;
 background: linear-gradient(135deg, #FFFFFF 10%, #E9D5FF 50%, #7C3AED 100%);
 -webkit-background-clip: text;
@@ -242,7 +251,6 @@ def render_premium_header(is_change_password=False):
 def login_form():
     render_premium_header(is_change_password=False)
     
-    # تم تعديل التوزيع ليكون أكثر تناسقاً في الجوال
     spacer_left, main_col, spacer_right = st.columns([0.5, 3, 0.5])
     
     with main_col:
@@ -253,7 +261,6 @@ def login_form():
             password = st.text_input("🔒 رمز المرور السري", type="password", placeholder="••••••••", key="login_pass")
             st.markdown("<div style='margin-bottom: 45px;'></div>", unsafe_allow_html=True)
             
-            # عرض الأزرار في الجوال والكمبيوتر بشكل أفضل
             login_btn = st.button("🚀 مصادقة والدخول", use_container_width=True, type="primary")
             st.markdown("<div style='margin-bottom: 15px;'></div>", unsafe_allow_html=True)
             
@@ -270,7 +277,6 @@ def login_form():
                 else:
                     st.error("❌ فشلت المصادقة المباشرة. يرجى مراجعة البيانات المدخلة.")
     
-    # توقيع المطور محاذى بالكامل لليسار في الكود
     dev_html = """<div class="dev-signature">
 حوكمة ERP • نظام محاسبي متكامل<br>
 <div style="margin-top: 10px;">تطوير: <span class="dev-name">سالم التريمي</span></div>
