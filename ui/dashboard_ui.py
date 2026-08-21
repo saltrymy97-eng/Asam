@@ -1,328 +1,276 @@
-# ui/dashboard_ui.py – لوحة معلومات ERP مؤسسية فاخرة (Modern Enterprise SaaS)
+# ui/dashboard_ui.py – لوحة معلومات ERP (نسخة الفخامة المطلقة - Premium Glassmorphism)
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 from datetime import datetime
 
-# ================= إعدادات الصفحة =================
-st.set_page_config(page_title="ERP Dashboard", layout="wide", initial_sidebar_state="expanded")
+# ================= ألوان الهوية الفاخرة (Premium Palette) =================
+BG_DEEP = "#05070A"           # أسود ليلي عميق جداً
+GLASS_BG = "rgba(18, 23, 35, 0.45)" # زجاج داكن شبه شفاف
+GLASS_BORDER = "rgba(255, 255, 255, 0.08)" # حدود زجاجية ناعمة
 
-# محاولة استدعاء الخدمات (مع وضع بيانات وهمية ذكية كبديل)
-try:
-    from services.dashboard_service import (
-        get_kpi_cards, get_quick_stats, get_alerts,
-        get_inventory_by_category, get_monthly_sales,
-        get_low_stock_products, get_recent_activities
-    )
-except ImportError:
-    pass
+GOLD_ACCENT = "#D4AF37"       # ذهبي ملكي (Royal Gold)
+GOLD_GLOW = "rgba(212, 175, 55, 0.4)"
+PURPLE_ACCENT = "#9333EA"     # بنفسجي مخملي
+PURPLE_GLOW = "rgba(147, 51, 234, 0.4)"
 
-# ================= الألوان المؤسسية الفاخرة =================
-# تم اختيار ألوان مريحة للعين ومناسبة لبيئة العمل (Modern Slate Dark Theme)
-BG_MAIN = "#0F172A"       # خلفية رئيسية كحلية داكنة جداً
-BG_CARD = "#1E293B"       # خلفية البطاقات
-BORDER_COLOR = "#334155"  # لون الحدود
-TEXT_PRIMARY = "#F8FAFC"  # أبيض ناصع للنصوص الأساسية
-TEXT_MUTED = "#94A3B8"    # رمادي فاتح للنصوص الثانوية
-
-# ألوان الدلالات (Semantic Colors) هادئة واحترافية
-ACCENT_BLUE = "#3B82F6"   # أزرق مؤسسي
-ACCENT_GREEN = "#10B981"  # أخضر للنجاح والنمو
-ACCENT_RED = "#EF4444"    # أحمر للتنبيهات
-ACCENT_AMBER = "#F59E0B"  # برتقالي للتحذيرات
-ACCENT_PURPLE = "#8B5CF6" # بنفسجي هادئ
+TEXT_PRIMARY = "#F8FAFC"
+TEXT_SECONDARY = "#64748B"
 
 def render_html(html_code: str):
     st.markdown(html_code, unsafe_allow_html=True)
 
-def inject_enterprise_css():
-    """CSS مؤسسي فاخر: نظيف، هادئ، يركز على البيانات دون تشتيت"""
+def inject_premium_css():
+    """CSS فائق الفخامة يدمج الزجاج المصنفر، الإضاءة المحيطية، والحركات الناعمة"""
     css = f"""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;900&display=swap');
 
-    /* الخط الأساسي وإعدادات عامة */
-    * {{
-        font-family: 'Tajawal', sans-serif !important;
-        box-sizing: border-box;
-    }}
+    * {{ font-family: 'Tajawal', sans-serif !important; box-sizing: border-box; }}
 
-    /* التخلص من المسافات العلوية الزائدة في Streamlit */
-    .block-container {{
-        direction: rtl;
-        text-align: right;
-        padding-top: 2rem !important;
-        padding-bottom: 2rem !important;
-        max-width: 1400px;
-    }}
-    
-    /* إخفاء عناصر Streamlit الافتراضية للظهور بشكل تطبيق مستقل */
-    #MainMenu {{visibility: hidden;}}
-    footer {{visibility: hidden;}}
-    header {{visibility: hidden;}}
-
-    /* الشبكات (Grids) */
-    .kpi-grid {{
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-        gap: 1.2rem;
-        margin-bottom: 1.5rem;
+    /* خلفية النظام - إضاءة محيطية مخفية (Ambient Glow) */
+    .stApp {{
+        background-color: {BG_DEEP} !important;
+        background-image: 
+            radial-gradient(circle at 15% 0%, {PURPLE_GLOW} 0%, transparent 25%),
+            radial-gradient(circle at 85% 100%, {GOLD_GLOW} 0%, transparent 25%) !important;
+        background-attachment: fixed;
     }}
 
-    /* تصميم البطاقة المؤسسية */
-    .enterprise-card {{
-        background-color: {BG_CARD};
-        border: 1px solid {BORDER_COLOR};
-        border-radius: 12px;
-        padding: 1.25rem;
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-    }}
-    
-    .enterprise-card:hover {{
-        transform: translateY(-2px);
-        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-        border-color: #475569;
-    }}
+    .block-container {{ direction: rtl; text-align: right; padding-top: 1rem !important; max-width: 1400px; }}
+    #MainMenu, footer, header {{ visibility: hidden; display: none; }}
 
-    /* ترويسة البطاقة */
-    .card-header {{
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 0.75rem;
-    }}
-    
-    .card-title {{
-        color: {TEXT_MUTED};
-        font-size: 0.95rem;
-        font-weight: 600;
-        letter-spacing: 0px;
-    }}
-    
-    .card-icon-wrapper {{
-        background-color: rgba(255, 255, 255, 0.05);
-        border-radius: 8px;
-        width: 36px;
-        height: 36px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 1.1rem;
-    }}
-
-    /* قيمة البطاقة */
-    .card-value {{
+    /* ================= النصوص الفاخرة ================= */
+    .premium-title {{
         color: {TEXT_PRIMARY};
-        font-size: 1.75rem;
-        font-weight: 700;
-        margin-bottom: 0.25rem;
+        font-size: clamp(2rem, 5vw, 3.2rem);
+        font-weight: 900;
+        letter-spacing: -1px;
+        margin: 0;
+        background: linear-gradient(to left, #FFFFFF, #94A3B8);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        text-shadow: 0 10px 30px rgba(147, 51, 234, 0.3);
     }}
 
-    /* شارة التغير (Trend Badge) */
-    .trend-badge {{
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        padding: 2px 8px;
-        border-radius: 9999px;
-        font-size: 0.75rem;
-        font-weight: 600;
+    .premium-subtitle {{
+        color: {GOLD_ACCENT};
+        font-size: 1.1rem;
+        font-weight: 500;
+        letter-spacing: 1px;
+        margin-top: 5px;
+        text-shadow: 0 0 15px {GOLD_GLOW};
     }}
-    .trend-positive {{ background-color: rgba(16, 185, 129, 0.1); color: {ACCENT_GREEN}; }}
-    .trend-negative {{ background-color: rgba(239, 68, 68, 0.1); color: {ACCENT_RED}; }}
-    .trend-neutral {{ background-color: rgba(148, 163, 184, 0.1); color: {TEXT_MUTED}; }}
 
-    /* القوائم والتنبيهات */
-    .list-item {{
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 0.75rem 0;
-        border-bottom: 1px solid {BORDER_COLOR};
+    /* ================= البطاقات الزجاجية (Glassmorphism Cards) ================= */
+    .glass-card {{
+        background: {GLASS_BG};
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid {GLASS_BORDER};
+        border-top: 1px solid rgba(255,255,255,0.15); /* إضاءة علوية طفيفة */
+        border-radius: 24px;
+        padding: 1.8rem;
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        position: relative;
+        overflow: hidden;
     }}
-    .list-item:last-child {{ border-bottom: none; padding-bottom: 0; }}
+
+    /* تأثير الانعكاس عند تمرير الماوس */
+    .glass-card::before {{
+        content: ""; position: absolute; top: 0; left: -100%; width: 50%; height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.03), transparent);
+        transition: left 0.7s ease;
+    }}
     
-    .alert-box {{
-        background-color: rgba(239, 68, 68, 0.05);
-        border-right: 3px solid {ACCENT_RED};
-        padding: 1rem;
-        border-radius: 8px;
-        margin-bottom: 1rem;
-        display: flex;
-        align-items: flex-start;
-        gap: 12px;
+    .glass-card:hover::before {{ left: 150%; }}
+    .glass-card:hover {{
+        transform: translateY(-5px);
+        border-color: rgba(147, 51, 234, 0.3);
+        box-shadow: 0 30px 60px -10px rgba(147, 51, 234, 0.2);
+    }}
+
+    /* ================= الأزرار الاحترافية ================= */
+    .nav-container {{
+        display: flex; gap: 12px; justify-content: center; margin: 2rem 0 3rem 0;
+        background: rgba(10, 15, 25, 0.5); padding: 8px; border-radius: 100px;
+        border: 1px solid {GLASS_BORDER};
+        backdrop-filter: blur(10px);
+        width: fit-content; margin-left: auto; margin-right: auto;
+    }}
+
+    .nav-btn {{
+        padding: 12px 28px; border-radius: 100px; font-weight: 700; font-size: 0.95rem;
+        transition: all 0.3s ease; display: inline-flex; align-items: center; gap: 8px;
+        cursor: pointer; color: {TEXT_PRIMARY}; border: 1px solid transparent;
+    }}
+
+    .nav-btn.active {{
+        background: linear-gradient(135deg, {GOLD_ACCENT}, #B48600);
+        color: #000 !important;
+        box-shadow: 0 0 20px {GOLD_GLOW};
+    }}
+
+    .nav-btn:not(.active):hover {{
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid {GLASS_BORDER};
+    }}
+
+    /* ================= الجداول الفاخرة ================= */
+    .lux-table-row {{
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 16px 20px; margin-bottom: 8px;
+        background: rgba(255,255,255,0.02);
+        border: 1px solid transparent;
+        border-radius: 16px;
+        transition: all 0.3s ease;
+    }}
+    .lux-table-row:hover {{
+        background: rgba(255,255,255,0.05);
+        border: 1px solid rgba(255,255,255,0.1);
+        transform: scale(1.01);
+    }}
+    
+    .status-badge {{
+        padding: 4px 12px; border-radius: 8px; font-size: 0.8rem; font-weight: 700;
     }}
     </style>
     """
     render_html(css)
 
-def build_kpi_card(title, value, icon, trend_text="", trend_type="neutral"):
-    """دالة لإنشاء بطاقة عرض بيانات هادئة واحترافية"""
-    trend_html = ""
-    if trend_text:
-        trend_class = f"trend-{trend_type}"
-        trend_html = f'<div class="trend-badge {trend_class}">{trend_text}</div>'
-        
+def build_metric(label, value, icon, trend, trend_color, glow_color):
     return f"""
-    <div class="enterprise-card">
-        <div class="card-header">
-            <span class="card-title">{title}</span>
-            <div class="card-icon-wrapper">{icon}</div>
+    <div class="glass-card">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
+            <div style="color: {TEXT_SECONDARY}; font-weight: 600; font-size: 1rem;">{label}</div>
+            <div style="background: linear-gradient(135deg, {glow_color}20, transparent); padding: 10px; border-radius: 12px; border: 1px solid {glow_color}40; color: {glow_color}; font-size: 1.2rem; box-shadow: 0 0 15px {glow_color}20;">
+                {icon}
+            </div>
         </div>
-        <div class="card-value">{value}</div>
-        {trend_html}
+        <div style="color: {TEXT_PRIMARY}; font-size: 2.2rem; font-weight: 900; letter-spacing: 0.5px; margin-bottom: 0.5rem; text-shadow: 0 2px 10px rgba(255,255,255,0.1);">
+            {value}
+        </div>
+        <div style="display: inline-flex; align-items: center; gap: 6px; background: {trend_color}15; color: {trend_color}; padding: 4px 10px; border-radius: 6px; font-size: 0.85rem; font-weight: 700;">
+            {trend}
+        </div>
     </div>
     """
 
 def show():
-    # 1. تهيئة التصميم والبيانات الوهمية
-    inject_enterprise_css()
-    user_name = st.session_state.user.get("full_name", "إدارة النظام") if 'user' in st.session_state else "إدارة النظام"
+    inject_premium_css()
     
-    # Fallback Data
-    kpi = globals().get('get_kpi_cards', lambda: {"net_income": 125000, "total_sales": 240000, "total_purchases": 85000, "products_count": 1240, "customers_count": 312})()
-    quick = globals().get('get_quick_stats', lambda: {"low_stock": 3, "today_sales": 18500, "today_purchases": 4200, "total_customers": 312})()
-    alerts = globals().get('get_alerts', lambda: [{"title": "تنبيه سيولة", "message": "الرصيد النقدي في الصندوق الرئيسي أقل من الحد المسموح به.", "icon": "⚠️"}])()
-
-    # 2. منطقة الترحيب (Header) - نظيفة ومباشرة
+    # 1. الترويسة الرئيسية (مركزة ومبهرة)
     render_html(f"""
-    <div style="margin-bottom: 2rem; display: flex; justify-content: space-between; align-items: flex-end;">
-        <div>
-            <h1 style="color: {TEXT_PRIMARY}; font-size: 2rem; font-weight: 700; margin: 0 0 0.2rem 0;">نظرة عامة على النظام</h1>
-            <p style="color: {TEXT_MUTED}; font-size: 0.95rem; margin: 0;">مرحباً بك مجدداً، {user_name} • {datetime.now().strftime('%d %B %Y')}</p>
-        </div>
-        <div>
-            <span style="background-color: {ACCENT_BLUE}; color: white; padding: 0.5rem 1rem; border-radius: 6px; font-weight: 600; font-size: 0.85rem; cursor: pointer;">
-                + تقرير جديد
-            </span>
-        </div>
+    <div style="text-align: center; padding: 2rem 0;">
+        <h1 class="premium-title">مركز التحكم الاستراتيجي</h1>
+        <div class="premium-subtitle">نظرة مالية ومخزنية شاملة • {datetime.now().strftime('%d %B %Y')}</div>
     </div>
     """)
 
-    # 3. عرض التنبيهات (إن وجدت)
-    if alerts:
-        for alert in alerts:
-            render_html(f"""
-            <div class="alert-box">
-                <div style="font-size: 1.2rem;">{alert['icon']}</div>
-                <div>
-                    <h4 style="color: {TEXT_PRIMARY}; margin: 0 0 4px 0; font-size: 0.95rem;">{alert['title']}</h4>
-                    <p style="color: {TEXT_MUTED}; margin: 0; font-size: 0.85rem;">{alert['message']}</p>
-                </div>
-            </div>
-            """)
-
-    # 4. المؤشرات المالية والتشغيلية (KPIs)
-    st.markdown(f"<h3 style='color: {TEXT_PRIMARY}; font-size: 1.2rem; margin-bottom: 1rem;'>المؤشرات المالية (اليوم)</h3>", unsafe_allow_html=True)
-    
-    kpi_html = f"""
-    <div class="kpi-grid">
-        {build_kpi_card("إجمالي المبيعات", f"{quick['today_sales']:,.0f} ﷼", "📈", "↑ 8.2% مقارنة بالأمس", "positive")}
-        {build_kpi_card("المصروفات والمشتريات", f"{quick['today_purchases']:,.0f} ﷼", "📉", "↓ 2.1% مقارنة بالأمس", "positive")}
-        {build_kpi_card("صافي الدخل السنوي", f"{kpi['net_income']:,.0f} ﷼", "🏦", "↑ 14% النمو السنوي", "positive")}
-        {build_kpi_card("تنبيهات المخزون", str(quick['low_stock']), "📦", "أصناف بحاجة للطلب", "negative" if quick['low_stock'] > 0 else "neutral")}
+    # 2. شريط التنقل الزجاجي
+    render_html(f"""
+    <div class="nav-container">
+        <div class="nav-btn active"><span>💰</span> إدارة الصندوق</div>
+        <div class="nav-btn"><span>📦</span> التسويات المخزنية</div>
+        <div class="nav-btn"><span>🔀</span> فروق الصرف</div>
+        <div class="nav-btn"><span>🏛️</span> حوكمة</div>
     </div>
-    """
-    render_html(kpi_html)
+    """)
 
-    st.write("---") # فاصل خفيف
+    # 3. شبكة المؤشرات (4 بطاقات فائقة الجودة)
+    render_html("<div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;'>")
+    render_html(build_metric("السيولة النقدية المتاحة", "185,400 <span style='font-size:1.2rem; color:#64748B;'>YER</span>", "💵", "↑ 5.4% نمو أسبوعي", "#10B981", GOLD_ACCENT))
+    render_html(build_metric("العمليات المنفذة اليوم", "24", "⚡", "معدل طبيعي", "#3B82F6", PURPLE_ACCENT))
+    render_html(build_metric("تسويات معلقة", "3", "⚠️", "يتطلب إجراء فوري", "#EF4444", "#EF4444"))
+    render_html(build_metric("فروق تقييم العملات", "-5,450 <span style='font-size:1.2rem; color:#64748B;'>SAR</span>", "🔀", "تمت المعالجة الآلية", "#A855F7", PURPLE_ACCENT))
+    render_html("</div>")
 
-    # 5. الرسوم البيانية (Charts) - تم تنظيف الألوان وجعلها احترافية
-    col_chart1, col_chart2 = st.columns([6, 4]) # تقسيم المساحة ليكون الرسم البياني الخطي أكبر
+    # 4. الرسوم البيانية المتطورة (لا توجد خطوط شبكة مزعجة، منحنيات ناعمة)
+    col1, col2 = st.columns([6, 4])
+    chart_font = dict(color=TEXT_SECONDARY, family='Tajawal', size=13)
 
-    chart_font = dict(color=TEXT_MUTED, family='Tajawal', size=12)
+    with col1:
+        render_html(f"<h3 style='color: {TEXT_PRIMARY}; font-weight: 800; font-size: 1.3rem; margin-bottom: 1rem; border-right: 4px solid {PURPLE_ACCENT}; padding-right: 10px;'>التدفقات النقدية (آخر أسبوع)</h3>")
+        
+        # رسم بياني خطي احترافي (Spline Area)
+        fig1 = go.Figure()
+        fig1.add_trace(go.Scatter(
+            x=['السبت', 'الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس'],
+            y=[12000, 19000, 15000, 28000, 22000, 34000],
+            fill='tozeroy',
+            mode='lines+markers',
+            line=dict(color=PURPLE_ACCENT, width=4, shape='spline'),
+            marker=dict(size=10, color=GOLD_ACCENT, line=dict(width=2, color=BG_DEEP)),
+            fillcolor='rgba(147, 51, 234, 0.1)'
+        ))
+        fig1.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+            font=chart_font, margin=dict(t=10, b=10, l=0, r=0),
+            xaxis=dict(showgrid=False, zeroline=False),
+            yaxis=dict(showgrid=True, gridcolor=GLASS_BORDER, zeroline=False),
+            hovermode="x unified"
+        )
+        st.plotly_chart(fig1, use_container_width=True, config={'displayModeBar': False})
 
-    with col_chart1:
-        st.markdown(f"<h3 style='color: {TEXT_PRIMARY}; font-size: 1.1rem;'>التدفقات النقدية (آخر 6 أشهر)</h3>", unsafe_allow_html=True)
-        sales_data = globals().get('get_monthly_sales', lambda: [{'month':'مارس','total':45000}, {'month':'أبريل','total':52000}, {'month':'مايو','total':48000}, {'month':'يونيو','total':61000}])()
-        if sales_data:
-            df = pd.DataFrame(sales_data)
-            fig = px.area(
-                df, x='month', y='total', 
-                color_discrete_sequence=[ACCENT_BLUE]
-            )
-            # إضافة خط مستقيم مع التعبئة ليعطي طابعاً مالياً احترافياً
-            fig.update_traces(mode='lines+markers', line=dict(width=3), fill='tozeroy', marker=dict(size=8, color=BG_CARD, line=dict(width=2, color=ACCENT_BLUE)))
-            
-            fig.update_layout(
-                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                font=chart_font, margin=dict(t=10, b=30, l=10, r=10),
-                xaxis=dict(showgrid=False, title=""),
-                yaxis=dict(showgrid=True, gridcolor=BORDER_COLOR, title="", tickformat=",.0f"),
-                hovermode="x unified"
-            )
-            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+    with col2:
+        render_html(f"<h3 style='color: {TEXT_PRIMARY}; font-weight: 800; font-size: 1.3rem; margin-bottom: 1rem; border-right: 4px solid {GOLD_ACCENT}; padding-right: 10px;'>مراكز العملات الأجنبية</h3>")
+        
+        # رسم بياني دائري احترافي (Thin Donut)
+        fig2 = go.Figure(data=[go.Pie(
+            labels=['دولار أمريكي (USD)', 'ريال سعودي (SAR)', 'يورو (EUR)'],
+            values=[55, 35, 10],
+            hole=0.8, # حلقة نحيفة جداً لفخامة أكثر
+            marker=dict(colors=[PURPLE_ACCENT, GOLD_ACCENT, '#3B82F6'], line=dict(color=BG_DEEP, width=4))
+        )])
+        fig2.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+            font=chart_font, margin=dict(t=10, b=10, l=10, r=10),
+            showlegend=True, legend=dict(orientation="h", y=-0.1)
+        )
+        st.plotly_chart(fig2, use_container_width=True, config={'displayModeBar': False})
 
-    with col_chart2:
-        st.markdown(f"<h3 style='color: {TEXT_PRIMARY}; font-size: 1.1rem;'>توزيع قيمة المخزون</h3>", unsafe_allow_html=True)
-        inv_data = globals().get('get_inventory_by_category', lambda: [{'category':'مواد خام','total':40}, {'category':'منتجات نهائية','total':35}, {'category':'تغليف','total':25}])()
-        if inv_data:
-            df = pd.DataFrame(inv_data)
-            fig = px.pie(
-                df, names='category', values='total', hole=0.6,
-                color_discrete_sequence=[ACCENT_BLUE, ACCENT_PURPLE, ACCENT_GREEN, ACCENT_AMBER]
-            )
-            fig.update_traces(
-                textposition='inside', textinfo='percent',
-                marker=dict(line=dict(color=BG_MAIN, width=3)),
-                hovertemplate="<b>%{label}</b><br>القيمة: %{value}%<extra></extra>"
-            )
-            fig.update_layout(
-                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                font=chart_font, margin=dict(t=10, b=10, l=10, r=10),
-                legend=dict(orientation="h", yanchor="bottom", y=-0.1, xanchor="center", x=0.5)
-            )
-            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+    # 5. سجل العمليات (تصميم قوائم فاخر بدلاً من الجداول التقليدية)
+    render_html(f"""
+    <div class="glass-card" style="margin-top: 1rem; padding: 2rem;">
+        <h3 style="color: {TEXT_PRIMARY}; font-weight: 800; font-size: 1.4rem; margin-top: 0; margin-bottom: 1.5rem;">
+            سجل العمليات والتسويات الحديثة
+        </h3>
+        
+        <!-- صف العناوين -->
+        <div style="display: flex; justify-content: space-between; padding: 0 20px 10px 20px; color: {TEXT_SECONDARY}; font-weight: 600; font-size: 0.9rem; border-bottom: 1px solid {GLASS_BORDER}; margin-bottom: 10px;">
+            <div style="flex: 1;">المرجع</div>
+            <div style="flex: 2;">نوع العملية</div>
+            <div style="flex: 1; text-align: left;">القيمة</div>
+        </div>
 
-    # 6. الجداول والقوائم السفلية (Data Lists)
-    col_list1, col_list2 = st.columns(2)
+        <!-- السجلات -->
+        <div class="lux-table-row">
+            <div style="flex: 1; color: {TEXT_SECONDARY}; font-family: monospace !important;">#REC-010000</div>
+            <div style="flex: 2; color: {TEXT_PRIMARY}; font-weight: 600;">
+                <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#EF4444; margin-left:8px;"></span>
+                تسوية عجز مخزني
+            </div>
+            <div style="flex: 1; text-align: left; color: #EF4444; font-weight: 800;">- 100.00 <span style="font-size:0.8rem;">SAR</span></div>
+        </div>
 
-    with col_list1:
-        render_html(f"""
-        <div class="enterprise-card" style="height: 100%;">
-            <h3 style="color: {TEXT_PRIMARY}; font-size: 1.1rem; margin-top: 0; margin-bottom: 1rem; border-bottom: 1px solid {BORDER_COLOR}; padding-bottom: 0.5rem;">
-                النواقص (إعادة الطلب)
-            </h3>
-        """)
-        low = globals().get('get_low_stock_products', lambda: [{'name': 'ورق طباعة A4', 'quantity': 5, 'reorder_level': 20}, {'name': 'حبر طابعة HP', 'quantity': 1, 'reorder_level': 5}])()
-        if low:
-            for item in low:
-                render_html(f"""
-                <div class="list-item">
-                    <div>
-                        <div style="color: {TEXT_PRIMARY}; font-weight: 500; font-size: 0.9rem;">{item['name']}</div>
-                        <div style="color: {ACCENT_RED}; font-size: 0.75rem;">الحد الأدنى: {item['reorder_level']}</div>
-                    </div>
-                    <div style="background-color: rgba(239, 68, 68, 0.1); color: {ACCENT_RED}; padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 0.85rem;">
-                        المتبقي {item['quantity']}
-                    </div>
-                </div>
-                """)
-        else:
-            render_html(f"<div style='color: {TEXT_MUTED}; font-size: 0.9rem; text-align: center; padding: 2rem 0;'>لا توجد نواقص في المخزون حالياً</div>")
-        render_html("</div>")
+        <div class="lux-table-row">
+            <div style="flex: 1; color: {TEXT_SECONDARY}; font-family: monospace !important;">#REC-010002</div>
+            <div style="flex: 2; color: {TEXT_PRIMARY}; font-weight: 600;">
+                <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#10B981; margin-left:8px;"></span>
+                إعادة تقييم عملة (أرباح)
+            </div>
+            <div style="flex: 1; text-align: left; color: #10B981; font-weight: 800;">+ 450.00 <span style="font-size:0.8rem;">USD</span></div>
+        </div>
 
-    with col_list2:
-        render_html(f"""
-        <div class="enterprise-card" style="height: 100%;">
-            <h3 style="color: {TEXT_PRIMARY}; font-size: 1.1rem; margin-top: 0; margin-bottom: 1rem; border-bottom: 1px solid {BORDER_COLOR}; padding-bottom: 0.5rem;">
-                سجل النشاطات الحديثة
-            </h3>
-        """)
-        activities = globals().get('get_recent_activities', lambda: [{'action': 'تم إصدار فاتورة مبيعات #INV-0012', 'time': 'منذ 10 دقائق'}, {'action': 'اعتماد قيد محاسبي بواسطة أحمد', 'time': 'منذ ساعتين'}])()
-        if activities:
-            for act in activities:
-                render_html(f"""
-                <div class="list-item">
-                    <div style="display: flex; align-items: center; gap: 10px;">
-                        <span style="width: 6px; height: 6px; border-radius: 50%; background-color: {ACCENT_BLUE}; display: inline-block;"></span>
-                        <span style="color: {TEXT_PRIMARY}; font-size: 0.9rem;">{act['action']}</span>
-                    </div>
-                    <span style="color: {TEXT_MUTED}; font-size: 0.75rem;">{act['time']}</span>
-                </div>
-                """)
-        else:
-            render_html(f"<div style='color: {TEXT_MUTED}; font-size: 0.9rem; text-align: center; padding: 2rem 0;'>لا توجد نشاطات حديثة</div>")
-        render_html("</div>")
+        <div class="lux-table-row">
+            <div style="flex: 1; color: {TEXT_SECONDARY}; font-family: monospace !important;">#REC-010005</div>
+            <div style="flex: 2; color: {TEXT_PRIMARY}; font-weight: 600;">
+                <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:{GOLD_ACCENT}; margin-left:8px;"></span>
+                حركة صندوق منصرفة
+            </div>
+            <div style="flex: 1; text-align: left; color: {GOLD_ACCENT}; font-weight: 800;">- 5,000.00 <span style="font-size:0.8rem;">YER</span></div>
+        </div>
+    </div>
+    """)
