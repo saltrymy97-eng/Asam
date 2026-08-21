@@ -1,10 +1,11 @@
-# ui/ai_ui.py – واجهة المساعد الذكي بتصميم التقارير الذهبية
+# ui/ai_ui.py – واجهة المساعد الذكي بتصميم التقارير الذهبية (نسخة EXE)
 import streamlit as st
 import pandas as pd
 import json
 import os
 from datetime import date, datetime
 from services.ai_service import (
+    GROQ_API_KEY, # تم استيراد المفتاح مباشرة ليعمل كـ EXE
     create_ai_tables, query_groq, save_chat_history, get_chat_history,
     get_chat_sessions, get_comprehensive_data, get_inventory_data,
     get_employee_info, get_recent_entries, get_all_accounts, get_conn,
@@ -34,9 +35,10 @@ ACCENT_RED = "#EF4444"
 ACCENT_PURPLE = "#8B5CF6"
 ACCENT_CYAN = "#06B6D4"
 
+# تحديث النماذج لتتوافق مع طبقة الخدمات الجديدة
 AVAILABLE_MODELS = {
-    "Llama 3.3 70B": "llama-3.3-70b-versatile",
-    "Llama 3.1 8B (أسرع)": "llama-3.1-8b-instant",
+    "GPT OSS 120B (عالي الدقة)": "openai/gpt-oss-120b",
+    "Mixtral 8x7B (سريع)": "mixtral-8x7b-32768",
 }
 
 # ========== 🎤 معالجة الصوت ==========
@@ -44,7 +46,8 @@ def audio_to_text(audio_file):
     if audio_file is None:
         return ""
     try:
-        client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+        # استخدام المفتاح المضمن في الكود مباشرة
+        client = Groq(api_key=GROQ_API_KEY)
         with open("temp_audio.wav", "wb") as f:
             f.write(audio_file.getbuffer())
         with open("temp_audio.wav", "rb") as f:
@@ -119,9 +122,7 @@ def show():
 
     create_ai_tables()
 
-    if "GROQ_API_KEY" not in st.secrets:
-        st.error("الرجاء إضافة مفتاح Groq API")
-        return
+    # تمت إزالة فحص st.secrets لأن المفتاح أصبح مضمناً للعمل كـ exe
 
     with st.sidebar:
         st.markdown("### ⚙️ الإعدادات")
