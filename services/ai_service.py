@@ -60,7 +60,7 @@ def create_ai_tables():
     conn.commit()
     conn.close()
 
-def query_groq(system_prompt, user_query, model="openai/gpt-oss-120b", max_tokens=5000, temperature=0.3):
+def query_groq(system_prompt, user_query, model="openai/gpt-oss-120b", max_tokens=4096, temperature=0.3):
     """
     إرسال استعلام إلى Groq API مع معالجة الخطأ باستخدام النموذج الجديد.
     """
@@ -73,7 +73,7 @@ def query_groq(system_prompt, user_query, model="openai/gpt-oss-120b", max_token
                 {"role": "user", "content": user_query}
             ],
             temperature=temperature,
-            max_tokens=min(max_tokens, 5000)
+            max_tokens=min(max_tokens, 4096)
         )
         return response.choices[0].message.content
     except BadRequestError as e:
