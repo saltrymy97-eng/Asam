@@ -132,65 +132,70 @@ box-shadow: 0 10px 25px rgba(0,0,0,0.5);
 }}
 
 /* ======================================================= */
-/* 🔮 هندسة الجرم السيادي 🔮 */
+/* 🔮 هندسة الجرم السيادي (اللمعان المعدل والنسبة الدقيقة) 🔮 */
 /* ======================================================= */
-@keyframes floatAndPulse {{
-0% {{ transform: translateY(0) rotateX(5deg) rotateY(-5deg); box-shadow: 0 0 50px rgba(124, 58, 237, 0.4), inset 0 10px 30px rgba(124, 58, 237, 0.3), inset 0 -10px 30px rgba(37, 99, 235, 0.3); }}
-50% {{ transform: translateY(-20px) rotateX(-5deg) rotateY(10deg); box-shadow: 0 0 100px rgba(167, 139, 250, 0.8), 0 30px 60px rgba(0,0,0,0.8), inset 0 20px 40px rgba(124, 58, 237, 0.6), inset 0 -20px 40px rgba(37, 99, 235, 0.5); }}
-100% {{ transform: translateY(0) rotateX(5deg) rotateY(-5deg); box-shadow: 0 0 50px rgba(124, 58, 237, 0.4), inset 0 10px 30px rgba(124, 58, 237, 0.3), inset 0 -10px 30px rgba(37, 99, 235, 0.3); }}
+@keyframes glowAndFloat {{
+0% {{ 
+    transform: translateY(0); 
+    box-shadow: 0 0 30px rgba(124, 58, 237, 0.4), inset 0 10px 30px rgba(124, 58, 237, 0.3); 
+}}
+50% {{ 
+    transform: translateY(-15px); 
+    box-shadow: 0 0 80px rgba(167, 139, 250, 0.8), 0 0 40px rgba(255, 255, 255, 0.2), inset 0 20px 50px rgba(124, 58, 237, 0.7); 
+}}
+100% {{ 
+    transform: translateY(0); 
+    box-shadow: 0 0 30px rgba(124, 58, 237, 0.4), inset 0 10px 30px rgba(124, 58, 237, 0.3); 
+}}
 }}
 
-@keyframes laserSweep {{
-0% {{ left: -200%; opacity: 0; }}
-10% {{ opacity: 1; }}
-90% {{ opacity: 1; }}
-100% {{ left: 200%; opacity: 0; }}
+@keyframes spinGleam {{
+0% {{ transform: rotate(0deg); }}
+100% {{ transform: rotate(360deg); }}
 }}
 
 .hukma-orb {{
 position: relative;
-width: 230px; 
-height: 230px; 
+width: 210px;  /* تم التصغير قليلاً لاحتضان النص بشكل مثالي */
+height: 210px; 
 margin: 0 auto 2.5rem auto;
-background: linear-gradient(135deg, rgba(124,58,237,0.2) 0%, rgba(37,99,235,0.1) 100%);
-backdrop-filter: blur(20px); 
--webkit-backdrop-filter: blur(20px);
-border: 3px solid rgba(167, 139, 250, 0.4); 
-border-top: 4px solid rgba(255, 255, 255, 0.6);
-border-bottom: 3px solid rgba(37, 99, 235, 0.3);
+background: linear-gradient(135deg, rgba(124,58,237,0.3) 0%, rgba(37,99,235,0.15) 100%);
+backdrop-filter: blur(25px); 
+-webkit-backdrop-filter: blur(25px);
+border: 2px solid rgba(167, 139, 250, 0.5); 
+border-top: 4px solid rgba(255, 255, 255, 0.8); /* لمعة الزجاج العلوية */
 border-radius: 50%; 
 display: flex; 
 align-items: center; 
 justify-content: center;
-animation: floatAndPulse 6s ease-in-out infinite; 
+animation: glowAndFloat 5s ease-in-out infinite; 
 transform-style: preserve-3d;
-perspective: 1000px;
 overflow: hidden; 
 z-index: 10;
 }}
 
-.hukma-orb::after {{
+/* لمعان داخلي دوار لمظهر أكثر فخامة */
+.hukma-orb::before {{
 content: '';
 position: absolute;
-top: -100%; left: -200%;
+top: -50%; left: -50%;
 width: 200%; height: 200%;
-background: linear-gradient(45deg, transparent 40%, rgba(255, 255, 255, 0.8) 50%, transparent 60%);
-transform: rotate(-45deg);
-animation: laserSweep 4.5s cubic-bezier(0.25, 1, 0.5, 1) infinite;
+background: conic-gradient(transparent, rgba(255, 255, 255, 0.15), transparent 40%);
+animation: spinGleam 6s linear infinite;
 pointer-events: none;
 z-index: 1;
 }}
 
 .hukma-text {{
-font-size: 3.2rem; /* تم تصغير النص ليتناسب تماماً ويحتويه الجرم الدائري */
+font-size: 3.8rem; /* تم التكبير ليتناسق تماماً مع الجرم */
 font-weight: 900;
-background: linear-gradient(135deg, #FFFFFF 10%, #E9D5FF 50%, #7C3AED 100%);
+background: linear-gradient(to bottom, #FFFFFF 0%, #E9D5FF 60%, #A78BFA 100%);
 -webkit-background-clip: text;
 -webkit-text-fill-color: transparent;
-letter-spacing: 1px;
+letter-spacing: 2px;
 display: inline-block;
-transform: translateZ(40px); 
-filter: drop-shadow(0 15px 20px rgba(0,0,0,0.9));
+/* لمعان مباشر للنص نفسه */
+filter: drop-shadow(0 0 15px rgba(167, 139, 250, 0.7)) drop-shadow(0 8px 10px rgba(0,0,0,0.8));
 z-index: 2;
 position: relative;
 }}
@@ -226,21 +231,21 @@ transform: scale(1.1) translateY(-3px);
 def render_premium_header(is_change_password=False):
     """توليد الهيدر التنفيذي الفاخر - بدون أي مسافات بادئة إطلاقاً"""
     if not is_change_password:
-        html = f"""<div style="text-align:center; margin-bottom: 3.5rem; margin-top: 0.5rem; perspective: 1000px;">
+        html = f"""<div style="text-align:center; margin-bottom: 3.5rem; margin-top: 0.5rem;">
 <div class="hukma-orb">
 <span class="hukma-text">حوكمة</span>
 </div>
 <p style="color:{S}; margin-top: 1.5rem; font-size: 1.4rem; letter-spacing: 1px; font-weight: 700;">
-إدارة <span style="color:#A78BFA; font-weight:900; text-shadow: 0 0 20px rgba(167,139,250,0.6);">ذكية</span> .. 
-قرارات <span style="color:#60A5FA; font-weight:900; text-shadow: 0 0 20px rgba(96,165,250,0.6);">واثقة</span>
+إدارة <span style="color:#A78BFA; font-weight:900; text-shadow: 0 0 20px rgba(167,139,250,0.8);">ذكية</span> .. 
+قرارات <span style="color:#60A5FA; font-weight:900; text-shadow: 0 0 20px rgba(96,165,250,0.8);">واثقة</span>
 </p>
 <div style="width: 250px; height: 2px; background: linear-gradient(90deg, transparent, #A78BFA, transparent); margin: 1.5rem auto 0 auto; opacity: 0.8; box-shadow: 0 0 15px #A78BFA;"></div>
 </div>"""
         st.markdown(html, unsafe_allow_html=True)
     else:
-        html = f"""<div style="text-align:center; margin-bottom: 3.5rem; margin-top: 0.5rem; perspective: 1000px;">
+        html = f"""<div style="text-align:center; margin-bottom: 3.5rem; margin-top: 0.5rem;">
 <div class="hukma-orb" style="width: 150px; height: 150px; border-radius: 50%;">
-<span style="font-size: 4rem; transform: translateZ(30px); filter: drop-shadow(0 10px 15px rgba(0,0,0,0.8));">🛡️</span>
+<span style="font-size: 4rem; filter: drop-shadow(0 10px 15px rgba(0,0,0,0.8));">🛡️</span>
 </div>
 <h2 style="color:{T}; margin:0; font-weight:900; font-size:2.5rem; letter-spacing: 0.5px;">تأمين الهوية الرقمية</h2>
 <p style="color:{S}; margin-top:1rem; font-size:1.1rem; letter-spacing: 0.5px;">يرجى تحديث رمز الحماية الخاص بك للمتابعة بأمان</p>
