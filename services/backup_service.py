@@ -1,4 +1,4 @@
-# services/backup_service.py - منطق النسخ الاحتياطي الاحترافي (إصدار إنتاجي)
+# services/backup_service.py - منطق النسخ الاحتياطي الاحترافي (إصدار إنتاجي لتطبيقات سطح المكتب exe)
 import sqlite3
 import shutil
 import os
@@ -12,10 +12,36 @@ import time
 DB_PATH = os.path.join("data", "erp.db")
 BACKUP_DIR = "backups"
 METADATA_DIR = os.path.join(BACKUP_DIR, "metadata")
+KEY_FILE_PATH = os.path.join("data", "backup_encryption.key")
+
+# ---------- إعدادات التشفير لتطبيقات exe ----------
+def load_or_generate_key():
+    """تحميل مفتاح التشفير إذا كان موجوداً، أو إنشاؤه وحفظه للمرات القادمة"""
+    # التأكد من وجود مجلد البيانات
+    if not os.path.exists("data"):
+        os.makedirs("data", exist_ok=True)
+        
+    # إذا كان المفتاح موجوداً مسبقاً، نقوم بقرائته
+    if os.path.exists(KEY_FILE_PATH):
+        with open(KEY_FILE_PATH, 'rb') as key_file:
+            return key_file.read()
+    else:
+        # إذا لم يكن موجوداً (أول تشغيل للنظام)، نولد مفتاحاً جديداً ونحفظه
+        new_key = Fernet.generate_key()
+        with open(KEY_FILE_PATH, 'wb') as key_file:
+            key_file.write(new_key)
+        
+        # محاولة إخفاء الملف في أنظمة ويندوز لحمايته (اختياري)
+        if os.name == 'nt':
+            import ctypes
+            ctypes.windll.kernel32.SetFileAttributesW(KEY_FILE_PATH, 2)
+            
+        return new_key
+
+ENCRYPTION_KEY = load_or_generate_key()
+fernet = Fernet(ENCRYPTION_KEY)
 
 # ---------- إعدادات قابلة للتعديل ----------
-ENCRYPTION_KEY = Fernet.generate_key()  # يجب حفظ هذا المفتاح في مكان آمن (st.secrets)
-fernet = Fernet(ENCRYPTION_KEY)
 NETWORK_BACKUP_PATH = None   # مثال: "\\\\192.168.1.10\\Shared\\Backups"
 SCHEDULE_ENABLED = False     # تفعيل النسخ التلقائي
 SCHEDULE_INTERVAL_HOURS = 24  # كل 24 ساعة
@@ -32,6 +58,11 @@ def ensure_directories():
 
 def create_backup_table():
     """إنشاء جدول سجل النسخ الاحتياطي مع معلومات المستخدم"""
+    ensure_directories()
+    # التأكد من وجود مجلد قاعدة البيانات
+    if not os.path.exists("data"):
+        os.makedirs("data", exist_ok=True)
+        
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS backup_history (
@@ -71,6 +102,7 @@ def get_all_tables():
 
 def check_alert():
     """فحص ما إذا كان الوقت قد حان للتنبيه بعدم وجود نسخة حديثة"""
+    create_backup_table()
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     latest = conn.execute(
@@ -92,17 +124,6 @@ def check_alert():
 # ---------- النسخ الاحتياطي ----------
 
 def create_backup(user="غير معروف", backup_type="يدوي", tables=None, encrypt=False, compress=True, notes=""):
-    """
-    إنشاء نسخة احتياطية جديدة (محلياً + اختيارياً على مجلد الشبكة).
-    
-    Parameters:
-    - user: اسم المستخدم الذي قام بالنسخ.
-    - backup_type: نوع النسخة ('يدوي', 'تلقائي', 'قبل تحديث').
-    - tables: قائمة بأسماء الجداول المطلوب نسخها (None = كل الجداول).
-    - encrypt: هل يتم تشفير الملف؟
-    - compress: هل يتم ضغط الملف؟
-    - notes: ملاحظات إضافية.
-    """
     ensure_directories()
     create_backup_table()
     
@@ -110,26 +131,21 @@ def create_backup(user="غير معروف", backup_type="يدوي", tables=None,
     filename = f"erp_backup_{timestamp}.db"
     filepath = os.path.join(BACKUP_DIR, filename)
     
-    # --- النسخ الانتقائي (Selective Backup) ---
     if tables is None:
-        # نسخ جميع الجداول
         shutil.copy2(DB_PATH, filepath)
         tables_count = len(get_all_tables())
     else:
-        # نسخ جداول محددة فقط
         tables_count = len(tables)
         src_conn = sqlite3.connect(DB_PATH)
         dst_conn = sqlite3.connect(filepath)
         
         for table in tables:
             try:
-                # نسخ هيكل الجدول
                 src_cur = src_conn.cursor()
                 src_cur.execute(f"SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,))
                 create_sql = src_cur.fetchone()[0]
                 dst_conn.execute(create_sql)
                 
-                # نسخ البيانات
                 src_cur.execute(f"SELECT * FROM \"{table}\"")
                 rows = src_cur.fetchall()
                 cols = [desc[0] for desc in src_cur.description]
@@ -143,19 +159,17 @@ def create_backup(user="غير معروف", backup_type="يدوي", tables=None,
         dst_conn.commit()
         dst_conn.close()
     
-    # --- ضغط الملف (Compression) ---
     is_compressed = 0
     if compress:
         zip_filename = filename.replace('.db', '.zip')
         zip_filepath = os.path.join(BACKUP_DIR, zip_filename)
         with zipfile.ZipFile(zip_filepath, 'w', zipfile.ZIP_DEFLATED) as zf:
             zf.write(filepath, filename)
-        os.remove(filepath)  # حذف الملف الأصلي بعد الضغط
+        os.remove(filepath)
         filepath = zip_filepath
         filename = zip_filename
         is_compressed = 1
     
-    # --- تشفير الملف (Encryption) ---
     is_encrypted = 0
     if encrypt:
         with open(filepath, 'rb') as f:
@@ -165,14 +179,13 @@ def create_backup(user="غير معروف", backup_type="يدوي", tables=None,
         enc_filepath = os.path.join(BACKUP_DIR, enc_filename)
         with open(enc_filepath, 'wb') as f:
             f.write(encrypted_data)
-        os.remove(filepath)  # حذف الملف غير المشفر
+        os.remove(filepath)
         filepath = enc_filepath
         filename = enc_filename
         is_encrypted = 1
     
     size_kb = os.path.getsize(filepath) / 1024
     
-    # --- حفظ البيانات الوصفية (Metadata) ---
     metadata = {
         "original_filename": filename,
         "created_by": user,
@@ -190,7 +203,6 @@ def create_backup(user="غير معروف", backup_type="يدوي", tables=None,
     with open(meta_filepath, 'w', encoding='utf-8') as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2)
     
-    # --- تسجيل العملية في سجل النسخ الاحتياطي ---
     conn = sqlite3.connect(DB_PATH)
     conn.execute("""
         INSERT INTO backup_history (filename, size_kb, created_at, type, user, tables_count, is_encrypted, is_compressed, notes)
@@ -199,7 +211,6 @@ def create_backup(user="غير معروف", backup_type="يدوي", tables=None,
     conn.commit()
     conn.close()
     
-    # --- نسخ إضافي إلى مجلد الشبكة (Network Backup) ---
     if NETWORK_BACKUP_PATH:
         try:
             if not os.path.exists(NETWORK_BACKUP_PATH):
@@ -214,10 +225,8 @@ def create_backup(user="غير معروف", backup_type="يدوي", tables=None,
 # ---------- استعادة النسخة ----------
 
 def restore_backup(filename):
-    """استعادة نسخة احتياطية مع أمان إضافي"""
     filepath = os.path.join(BACKUP_DIR, filename)
     
-    # --- فك التشفير إذا كان مشفرًا ---
     if filename.endswith('.enc'):
         with open(filepath, 'rb') as f:
             encrypted_data = f.read()
@@ -232,7 +241,6 @@ def restore_backup(filename):
         filepath = temp_filepath
         filename = temp_filename
     
-    # --- فك الضغط إذا كان مضغوطًا ---
     if filename.endswith('.zip'):
         with zipfile.ZipFile(filepath, 'r') as zf:
             db_filename = [f for f in zf.namelist() if f.endswith('.db')][0]
@@ -246,7 +254,6 @@ def restore_backup(filename):
     if not is_valid_backup(filepath):
         return False, "الملف تالف أو ليس قاعدة بيانات صالحة"
     
-    # --- نسخة أمان من القاعدة الحالية قبل الاستعادة ---
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safety_file = os.path.join(BACKUP_DIR, f"pre_restore_{timestamp}.db")
     try:
@@ -254,14 +261,12 @@ def restore_backup(filename):
     except Exception:
         return False, "فشل إنشاء نسخة أمان قبل الاستعادة"
     
-    # --- استعادة النسخة المحددة ---
     shutil.copy2(filepath, DB_PATH)
     return True, f"تمت الاستعادة بنجاح. نسخة أمان محفوظة في: {safety_file}"
 
 # ---------- القوائم والإحصائيات ----------
 
 def get_backup_list(limit=50):
-    """جلب قائمة النسخ الاحتياطية من السجل"""
     create_backup_table()
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -272,12 +277,13 @@ def get_backup_list(limit=50):
     return [dict(b) for b in backups]
 
 def get_backup_stats():
-    """إحصائيات سريعة عن النسخ الاحتياطية"""
     create_backup_table()
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     
-    total = conn.execute("SELECT COUNT(*) as cnt FROM backup_history").fetchone()["cnt"]
+    total_row = conn.execute("SELECT COUNT(*) as cnt FROM backup_history").fetchone()
+    total = total_row["cnt"] if total_row else 0
+    
     latest = conn.execute(
         "SELECT created_at, size_kb, user FROM backup_history ORDER BY id DESC LIMIT 1"
     ).fetchone()
@@ -298,10 +304,8 @@ def get_backup_stats():
 # ---------- الحذف التلقائي للنسخ القديمة ----------
 
 def delete_old_backups():
-    """حذف النسخ الاحتياطية الأقدم من AUTO_DELETE_DAYS يومًا"""
     cutoff_date = datetime.now() - timedelta(days=AUTO_DELETE_DAYS)
     
-    # حذف من السجل
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
         "DELETE FROM backup_history WHERE created_at < ?", (cutoff_date.strftime("%Y-%m-%d %H:%M:%S"),)
@@ -309,7 +313,6 @@ def delete_old_backups():
     conn.commit()
     conn.close()
     
-    # حذف الملفات القديمة من المجلد
     for folder in [BACKUP_DIR, METADATA_DIR]:
         if os.path.exists(folder):
             for filename in os.listdir(folder):
@@ -318,7 +321,6 @@ def delete_old_backups():
                     file_time = datetime.fromtimestamp(os.path.getmtime(filepath))
                     if file_time < cutoff_date:
                         os.remove(filepath)
-    
     return True
 
 # ---------- النسخ التلقائي المجدول ----------
@@ -326,14 +328,12 @@ def delete_old_backups():
 _scheduler_thread = None
 
 def _run_scheduler():
-    """خيط النسخ التلقائي المجدول"""
     while SCHEDULE_ENABLED:
         time.sleep(SCHEDULE_INTERVAL_HOURS * 3600)
         if SCHEDULE_ENABLED:
             create_backup(user="النظام", backup_type="تلقائي", compress=True)
 
 def start_scheduler():
-    """تشغيل المجدول التلقائي"""
     global _scheduler_thread, SCHEDULE_ENABLED
     if _scheduler_thread is None or not _scheduler_thread.is_alive():
         SCHEDULE_ENABLED = True
@@ -343,7 +343,6 @@ def start_scheduler():
     return False
 
 def stop_scheduler():
-    """إيقاف المجدول التلقائي"""
     global SCHEDULE_ENABLED
     SCHEDULE_ENABLED = False
     return True
