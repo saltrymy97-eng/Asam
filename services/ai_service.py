@@ -4,7 +4,9 @@ import json
 import os
 from datetime import datetime, timedelta
 from groq import Groq, BadRequestError
-import streamlit as st
+
+# ========== مفتاح الـ API للنسخة التنفيذية (exe) ==========
+GROQ_API_KEY = "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"
 
 DB_PATH = os.path.join("data", "erp.db")
 
@@ -58,12 +60,11 @@ def create_ai_tables():
     conn.commit()
     conn.close()
 
-def query_groq(system_prompt, user_query, model="llama-3.3-70b-versatile", max_tokens=1500, temperature=0.3):
+def query_groq(system_prompt, user_query, model="openai/gpt-oss-120b", max_tokens=1500, temperature=0.3):
     """
-    إرسال استعلام إلى Groq API مع معالجة الخطأ.
-    max_tokens يجب ألا يتجاوز 1500 لتجنب أخطاء الطلب.
+    إرسال استعلام إلى Groq API مع معالجة الخطأ باستخدام النموذج الجديد.
     """
-    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+    client = Groq(api_key=GROQ_API_KEY)
     try:
         response = client.chat.completions.create(
             model=model,
@@ -108,7 +109,8 @@ def get_chat_sessions():
     return [dict(s) for s in sessions]
 
 # ===================== ذاكرة المحادثة (Memory Compression) =====================
-def compress_chat_memory(session_id, model="llama-3.3-70b-versatile"):
+def compress_chat_memory(session_id, model="mixtral-8x7b-32768"):
+    # استخدام نموذج مختص وأخف للتلخيص السريع
     history = get_chat_history(session_id, limit=10)
     if not history:
         return ""
@@ -339,7 +341,7 @@ def build_ai_context(include_cost_centers=True):
     
     return ctx
 
-# ===================== دوال عامة (متوافقة مع ui/ai_ui.py) =====================
+# ===================== دوال عامة =====================
 def get_comprehensive_data():
     return build_ai_context()
 
@@ -512,15 +514,12 @@ def get_cost_center_budget_analysis(center_id, fiscal_year):
     return query_groq(system_prompt, data_text, max_tokens=1500)
 
 # ===================== محرك القيود الآلي (Automated Entry Engine) =====================
-def extract_entry_data(text, model="llama-3.3-70b-versatile"):
+def extract_entry_data(text, model="openai/gpt-oss-120b"):
     """
     تستخدم الذكاء الاصطناعي لفهم العملية واستخراج البيانات منها فقط (بدون بناء القيد).
     ترجع قاموساً يحتوي على المفاتيح التالية:
     - operation_type: نوع العملية
-    - lines: قائمة من الأسطر، كل سطر يحتوي على:
-        - account: اسم الحساب
-        - amount: المبلغ
-        - side: 'debit' أو 'credit'
+    - lines: قائمة من الأسطر
     """
     system_prompt = """أنت محاسب قانوني محترف ومتخصص في تحويل أي عملية مالية إلى قيد محاسبي صحيح.
 مهمتك هي تحليل العملية المالية ثم استخراج البيانات بصيغة JSON.
@@ -715,7 +714,7 @@ def format_entry_display(entry_data):
     
     return result
 
-def generate_entry(text, model="llama-3.3-70b-versatile"):
+def generate_entry(text, model="openai/gpt-oss-120b"):
     """
     الدالة الرئيسية لتوليد قيد محاسبي متوازن.
     تجمع بين استخراج البيانات (AI) وبناء القيد المتوازن (Python).
@@ -739,10 +738,6 @@ def generate_entry(text, model="llama-3.3-70b-versatile"):
 def calculate_confidence(extracted_data, balanced_entry):
     """
     تحسب نسبة الثقة في القيد المُولَّد بناءً على عدة عوامل:
-    - هل تم استخراج البيانات بنجاح؟
-    - هل احتاج المحرك إلى إضافة تسوية تلقائية؟
-    - كم كان الفرق الذي تمت تسويته؟
-    
     ترجع نسبة مئوية (0-100).
     """
     if not extracted_data or not balanced_entry:
@@ -799,15 +794,9 @@ def get_confidence_level(confidence):
         return "غير موثوق", "#EF4444"  # أحمر غامق
 
 
-def generate_entry_safe(text, model="llama-3.3-70b-versatile"):
+def generate_entry_safe(text, model="openai/gpt-oss-120b"):
     """
     الدالة الرئيسية لتوليد قيد محاسبي آمن مع نسبة ثقة.
-    ترجع:
-    - entry_data: بيانات القيد المتوازن
-    - display_text: نص منسق للعرض
-    - confidence: نسبة الثقة (0-100)
-    - confidence_label: وصف الثقة (موثوق، شبه موثوق...)
-    - confidence_color: لون العرض
     """
     # الخطوة 1: استخراج البيانات من النص
     extracted = extract_entry_data(text, model=model)
@@ -832,9 +821,9 @@ def generate_entry_safe(text, model="llama-3.3-70b-versatile"):
     
     return entry, display, confidence, confidence_label, confidence_color
 
-# ===================== محرك القيود بالقوالب (Template-Based Entry Engine) =====================
+# ===================== محرك القيود بالقوالب =====================
 
-# قوالب العمليات المالية - كل قالب يحتوي على اسم العملية والأسطر المحاسبية
+# قوالب العمليات المالية
 ENTRY_TEMPLATES = {
     "بيع نقداً": {
         "description": "بيع بضاعة نقداً",
@@ -971,23 +960,6 @@ ENTRY_TEMPLATES = {
 def generate_template_entry(operation_type, amount, cash_amount=None, credit_amount=None, expense_name=None, vat_rate=None, adjustment_side=None, inventory_side=None):
     """
     توليد قيد محاسبي متوازن باستخدام القوالب الجاهزة (دقة 100%).
-    
-    Parameters:
-    - operation_type: نوع العملية (مفتاح من ENTRY_TEMPLATES)
-    - amount: المبلغ الإجمالي
-    - cash_amount: الجزء النقدي (للعمليات المختلطة)
-    - credit_amount: الجزء الآجل (للعمليات المختلطة)
-    - expense_name: اسم المصروف (لعملية سداد مصروف)
-    - vat_rate: نسبة الضريبة (للعمليات شامل الضريبة)
-    - adjustment_side: اتجاه التسوية (debit/credit)
-    - inventory_side: اتجاه المخزون (debit/credit)
-    
-    Returns:
-    - entry_data: بيانات القيد المتوازن
-    - display_text: نص منسق للعرض
-    - confidence: 100 دائماً
-    - confidence_label: "موثوق"
-    - confidence_color: أخضر
     """
     template = ENTRY_TEMPLATES.get(operation_type)
     if not template:
