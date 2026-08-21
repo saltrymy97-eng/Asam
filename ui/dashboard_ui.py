@@ -1,276 +1,256 @@
-# ui/dashboard_ui.py – لوحة معلومات ERP (نسخة الفخامة المطلقة - Premium Glassmorphism)
+# ui/dashboard_ui.py – لوحة التحكم الفاخرة (متوافقة مع الهاتف + القائمة الجانبية الأصلية)
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
-from datetime import datetime
 
-# ================= ألوان الهوية الفاخرة (Premium Palette) =================
-BG_DEEP = "#05070A"           # أسود ليلي عميق جداً
-GLASS_BG = "rgba(18, 23, 35, 0.45)" # زجاج داكن شبه شفاف
-GLASS_BORDER = "rgba(255, 255, 255, 0.08)" # حدود زجاجية ناعمة
-
-GOLD_ACCENT = "#D4AF37"       # ذهبي ملكي (Royal Gold)
-GOLD_GLOW = "rgba(212, 175, 55, 0.4)"
-PURPLE_ACCENT = "#9333EA"     # بنفسجي مخملي
-PURPLE_GLOW = "rgba(147, 51, 234, 0.4)"
-
-TEXT_PRIMARY = "#F8FAFC"
-TEXT_SECONDARY = "#64748B"
-
-def render_html(html_code: str):
-    st.markdown(html_code, unsafe_allow_html=True)
-
-def inject_premium_css():
-    """CSS فائق الفخامة يدمج الزجاج المصنفر، الإضاءة المحيطية، والحركات الناعمة"""
-    css = f"""
+def inject_premium_mobile_css():
+    """CSS احترافي يضمن تجاوب الهاتف واستنساخ تصميم القائمة الجانبية بدقة"""
+    st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;900&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&display=swap');
 
-    * {{ font-family: 'Tajawal', sans-serif !important; box-sizing: border-box; }}
+    * { font-family: 'Tajawal', sans-serif !important; box-sizing: border-box; }
 
-    /* خلفية النظام - إضاءة محيطية مخفية (Ambient Glow) */
-    .stApp {{
-        background-color: {BG_DEEP} !important;
+    /* ================= الخلفية الرئيسية ================= */
+    .stApp {
+        background-color: #05070A !important;
         background-image: 
-            radial-gradient(circle at 15% 0%, {PURPLE_GLOW} 0%, transparent 25%),
-            radial-gradient(circle at 85% 100%, {GOLD_GLOW} 0%, transparent 25%) !important;
+            radial-gradient(circle at 50% 0%, rgba(147, 51, 234, 0.15) 0%, transparent 50%),
+            radial-gradient(circle at 50% 100%, rgba(212, 175, 55, 0.1) 0%, transparent 50%) !important;
         background-attachment: fixed;
-    }}
+    }
 
-    .block-container {{ direction: rtl; text-align: right; padding-top: 1rem !important; max-width: 1400px; }}
-    #MainMenu, footer, header {{ visibility: hidden; display: none; }}
+    .block-container {
+        direction: rtl; text-align: right;
+        padding: 1rem 0.8rem !important;
+        max-width: 1400px;
+    }
+    #MainMenu, footer, header { visibility: hidden; display: none; }
 
-    /* ================= النصوص الفاخرة ================= */
-    .premium-title {{
-        color: {TEXT_PRIMARY};
-        font-size: clamp(2rem, 5vw, 3.2rem);
-        font-weight: 900;
-        letter-spacing: -1px;
-        margin: 0;
-        background: linear-gradient(to left, #FFFFFF, #94A3B8);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        text-shadow: 0 10px 30px rgba(147, 51, 234, 0.3);
-    }}
-
-    .premium-subtitle {{
-        color: {GOLD_ACCENT};
-        font-size: 1.1rem;
-        font-weight: 500;
-        letter-spacing: 1px;
-        margin-top: 5px;
-        text-shadow: 0 0 15px {GOLD_GLOW};
-    }}
-
-    /* ================= البطاقات الزجاجية (Glassmorphism Cards) ================= */
-    .glass-card {{
-        background: {GLASS_BG};
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        border: 1px solid {GLASS_BORDER};
-        border-top: 1px solid rgba(255,255,255,0.15); /* إضاءة علوية طفيفة */
-        border-radius: 24px;
-        padding: 1.8rem;
-        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-        transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-        position: relative;
+    /* ================= تصميم القائمة الجانبية (مطابق للصورة 31583.png) ================= */
+    [data-testid="stSidebar"] {
+        background-color: #0A0D14 !important; /* لون الخلفية الكحلي الداكن */
+        border-left: 1px solid rgba(255,255,255,0.05);
+    }
+    
+    /* تنسيق صناديق القائمة الجانبية (Expanders) */
+    [data-testid="stSidebar"] [data-testid="stExpander"] {
+        background-color: #121723 !important; /* لون الصندوق الداكن */
+        border: 1px solid rgba(255,255,255,0.03) !important;
+        border-radius: 16px !important;
+        margin-bottom: 0.8rem;
         overflow: hidden;
-    }}
-
-    /* تأثير الانعكاس عند تمرير الماوس */
-    .glass-card::before {{
-        content: ""; position: absolute; top: 0; left: -100%; width: 50%; height: 100%;
-        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.03), transparent);
-        transition: left 0.7s ease;
-    }}
+    }
     
-    .glass-card:hover::before {{ left: 150%; }}
-    .glass-card:hover {{
-        transform: translateY(-5px);
-        border-color: rgba(147, 51, 234, 0.3);
-        box-shadow: 0 30px 60px -10px rgba(147, 51, 234, 0.2);
-    }}
-
-    /* ================= الأزرار الاحترافية ================= */
-    .nav-container {{
-        display: flex; gap: 12px; justify-content: center; margin: 2rem 0 3rem 0;
-        background: rgba(10, 15, 25, 0.5); padding: 8px; border-radius: 100px;
-        border: 1px solid {GLASS_BORDER};
-        backdrop-filter: blur(10px);
-        width: fit-content; margin-left: auto; margin-right: auto;
-    }}
-
-    .nav-btn {{
-        padding: 12px 28px; border-radius: 100px; font-weight: 700; font-size: 0.95rem;
-        transition: all 0.3s ease; display: inline-flex; align-items: center; gap: 8px;
-        cursor: pointer; color: {TEXT_PRIMARY}; border: 1px solid transparent;
-    }}
-
-    .nav-btn.active {{
-        background: linear-gradient(135deg, {GOLD_ACCENT}, #B48600);
-        color: #000 !important;
-        box-shadow: 0 0 20px {GOLD_GLOW};
-    }}
-
-    .nav-btn:not(.active):hover {{
-        background: rgba(255, 255, 255, 0.05);
-        border: 1px solid {GLASS_BORDER};
-    }}
-
-    /* ================= الجداول الفاخرة ================= */
-    .lux-table-row {{
-        display: flex; justify-content: space-between; align-items: center;
-        padding: 16px 20px; margin-bottom: 8px;
-        background: rgba(255,255,255,0.02);
-        border: 1px solid transparent;
-        border-radius: 16px;
+    [data-testid="stSidebar"] .streamlit-expanderHeader {
+        background-color: transparent !important;
+        color: #A855F7 !important; /* لون النص البنفسجي */
+        font-weight: 700;
+        font-size: 1rem;
+        padding: 0.8rem 1rem !important;
+    }
+    
+    /* تنسيق الأزرار داخل القائمة الجانبية */
+    [data-testid="stSidebar"] .stButton > button {
+        background-color: rgba(255,255,255,0.05) !important;
+        color: #F8FAFC !important;
+        border: 1px solid rgba(255,255,255,0.1) !important;
+        border-radius: 12px;
+        text-align: right;
+        justify-content: flex-start;
+        padding: 0.5rem 1rem;
+        margin-bottom: 5px;
         transition: all 0.3s ease;
-    }}
-    .lux-table-row:hover {{
-        background: rgba(255,255,255,0.05);
-        border: 1px solid rgba(255,255,255,0.1);
-        transform: scale(1.01);
-    }}
+    }
+    [data-testid="stSidebar"] .stButton > button:hover {
+        background-color: rgba(147, 51, 234, 0.3) !important;
+        border-color: #A855F7 !important;
+    }
     
-    .status-badge {{
-        padding: 4px 12px; border-radius: 8px; font-size: 0.8rem; font-weight: 700;
-    }}
-    </style>
-    """
-    render_html(css)
+    /* زر مفعل (Active) في القائمة */
+    .sidebar-active-btn > button {
+        background-color: rgba(147, 51, 234, 0.15) !important;
+        border: 1px solid rgba(147, 51, 234, 0.5) !important;
+        color: #FFFFFF !important;
+    }
 
-def build_metric(label, value, icon, trend, trend_color, glow_color):
-    return f"""
-    <div class="glass-card">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
-            <div style="color: {TEXT_SECONDARY}; font-weight: 600; font-size: 1rem;">{label}</div>
-            <div style="background: linear-gradient(135deg, {glow_color}20, transparent); padding: 10px; border-radius: 12px; border: 1px solid {glow_color}40; color: {glow_color}; font-size: 1.2rem; box-shadow: 0 0 15px {glow_color}20;">
-                {icon}
-            </div>
+    /* ================= تصميم محتوى الصفحة والتجاوب مع الهاتف ================= */
+    .dash-title {
+        color: #FFFFFF;
+        font-size: clamp(1.5rem, 5vw, 2.8rem); /* تصغير تلقائي في الهاتف */
+        font-weight: 900;
+        margin: 0 0 5px 0;
+    }
+    .dash-subtitle { color: #D4AF37; font-size: clamp(0.9rem, 3vw, 1.1rem); margin-bottom: 20px; }
+
+    /* شريط الأزرار السريعة */
+    .quick-nav {
+        display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px;
+    }
+    .quick-btn {
+        flex: 1 1 calc(50% - 8px); /* زرين في كل صف على الهاتف */
+        background: rgba(18, 23, 35, 0.6);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 12px; padding: 12px;
+        color: #FFF; font-weight: 700; text-align: center;
+        font-size: 0.9rem; transition: 0.3s; cursor: pointer;
+    }
+    .quick-btn.active {
+        background: linear-gradient(135deg, #D4AF37, #B48600);
+        color: #000; box-shadow: 0 0 15px rgba(212, 175, 55, 0.3);
+    }
+
+    /* شبكة البطاقات المالية */
+    .kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); /* تتكيف مع الهاتف */
+        gap: 12px; margin-bottom: 20px;
+    }
+    .kpi-card {
+        background: rgba(18, 23, 35, 0.55);
+        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 16px; padding: 16px;
+    }
+
+    /* الجداول في الهاتف تصبح بطاقات عمودية */
+    .record-row {
+        display: flex; flex-direction: column; gap: 8px;
+        background: rgba(255,255,255,0.02);
+        border: 1px solid rgba(255,255,255,0.05);
+        border-radius: 12px; padding: 15px; margin-bottom: 10px;
+    }
+
+    /* شاشات الكمبيوتر والتابلت */
+    @media (min-width: 768px) {
+        .quick-btn { flex: 0 1 auto; min-width: 150px; }
+        .kpi-grid { grid-template-columns: repeat(4, 1fr); gap: 20px; }
+        .record-row { flex-direction: row; justify-content: space-between; align-items: center; }
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+def render_sidebar():
+    """هيكلة القائمة الجانبية بناءً على الصورة المرفقة"""
+    with st.sidebar:
+        # ترويسة النظام
+        st.markdown("""
+        <div style="text-align: center; padding: 1rem 0;">
+            <h1 style="color: #FFFFFF; margin:0; font-size: 2rem; font-weight: 900; text-shadow: 0 0 10px rgba(168,85,247,0.5);">ERP حوكمة</h1>
+            <p style="color: #64748B; font-size: 0.9rem; margin-top: 5px;">إدارة ذكية .. قرارات واثقة</p>
         </div>
-        <div style="color: {TEXT_PRIMARY}; font-size: 2.2rem; font-weight: 900; letter-spacing: 0.5px; margin-bottom: 0.5rem; text-shadow: 0 2px 10px rgba(255,255,255,0.1);">
-            {value}
-        </div>
-        <div style="display: inline-flex; align-items: center; gap: 6px; background: {trend_color}15; color: {trend_color}; padding: 4px 10px; border-radius: 6px; font-size: 0.85rem; font-weight: 700;">
-            {trend}
-        </div>
-    </div>
-    """
+        <hr style="border-color: rgba(255,255,255,0.1); margin-bottom: 1.5rem;">
+        """, unsafe_allow_html=True)
+
+        # 1. الرئيسية
+        with st.expander("🏠 الرئيسية", expanded=True):
+            st.markdown('<div class="sidebar-active-btn">', unsafe_allow_html=True)
+            st.button("📊 لوحة المعلومات", use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        # 2. العمليات
+        with st.expander("📦 العمليات"):
+            st.button("سجل العمليات", use_container_width=True)
+            st.button("الاعتمادات", use_container_width=True)
+
+        # 3. مخزون (هنا تم إضافة إدارة الوحدات)
+        with st.expander("📦 مخزون"):
+            st.button("إدارة الأصناف", use_container_width=True)
+            st.button("📐 إدارة الوحدات", use_container_width=True) # <-- المكان المطلوب
+            st.button("التسويات الجردية", use_container_width=True)
+
+        # 4. المحاسبة والمالية
+        with st.expander("💰 المحاسبة والمالية"):
+            st.button("الصندوق والخزينة", use_container_width=True)
+            st.button("فروق الصرف", use_container_width=True)
+
+        # 5. إدارة الأعمال
+        with st.expander("👥 إدارة الأعمال"):
+            st.button("الموظفين", use_container_width=True)
+
+        # 6. النظام والأمان
+        with st.expander("⚙️ النظام والأمان"):
+            st.button("الصلاحيات", use_container_width=True)
+
+        # 7. الذكاء الاصطناعي
+        with st.expander("🤖 الذكاء الاصطناعي"):
+            st.button("المساعد الذكي", use_container_width=True)
 
 def show():
-    inject_premium_css()
+    inject_premium_mobile_css()
+    render_sidebar()
+
+    # محتوى الصفحة الرئيسية مجهز للهاتف والكمبيوتر
+    st.markdown("""
+    <div>
+        <h1 class="dash-title">مركز التحكم الاستراتيجي</h1>
+        <div class="dash-subtitle">نظرة مالية ومخزنية شاملة • 2026</div>
+    </div>
     
-    # 1. الترويسة الرئيسية (مركزة ومبهرة)
-    render_html(f"""
-    <div style="text-align: center; padding: 2rem 0;">
-        <h1 class="premium-title">مركز التحكم الاستراتيجي</h1>
-        <div class="premium-subtitle">نظرة مالية ومخزنية شاملة • {datetime.now().strftime('%d %B %Y')}</div>
+    <div class="quick-nav">
+        <div class="quick-btn active">💰 الصندوق</div>
+        <div class="quick-btn">📦 التسويات</div>
+        <div class="quick-btn">🔀 فروق الصرف</div>
+        <div class="quick-btn">🏛️ الحوكمة</div>
     </div>
-    """)
 
-    # 2. شريط التنقل الزجاجي
-    render_html(f"""
-    <div class="nav-container">
-        <div class="nav-btn active"><span>💰</span> إدارة الصندوق</div>
-        <div class="nav-btn"><span>📦</span> التسويات المخزنية</div>
-        <div class="nav-btn"><span>🔀</span> فروق الصرف</div>
-        <div class="nav-btn"><span>🏛️</span> حوكمة</div>
-    </div>
-    """)
-
-    # 3. شبكة المؤشرات (4 بطاقات فائقة الجودة)
-    render_html("<div style='display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5rem; margin-bottom: 2rem;'>")
-    render_html(build_metric("السيولة النقدية المتاحة", "185,400 <span style='font-size:1.2rem; color:#64748B;'>YER</span>", "💵", "↑ 5.4% نمو أسبوعي", "#10B981", GOLD_ACCENT))
-    render_html(build_metric("العمليات المنفذة اليوم", "24", "⚡", "معدل طبيعي", "#3B82F6", PURPLE_ACCENT))
-    render_html(build_metric("تسويات معلقة", "3", "⚠️", "يتطلب إجراء فوري", "#EF4444", "#EF4444"))
-    render_html(build_metric("فروق تقييم العملات", "-5,450 <span style='font-size:1.2rem; color:#64748B;'>SAR</span>", "🔀", "تمت المعالجة الآلية", "#A855F7", PURPLE_ACCENT))
-    render_html("</div>")
-
-    # 4. الرسوم البيانية المتطورة (لا توجد خطوط شبكة مزعجة، منحنيات ناعمة)
-    col1, col2 = st.columns([6, 4])
-    chart_font = dict(color=TEXT_SECONDARY, family='Tajawal', size=13)
-
-    with col1:
-        render_html(f"<h3 style='color: {TEXT_PRIMARY}; font-weight: 800; font-size: 1.3rem; margin-bottom: 1rem; border-right: 4px solid {PURPLE_ACCENT}; padding-right: 10px;'>التدفقات النقدية (آخر أسبوع)</h3>")
-        
-        # رسم بياني خطي احترافي (Spline Area)
-        fig1 = go.Figure()
-        fig1.add_trace(go.Scatter(
-            x=['السبت', 'الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس'],
-            y=[12000, 19000, 15000, 28000, 22000, 34000],
-            fill='tozeroy',
-            mode='lines+markers',
-            line=dict(color=PURPLE_ACCENT, width=4, shape='spline'),
-            marker=dict(size=10, color=GOLD_ACCENT, line=dict(width=2, color=BG_DEEP)),
-            fillcolor='rgba(147, 51, 234, 0.1)'
-        ))
-        fig1.update_layout(
-            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-            font=chart_font, margin=dict(t=10, b=10, l=0, r=0),
-            xaxis=dict(showgrid=False, zeroline=False),
-            yaxis=dict(showgrid=True, gridcolor=GLASS_BORDER, zeroline=False),
-            hovermode="x unified"
-        )
-        st.plotly_chart(fig1, use_container_width=True, config={'displayModeBar': False})
-
-    with col2:
-        render_html(f"<h3 style='color: {TEXT_PRIMARY}; font-weight: 800; font-size: 1.3rem; margin-bottom: 1rem; border-right: 4px solid {GOLD_ACCENT}; padding-right: 10px;'>مراكز العملات الأجنبية</h3>")
-        
-        # رسم بياني دائري احترافي (Thin Donut)
-        fig2 = go.Figure(data=[go.Pie(
-            labels=['دولار أمريكي (USD)', 'ريال سعودي (SAR)', 'يورو (EUR)'],
-            values=[55, 35, 10],
-            hole=0.8, # حلقة نحيفة جداً لفخامة أكثر
-            marker=dict(colors=[PURPLE_ACCENT, GOLD_ACCENT, '#3B82F6'], line=dict(color=BG_DEEP, width=4))
-        )])
-        fig2.update_layout(
-            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-            font=chart_font, margin=dict(t=10, b=10, l=10, r=10),
-            showlegend=True, legend=dict(orientation="h", y=-0.1)
-        )
-        st.plotly_chart(fig2, use_container_width=True, config={'displayModeBar': False})
-
-    # 5. سجل العمليات (تصميم قوائم فاخر بدلاً من الجداول التقليدية)
-    render_html(f"""
-    <div class="glass-card" style="margin-top: 1rem; padding: 2rem;">
-        <h3 style="color: {TEXT_PRIMARY}; font-weight: 800; font-size: 1.4rem; margin-top: 0; margin-bottom: 1.5rem;">
-            سجل العمليات والتسويات الحديثة
-        </h3>
-        
-        <!-- صف العناوين -->
-        <div style="display: flex; justify-content: space-between; padding: 0 20px 10px 20px; color: {TEXT_SECONDARY}; font-weight: 600; font-size: 0.9rem; border-bottom: 1px solid {GLASS_BORDER}; margin-bottom: 10px;">
-            <div style="flex: 1;">المرجع</div>
-            <div style="flex: 2;">نوع العملية</div>
-            <div style="flex: 1; text-align: left;">القيمة</div>
+    <div class="kpi-grid">
+        <div class="kpi-card">
+            <div style="color: #64748B; font-size: 0.8rem; font-weight: 700;">السيولة المتاحة</div>
+            <div style="color: #FFF; font-size: 1.4rem; font-weight: 900; margin: 5px 0;">185,400 <span style="font-size:0.8rem; color:#D4AF37;">YER</span></div>
+            <div style="color: #10B981; font-size: 0.75rem;">↑ 5.4% نمو</div>
         </div>
-
-        <!-- السجلات -->
-        <div class="lux-table-row">
-            <div style="flex: 1; color: {TEXT_SECONDARY}; font-family: monospace !important;">#REC-010000</div>
-            <div style="flex: 2; color: {TEXT_PRIMARY}; font-weight: 600;">
-                <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#EF4444; margin-left:8px;"></span>
-                تسوية عجز مخزني
-            </div>
-            <div style="flex: 1; text-align: left; color: #EF4444; font-weight: 800;">- 100.00 <span style="font-size:0.8rem;">SAR</span></div>
+        <div class="kpi-card">
+            <div style="color: #64748B; font-size: 0.8rem; font-weight: 700;">عمليات اليوم</div>
+            <div style="color: #FFF; font-size: 1.4rem; font-weight: 900; margin: 5px 0;">24 <span style="font-size:0.8rem; color:#A855F7;">عملية</span></div>
+            <div style="color: #3B82F6; font-size: 0.75rem;">معدل طبيعي</div>
         </div>
-
-        <div class="lux-table-row">
-            <div style="flex: 1; color: {TEXT_SECONDARY}; font-family: monospace !important;">#REC-010002</div>
-            <div style="flex: 2; color: {TEXT_PRIMARY}; font-weight: 600;">
-                <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#10B981; margin-left:8px;"></span>
-                إعادة تقييم عملة (أرباح)
-            </div>
-            <div style="flex: 1; text-align: left; color: #10B981; font-weight: 800;">+ 450.00 <span style="font-size:0.8rem;">USD</span></div>
+        <div class="kpi-card">
+            <div style="color: #64748B; font-size: 0.8rem; font-weight: 700;">تسويات معلقة</div>
+            <div style="color: #EF4444; font-size: 1.4rem; font-weight: 900; margin: 5px 0;">3 <span style="font-size:0.8rem; color:#EF4444;">أصناف</span></div>
+            <div style="color: #EF4444; font-size: 0.75rem;">إجراء فوري</div>
         </div>
-
-        <div class="lux-table-row">
-            <div style="flex: 1; color: {TEXT_SECONDARY}; font-family: monospace !important;">#REC-010005</div>
-            <div style="flex: 2; color: {TEXT_PRIMARY}; font-weight: 600;">
-                <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:{GOLD_ACCENT}; margin-left:8px;"></span>
-                حركة صندوق منصرفة
-            </div>
-            <div style="flex: 1; text-align: left; color: {GOLD_ACCENT}; font-weight: 800;">- 5,000.00 <span style="font-size:0.8rem;">YER</span></div>
+        <div class="kpi-card">
+            <div style="color: #64748B; font-size: 0.8rem; font-weight: 700;">فروق العملات</div>
+            <div style="color: #FFF; font-size: 1.4rem; font-weight: 900; margin: 5px 0;">-5,450 <span style="font-size:0.8rem; color:#D4AF37;">SAR</span></div>
+            <div style="color: #A855F7; font-size: 0.75rem;">معالجة آلية</div>
         </div>
     </div>
-    """)
+    """, unsafe_allow_html=True)
+
+    # رسم بياني يتكيف مع الهاتف (نصغّر الارتفاع على الشاشات الصغيرة)
+    st.markdown("<h4 style='color:#FFF; font-weight:800; font-size:1.1rem; margin-top:1rem;'>📈 التدفقات النقدية</h4>", unsafe_allow_html=True)
+    df = pd.DataFrame({'اليوم': ['السبت', 'الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء'], 'المبلغ': [12, 19, 15, 28, 34]})
+    fig = px.line(df, x='اليوم', y='المبلغ', markers=True)
+    fig.update_traces(line=dict(color='#A855F7', width=3), marker=dict(size=8, color='#D4AF37'))
+    fig.update_layout(
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='#64748B', size=11), margin=dict(t=10, b=10, l=0, r=0), height=200,
+        xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.05)')
+    )
+    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+
+    # جدول العمليات (مبني بـ CSS Flexbox ليتغير شكله تلقائياً في الهاتف)
+    st.markdown("""
+    <div style="margin-top: 1rem;">
+        <h4 style="color:#FFF; font-weight:800; font-size:1.1rem; margin-bottom:15px;">سجل العمليات الحديثة</h4>
+        
+        <div class="record-row">
+            <div style="color: #64748B; font-size: 0.85rem;">#REC-010000</div>
+            <div style="color: #FFF; font-weight: 700;">تسوية عجز مخزني</div>
+            <div style="color: #EF4444; font-weight: 800; direction: ltr;">- 100.00 SAR</div>
+        </div>
+
+        <div class="record-row">
+            <div style="color: #64748B; font-size: 0.85rem;">#REC-010002</div>
+            <div style="color: #FFF; font-weight: 700;">إعادة تقييم عملة</div>
+            <div style="color: #10B981; font-weight: 800; direction: ltr;">+ 450.00 USD</div>
+        </div>
+        
+        <div class="record-row">
+            <div style="color: #64748B; font-size: 0.85rem;">#REC-010005</div>
+            <div style="color: #FFF; font-weight: 700;">حركة صندوق منصرفة</div>
+            <div style="color: #D4AF37; font-weight: 800; direction: ltr;">- 5,000.00 YER</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
