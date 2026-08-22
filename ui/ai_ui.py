@@ -35,7 +35,7 @@ ACCENT_RED = "#EF4444"
 # النماذج المتاحة
 AVAILABLE_MODELS = {
     "GPT OSS 120B (عالي الدقة)": "openai/gpt-oss-120b",
-    "Qwen 3.6 27B (سريع)": "qwen/qwen3.6-27b",
+    "GPT OSS 20B (سريع)": "openai/gpt-oss-20b",
 }
 
 # ========== 🎤 معالجة الصوت ==========
