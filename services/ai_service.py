@@ -69,7 +69,7 @@ def create_ai_tables():
     conn.commit()
     conn.close()
 
-def query_groq(system_prompt, user_query, model="openai/gpt-oss-120b", max_tokens=4096, temperature=0.3):
+def query_groq(system_prompt, user_query, model="openai/gpt-oss-20b", max_tokens=4096, temperature=0.3):
     """
     إرسال استعلام إلى Groq API مع معالجة الخطأ باستخدام النموذج الجديد.
     """
@@ -118,7 +118,7 @@ def get_chat_sessions():
     return [dict(s) for s in sessions]
 
 # ===================== ذاكرة المحادثة (Memory Compression) =====================
-def compress_chat_memory(session_id,model="openai/gpt-oss-20b"):
+def compress_chat_memory(session_id,model="groq/compound-mini"):
     history = get_chat_history(session_id, limit=10)
     if not history:
         return ""
