@@ -86,34 +86,78 @@ def render_ai_response(content):
     """, unsafe_allow_html=True)
 
 def show():
+    # ===== حقن CSS المعدل لحل مشكلة القائمة الجانبية =====
     st.markdown(f"""
     <style>
-    .stApp {{ background-color: {BG_COLOR}; direction: rtl; }}
+    /* 1. تغيير لون الخلفية للتطبيق بالكامل دون العبث باتجاه القائمة الجانبية */
+    .stApp {{
+        background-color: {BG_COLOR};
+    }}
+    
+    /* 2. تطبيق اتجاه اليمين لليسار على منطقة المحتوى الرئيسية فقط لتجنب تشوه القائمة */
+    .block-container {{
+        direction: rtl;
+        text-align: right;
+    }}
+    
+    /* تصميم الأزرار */
     .stButton > button {{
         background: linear-gradient(135deg, rgba(212,175,55,0.15), rgba(212,175,55,0.05)) !important;
         border: 1px solid rgba(212,175,55,0.3) !important;
-        color: {GOLD} !important; font-weight: 700 !important;
-        border-radius: 12px !important; padding: 10px 24px !important;
-        transition: all 0.3s ease-in-out !important; text-transform: uppercase; letter-spacing: 0.5px;
+        color: {GOLD} !important;
+        font-weight: 700 !important;
+        border-radius: 12px !important;
+        padding: 10px 24px !important;
+        transition: all 0.3s ease-in-out !important;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
     }}
     .stButton > button:hover {{
         background: linear-gradient(135deg, rgba(212,175,55,0.3), rgba(212,175,55,0.1)) !important;
-        box-shadow: 0 0 15px {GOLD_GLOW} !important; transform: translateY(-2px); color: #FFF !important;
+        box-shadow: 0 0 15px {GOLD_GLOW} !important;
+        transform: translateY(-2px);
+        color: #FFF !important;
     }}
-    div[data-baseweb="tab-list"] {{ background-color: transparent !important; gap: 8px; }}
-    div[data-baseweb="tab"] {{ background-color: #1F2937 !important; border-radius: 8px 8px 0 0 !important; color: {TEXT_SECONDARY} !important; border: 1px solid transparent; padding: 10px 16px !important; }}
-    div[aria-selected="true"] {{ background-color: #111827 !important; color: {TEXT_PRIMARY} !important; border-bottom: 2px solid {ACCENT_RED} !important; }}
+
+    /* تصميم التبويبات (Tabs) */
+    div[data-baseweb="tab-list"] {{
+        background-color: transparent !important;
+        gap: 8px;
+        direction: rtl; /* ضمان أن التبويبات تقرأ من اليمين */
+    }}
+    div[data-baseweb="tab"] {{
+        background-color: #1F2937 !important;
+        border-radius: 8px 8px 0 0 !important;
+        color: {TEXT_SECONDARY} !important;
+        border: 1px solid transparent;
+        padding: 10px 16px !important;
+    }}
+    div[aria-selected="true"] {{
+        background-color: #111827 !important;
+        color: {TEXT_PRIMARY} !important;
+        border-bottom: 2px solid {ACCENT_RED} !important;
+    }}
+
+    /* الحقول والإدخالات */
     .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"] {{
-        background-color: #1F2937 !important; color: {TEXT_PRIMARY} !important; border: 1px solid #374151 !important; border-radius: 8px !important;
+        background-color: #1F2937 !important;
+        color: {TEXT_PRIMARY} !important;
+        border: 1px solid #374151 !important;
+        border-radius: 8px !important;
+        direction: rtl;
     }}
-    [data-testid="stAudioInput"] {{ min-width: 100px; }}
+    
+    /* إصلاح عرض حاوية إدخال الصوت لتبدو أفضل */
+    [data-testid="stAudioInput"] {{
+        min-width: 100px;
+    }}
     </style>
     """, unsafe_allow_html=True)
 
     create_ai_tables()
 
     with st.sidebar:
-        st.markdown(f"<h3 style='color:{GOLD};'>⚙️ إعدادات الذكاء الاصطناعي</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:{GOLD}; text-align: right; direction: rtl;'>⚙️ إعدادات الذكاء الاصطناعي</h3>", unsafe_allow_html=True)
         model_name = st.selectbox("اختر المحرك:", list(AVAILABLE_MODELS.keys()))
         model = AVAILABLE_MODELS[model_name]
 
@@ -146,7 +190,7 @@ def show():
             st.chat_message("user").write(active_query)
             data = get_comprehensive_data()
             d = json.dumps(data, ensure_ascii=False, default=str)
-            # تم تعديل الموجه ليكون احترافياً واستشارياً
+            
             prompt = f"""أنت مستشار مالي ومدير مالي (CFO) خبير تعمل ضمن نظام ERP. البيانات الحالية للشركة:
 {d}
 **المطلوب:**
@@ -167,7 +211,6 @@ def show():
         if st.button("🚀 بدء التحليل المالي الشامل", type="primary"):
             data = get_comprehensive_data()
             ratios = get_financial_ratios()
-            # موجه للتحليل المالي المتعمق
             prompt = f"""أنت محلل مالي أول ومستشار استراتيجي. الأرقام:
 - الإيرادات: {data.get('revenue',0):,.2f} | المصروفات: {data.get('expenses',0):,.2f} | صافي الدخل: {data.get('net_income',0):,.2f}
 - النسب: {json.dumps(ratios, ensure_ascii=False)}
