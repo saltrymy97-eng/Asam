@@ -85,7 +85,7 @@ def render_ai_response(content):
     """, unsafe_allow_html=True)
 
 def show():
-    # ===== حقن CSS المعدل والاحترافي للتحكم باتجاه التبويبات والمحتوى =====
+    # ===== حقن CSS المعدل مع Media Queries وإصلاح التبويبات =====
     st.markdown(f"""
     <style>
     /* 1. تغيير لون الخلفية للتطبيق بالكامل */
@@ -119,72 +119,74 @@ def show():
     }}  
 
     /* =========================================================
-       Streamlit Tabs
-       ترتيب التبويبات LTR مثل بقية وحدات النظام
-       مع إبقاء النص العربي RTL
+       Streamlit Tabs - ترتيب ثابت من اليسار إلى اليمين
        ========================================================= */
-    /* حاوية التبويبات */
-    [data-baseweb="tab-list"] {{
+    div[data-baseweb="tab-list"] {{
         display: flex !important;
         flex-direction: row !important;
-        direction: ltr !important;
         justify-content: flex-start !important;
         align-items: stretch !important;
+        direction: ltr !important;
+        unicode-bidi: isolate !important;
         gap: 8px !important;
         width: 100% !important;
         overflow-x: auto !important;
         overflow-y: hidden !important;
-        background-color: transparent !important;
-        unicode-bidi: isolate !important; /* منع توريث RTL */
-        scrollbar-width: thin;
+        background: transparent !important; /* مهم جداً */
+        transform: none !important;
     }}
 
-    /* العنصر المباشر داخل شريط التبويبات */
-    [data-baseweb="tab-list"] > * {{
-        direction: rtl !important;
+    /* جميع عناصر التبويب */
+    div[data-baseweb="tab-list"] > div {{
         flex: 0 0 auto !important;
-        order: initial !important;
+        order: unset !important;
+        direction: ltr !important;
     }}
 
-    /* التبويب نفسه */
-    [data-baseweb="tab"] {{
-        direction: rtl !important;
+    /* التبويب */
+    button[data-baseweb="tab"] {{
         flex: 0 0 auto !important;
+        direction: rtl !important;
+        unicode-bidi: isolate !important;
         white-space: nowrap !important;
-        background-color: #1F2937 !important;
-        border-radius: 8px 8px 0 0 !important;
-        color: {TEXT_SECONDARY} !important;
-        border: 1px solid transparent !important;
-        padding: 10px 16px !important;
         text-align: center !important;
-    }}
-
-    /* النص الموجود داخل التبويب */
-    [data-baseweb="tab"] * {{
-        direction: rtl !important;
+        background-color: #1F2937 !important;
+        color: #94A3B8 !important;
+        border: 1px solid transparent !important;
+        border-radius: 8px 8px 0 0 !important;
+        padding: 10px 16px !important;
     }}
 
     /* التبويب النشط */
-    [data-baseweb="tab"][aria-selected="true"] {{
+    button[data-baseweb="tab"][aria-selected="true"] {{
         background-color: #111827 !important;
-        color: {TEXT_PRIMARY} !important;
-        border-bottom: 2px solid {ACCENT_RED} !important;
+        color: #F8FAFC !important;
+        border-bottom: 2px solid #EF4444 !important;
     }}
 
-    /* عند تمرير المؤشر */
-    [data-baseweb="tab"]:hover {{
+    /* Hover */
+    button[data-baseweb="tab"]:hover {{
         background-color: #273449 !important;
-        color: {TEXT_PRIMARY} !important;
+        color: #F8FAFC !important;
     }}
 
-    /* شريط التمرير في الهاتف */
-    [data-baseweb="tab-list"]::-webkit-scrollbar {{
+    /* النص داخل التبويب */
+    button[data-baseweb="tab"] > div,
+    button[data-baseweb="tab"] p,
+    button[data-baseweb="tab"] span {{
+        direction: rtl !important;
+        unicode-bidi: plaintext !important;
+        white-space: nowrap !important;
+    }}
+
+    /* Scrollbar */
+    div[data-baseweb="tab-list"]::-webkit-scrollbar {{
         height: 4px;
     }}
-    [data-baseweb="tab-list"]::-webkit-scrollbar-track {{
+    div[data-baseweb="tab-list"]::-webkit-scrollbar-track {{
         background: transparent;
     }}
-    [data-baseweb="tab-list"]::-webkit-scrollbar-thumb {{
+    div[data-baseweb="tab-list"]::-webkit-scrollbar-thumb {{
         background: #374151;
         border-radius: 10px;
     }}
@@ -201,7 +203,26 @@ def show():
     /* إصلاح عرض حاوية إدخال الصوت لتبدو أفضل */  
     [data-testid="stAudioInput"] {{  
         min-width: 100px;  
-    }}  
+    }}
+
+    /* =========================================================
+       Media Queries للاستجابة (الهواتف المحمولة)
+       ========================================================= */
+    .ai-main-title {{
+        font-size: 2.8rem;
+        line-height: 1.2;
+    }}
+    
+    @media (max-width: 768px) {{
+        .block-container {{
+            padding-left: 1rem !important;
+            padding-right: 1rem !important;
+        }}
+        .ai-main-title {{
+            font-size: 2rem !important;
+            line-height: 1.35 !important;
+        }}
+    }}
     </style>  
     """, unsafe_allow_html=True)  
 
@@ -215,17 +236,18 @@ def show():
     if "active_session" not in st.session_state:  
         st.session_state.active_session = f"s_{datetime.now().strftime('%Y%m%d%H%M%S')}"  
 
+    # تعديل العنوان ليستخدم كلاس ai-main-title بدلاً من style المباشر لحجم الخط
     st.markdown(f"""  
     <div style="background: {CARD_BG}; border-radius: 20px; padding: 2rem; margin-bottom: 2rem; border: 1px solid #1F2937; box-shadow: {GLOW_SHADOW}; direction: rtl;">  
         <div style="display: inline-block; background: rgba(139, 92, 246, 0.15); padding: 6px 12px; border-radius: 8px; margin-bottom: 1rem;">  
             <span style="color: {ACCENT_PURPLE}; font-weight: 800; font-size: 0.9rem; letter-spacing: 1px;">🪐 AI ENTERPRISE HUB</span>  
         </div>  
-        <h1 style="color: {TEXT_PRIMARY}; font-size: 2.8rem; margin: 0 0 10px 0; font-weight: 900;">المساعد المالي الذكي</h1>  
+        <h1 class="ai-main-title" style="color: {TEXT_PRIMARY}; margin: 0 0 10px 0; font-weight: 900;">المساعد المالي الذكي</h1>  
         <p style="color: {TEXT_SECONDARY}; font-size: 1.1rem; margin: 0;">نظرة عامة على مؤشرات الأداء، التحليلات، وتوليد القيود الآلية</p>  
     </div>  
     """, unsafe_allow_html=True)  
 
-    # الترتيب الطبيعي هنا لا يتغير (CSS سيتكفل بالعرض)
+    # الترتيب الطبيعي للتبويبات
     t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([  
         "🧠 مساعد", "📊 محلل", "📦 مخزون", "💬 موظفين", "📝 قيود", "🔍 احتيال", "🔮 تنبؤات", "📈 تقرير شامل", "🎯 مراكز تكلفة"  
     ])  
