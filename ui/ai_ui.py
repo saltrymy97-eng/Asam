@@ -5,8 +5,7 @@ import json
 import os
 from datetime import date, datetime
 from services.ai_service import (
-    GROQ_API_KEY, 
-    create_ai_tables, query_groq, save_chat_history, get_chat_history,
+    GROQ_API_KEY, create_ai_tables, query_groq, save_chat_history, get_chat_history,
     get_chat_sessions, get_comprehensive_data, get_inventory_data,
     get_employee_info, get_recent_entries, get_all_accounts, get_conn,
     get_financial_ratios, get_trend_analysis, get_business_snapshot,
@@ -67,145 +66,196 @@ def audio_input_widget(key="audio"):
 def render_ai_response(content):
     """تغليف رد الذكاء الاصطناعي في بطاقة زجاجية فاخرة"""
     st.markdown(f"""
-    <div style="
-        background: {CARD_BG};
-        backdrop-filter: blur(12px);
-        border: 1px solid {CARD_BORDER};
-        border-radius: 16px;
-        padding: 1.8rem;
-        margin: 1.5rem 0;
-        box-shadow: {GLOW_SHADOW};
-        color: {TEXT_PRIMARY};
-        font-size: 1.05rem;
-        line-height: 1.7;
-        direction: rtl;
-        text-align: right;
+    <div style="  
+        background: {CARD_BG};  
+        backdrop-filter: blur(12px);  
+        border: 1px solid {CARD_BORDER};  
+        border-radius: 16px;  
+        padding: 1.8rem;  
+        margin: 1.5rem 0;  
+        box-shadow: {GLOW_SHADOW};  
+        color: {TEXT_PRIMARY};  
+        font-size: 1.05rem;  
+        line-height: 1.7;  
+        direction: rtl;  
+        text-align: right;  
     ">
-        {content}
+    {content}
     </div>
     """, unsafe_allow_html=True)
 
 def show():
-    # ===== حقن CSS المعدل لحل مشكلة القائمة الجانبية والتبويبات =====
+    # ===== حقن CSS المعدل والاحترافي للتحكم باتجاه التبويبات والمحتوى =====
     st.markdown(f"""
     <style>
-    /* 1. تغيير لون الخلفية للتطبيق بالكامل دون العبث باتجاه القائمة الجانبية */
+    /* 1. تغيير لون الخلفية للتطبيق بالكامل */
     .stApp {{
         background-color: {BG_COLOR};
     }}
-    
-    /* 2. تطبيق اتجاه اليمين لليسار على منطقة المحتوى الرئيسية فقط لتجنب تشوه القائمة */
-    .block-container {{
-        direction: rtl;
-        text-align: right;
-    }}
-    
-    /* تصميم الأزرار */
-    .stButton > button {{
-        background: linear-gradient(135deg, rgba(212,175,55,0.15), rgba(212,175,55,0.05)) !important;
-        border: 1px solid rgba(212,175,55,0.3) !important;
-        color: {GOLD} !important;
-        font-weight: 700 !important;
-        border-radius: 12px !important;
-        padding: 10px 24px !important;
-        transition: all 0.3s ease-in-out !important;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }}
-    .stButton > button:hover {{
-        background: linear-gradient(135deg, rgba(212,175,55,0.3), rgba(212,175,55,0.1)) !important;
-        box-shadow: 0 0 15px {GOLD_GLOW} !important;
-        transform: translateY(-2px);
-        color: #FFF !important;
+
+    /* 2. تطبيق اتجاه اليمين لليسار على منطقة المحتوى الرئيسية */  
+    .block-container {{  
+        direction: rtl;  
+        text-align: right;  
+    }}  
+      
+    /* تصميم الأزرار */  
+    .stButton > button {{  
+        background: linear-gradient(135deg, rgba(212,175,55,0.15), rgba(212,175,55,0.05)) !important;  
+        border: 1px solid rgba(212,175,55,0.3) !important;  
+        color: {GOLD} !important;  
+        font-weight: 700 !important;  
+        border-radius: 12px !important;  
+        padding: 10px 24px !important;  
+        transition: all 0.3s ease-in-out !important;  
+        text-transform: uppercase;  
+        letter-spacing: 0.5px;  
+    }}  
+    .stButton > button:hover {{  
+        background: linear-gradient(135deg, rgba(212,175,55,0.3), rgba(212,175,55,0.1)) !important;  
+        box-shadow: 0 0 15px {GOLD_GLOW} !important;  
+        transform: translateY(-2px);  
+        color: #FFF !important;  
+    }}  
+
+    /* =========================================================
+       Streamlit Tabs
+       ترتيب التبويبات LTR مثل بقية وحدات النظام
+       مع إبقاء النص العربي RTL
+       ========================================================= */
+    /* حاوية التبويبات */
+    [data-baseweb="tab-list"] {{
+        display: flex !important;
+        flex-direction: row !important;
+        direction: ltr !important;
+        justify-content: flex-start !important;
+        align-items: stretch !important;
+        gap: 8px !important;
+        width: 100% !important;
+        overflow-x: auto !important;
+        overflow-y: hidden !important;
+        background-color: transparent !important;
+        unicode-bidi: isolate !important; /* منع توريث RTL */
+        scrollbar-width: thin;
     }}
 
-    /* تصميم التبويبات (Tabs) */
-    div[data-baseweb="tab-list"] {{
-        background-color: transparent !important;
-        gap: 8px;
-        display: flex !important;
-        flex-direction: row-reverse !important; /* ⬅️ الحل الجذري: عكس الترتيب المرئي للتبويبات لتبدأ من اليسار لليمين */
-        overflow-x: auto; /* ضمان تمرير التبويبات في شاشات الهاتف بسلاسة */
+    /* العنصر المباشر داخل شريط التبويبات */
+    [data-baseweb="tab-list"] > * {{
+        direction: rtl !important;
+        flex: 0 0 auto !important;
+        order: initial !important;
     }}
-    div[data-baseweb="tab"] {{
+
+    /* التبويب نفسه */
+    [data-baseweb="tab"] {{
+        direction: rtl !important;
+        flex: 0 0 auto !important;
+        white-space: nowrap !important;
         background-color: #1F2937 !important;
         border-radius: 8px 8px 0 0 !important;
         color: {TEXT_SECONDARY} !important;
-        border: 1px solid transparent;
+        border: 1px solid transparent !important;
         padding: 10px 16px !important;
-        white-space: nowrap; /* منع انقسام النص لسطرين في الهاتف */
+        text-align: center !important;
     }}
-    div[aria-selected="true"] {{
+
+    /* النص الموجود داخل التبويب */
+    [data-baseweb="tab"] * {{
+        direction: rtl !important;
+    }}
+
+    /* التبويب النشط */
+    [data-baseweb="tab"][aria-selected="true"] {{
         background-color: #111827 !important;
         color: {TEXT_PRIMARY} !important;
         border-bottom: 2px solid {ACCENT_RED} !important;
     }}
 
-    /* الحقول والإدخالات */
-    .stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"] {{
-        background-color: #1F2937 !important;
+    /* عند تمرير المؤشر */
+    [data-baseweb="tab"]:hover {{
+        background-color: #273449 !important;
         color: {TEXT_PRIMARY} !important;
-        border: 1px solid #374151 !important;
-        border-radius: 8px !important;
-        direction: rtl;
     }}
-    
-    /* إصلاح عرض حاوية إدخال الصوت لتبدو أفضل */
-    [data-testid="stAudioInput"] {{
-        min-width: 100px;
+
+    /* شريط التمرير في الهاتف */
+    [data-baseweb="tab-list"]::-webkit-scrollbar {{
+        height: 4px;
     }}
-    </style>
-    """, unsafe_allow_html=True)
+    [data-baseweb="tab-list"]::-webkit-scrollbar-track {{
+        background: transparent;
+    }}
+    [data-baseweb="tab-list"]::-webkit-scrollbar-thumb {{
+        background: #374151;
+        border-radius: 10px;
+    }}
 
-    create_ai_tables()
+    /* الحقول والإدخالات */  
+    .stTextInput input, .stNumberInput input, .stSelectbox [data-baseweb="select"] {{  
+        background-color: #1F2937 !important;  
+        color: {TEXT_PRIMARY} !important;  
+        border: 1px solid #374151 !important;  
+        border-radius: 8px !important;  
+        direction: rtl;  
+    }}  
+      
+    /* إصلاح عرض حاوية إدخال الصوت لتبدو أفضل */  
+    [data-testid="stAudioInput"] {{  
+        min-width: 100px;  
+    }}  
+    </style>  
+    """, unsafe_allow_html=True)  
 
-    with st.sidebar:
-        st.markdown(f"<h3 style='color:{GOLD}; text-align: right; direction: rtl;'>⚙️ إعدادات الذكاء الاصطناعي</h3>", unsafe_allow_html=True)
-        model_name = st.selectbox("اختر المحرك:", list(AVAILABLE_MODELS.keys()))
-        model = AVAILABLE_MODELS[model_name]
+    create_ai_tables()  
 
-    if "active_session" not in st.session_state:
-        st.session_state.active_session = f"s_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    with st.sidebar:  
+        st.markdown(f"<h3 style='color:{GOLD}; text-align: right; direction: rtl;'>⚙️ إعدادات الذكاء الاصطناعي</h3>", unsafe_allow_html=True)  
+        model_name = st.selectbox("اختر المحرك:", list(AVAILABLE_MODELS.keys()))  
+        model = AVAILABLE_MODELS[model_name]  
 
-    st.markdown(f"""
-    <div style="background: {CARD_BG}; border-radius: 20px; padding: 2rem; margin-bottom: 2rem; border: 1px solid #1F2937; box-shadow: {GLOW_SHADOW}; direction: rtl;">
-        <div style="display: inline-block; background: rgba(139, 92, 246, 0.15); padding: 6px 12px; border-radius: 8px; margin-bottom: 1rem;">
-            <span style="color: {ACCENT_PURPLE}; font-weight: 800; font-size: 0.9rem; letter-spacing: 1px;">🪐 AI ENTERPRISE HUB</span>
-        </div>
-        <h1 style="color: {TEXT_PRIMARY}; font-size: 2.8rem; margin: 0 0 10px 0; font-weight: 900;">المساعد المالي الذكي</h1>
-        <p style="color: {TEXT_SECONDARY}; font-size: 1.1rem; margin: 0;">نظرة عامة على مؤشرات الأداء، التحليلات، وتوليد القيود الآلية</p>
-    </div>
-    """, unsafe_allow_html=True)
+    if "active_session" not in st.session_state:  
+        st.session_state.active_session = f"s_{datetime.now().strftime('%Y%m%d%H%M%S')}"  
 
-    t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([
-        "🧠 مساعد", "📊 محلل", "📦 مخزون", "💬 موظفين", "📝 قيود", "🔍 احتيال", "🔮 تنبؤات", "📈 تقرير شامل", "🎯 مراكز تكلفة"
-    ])
+    st.markdown(f"""  
+    <div style="background: {CARD_BG}; border-radius: 20px; padding: 2rem; margin-bottom: 2rem; border: 1px solid #1F2937; box-shadow: {GLOW_SHADOW}; direction: rtl;">  
+        <div style="display: inline-block; background: rgba(139, 92, 246, 0.15); padding: 6px 12px; border-radius: 8px; margin-bottom: 1rem;">  
+            <span style="color: {ACCENT_PURPLE}; font-weight: 800; font-size: 0.9rem; letter-spacing: 1px;">🪐 AI ENTERPRISE HUB</span>  
+        </div>  
+        <h1 style="color: {TEXT_PRIMARY}; font-size: 2.8rem; margin: 0 0 10px 0; font-weight: 900;">المساعد المالي الذكي</h1>  
+        <p style="color: {TEXT_SECONDARY}; font-size: 1.1rem; margin: 0;">نظرة عامة على مؤشرات الأداء، التحليلات، وتوليد القيود الآلية</p>  
+    </div>  
+    """, unsafe_allow_html=True)  
 
-    # ====== تبويب 1: المساعد ======
-    with t1:
-        st.markdown(f"<h3 style='color:{TEXT_PRIMARY};'>💬 اسأل عن أي شيء في نظامك</h3>", unsafe_allow_html=True)
-        mic_col, chat_col = st.columns([2, 10])
-        with mic_col: voice_text = audio_input_widget("assistant_audio")
-        with chat_col: q = st.chat_input("اطرح سؤالك المالي أو التشغيلي هنا...", key="ai-chat-input")
-        
-        active_query = voice_text if voice_text and not voice_text.startswith("❌") else (q if q else "")
-        if active_query:
-            st.chat_message("user").write(active_query)
-            data = get_comprehensive_data()
-            d = json.dumps(data, ensure_ascii=False, default=str)
-            
+    # الترتيب الطبيعي هنا لا يتغير (CSS سيتكفل بالعرض)
+    t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs([  
+        "🧠 مساعد", "📊 محلل", "📦 مخزون", "💬 موظفين", "📝 قيود", "🔍 احتيال", "🔮 تنبؤات", "📈 تقرير شامل", "🎯 مراكز تكلفة"  
+    ])  
+
+    # ====== تبويب 1: المساعد ======  
+    with t1:  
+        st.markdown(f"<h3 style='color:{TEXT_PRIMARY};'>💬 اسأل عن أي شيء في نظامك</h3>", unsafe_allow_html=True)  
+        mic_col, chat_col = st.columns([2, 10])  
+        with mic_col: voice_text = audio_input_widget("assistant_audio")  
+        with chat_col: q = st.chat_input("اطرح سؤالك المالي أو التشغيلي هنا...", key="ai-chat-input")  
+          
+        active_query = voice_text if voice_text and not voice_text.startswith("❌") else (q if q else "")  
+        if active_query:  
+            st.chat_message("user").write(active_query)  
+            data = get_comprehensive_data()  
+            d = json.dumps(data, ensure_ascii=False, default=str)  
+              
             prompt = f"""أنت مستشار مالي ومدير مالي (CFO) خبير تعمل ضمن نظام ERP. البيانات الحالية للشركة:
+
 {d}
-**المطلوب:**
+المطلوب:
 1. قدم إجابة وافية، دقيقة، ومنظمة مهنياً.
 2. استخدم العناوين العريضة والجداول لتوضيح الأرقام.
 3. اشرح التأثير المالي والتشغيلي بوضوح.
 4. حافظ على نبرة احترافية، رصينة، وداعمة لاتخاذ القرار (استخدم تنسيق Markdown)."""
-            
-            with st.spinner("🧠 جاري المعالجة والتحليل..."):
-                ans = query_groq(prompt, active_query, model=model, max_tokens=2048)
-            st.chat_message("assistant").write(ans)
-            save_chat_history(st.session_state.active_session, "user", active_query, model, "مساعد")
+
+            with st.spinner("🧠 جاري المعالجة والتحليل..."):  
+                ans = query_groq(prompt, active_query, model=model, max_tokens=2048)  
+            st.chat_message("assistant").write(ans)  
+            save_chat_history(st.session_state.active_session, "user", active_query, model, "مساعد")  
             save_chat_history(st.session_state.active_session, "assistant", ans, model, "مساعد")
 
     # ====== تبويب 2: المحلل ======
@@ -215,17 +265,17 @@ def show():
             data = get_comprehensive_data()
             ratios = get_financial_ratios()
             prompt = f"""أنت محلل مالي أول ومستشار استراتيجي. الأرقام:
-- الإيرادات: {data.get('revenue',0):,.2f} | المصروفات: {data.get('expenses',0):,.2f} | صافي الدخل: {data.get('net_income',0):,.2f}
-- النسب: {json.dumps(ratios, ensure_ascii=False)}
+الإيرادات: {data.get('revenue',0):,.2f} | المصروفات: {data.get('expenses',0):,.2f} | صافي الدخل: {data.get('net_income',0):,.2f}
+النسب: {json.dumps(ratios, ensure_ascii=False)}
 
-**المطلوب تقديم تقرير تحليل مالي مهيكل كالتالي:**
-1. **الملخص التنفيذي:** قراءة احترافية لأداء الشركة المالي.
-2. **تحليل النسب:** تفصيل لمعنى النسب المالية ومدى كفاءتها وصحتها.
-3. **نقاط القوة والضعف (SWOT Analysis):** تحليل متعمق للوضع المالي.
-4. **التوصيات الاستراتيجية:** خطوات عملية ومحددة لتحسين الربحية وتقليل المخاطر."""
+المطلوب تقديم تقرير تحليل مالي مهيكل كالتالي:
+1. الملخص التنفيذي: قراءة احترافية لأداء الشركة المالي.
+2. تحليل النسب: تفصيل لمعنى النسب المالية ومدى كفاءتها وصحتها.
+3. نقاط القوة والضعف (SWOT Analysis): تحليل متعمق للوضع المالي.
+4. التوصيات الاستراتيجية: خطوات عملية ومحددة لتحسين الربحية وتقليل المخاطر."""
             with st.spinner("📊 جاري تحليل البيانات المالية واستخراج الرؤى..."):
                 ans = query_groq(prompt, "قدم التحليل المالي الشامل", model=model, max_tokens=2048)
-            render_ai_response(ans)
+                render_ai_response(ans)
 
     # ====== تبويب 3: المخزون ======
     with t3:
@@ -235,14 +285,14 @@ def show():
             if allp:
                 df = pd.DataFrame(allp)
                 prompt = f"""أنت خبير متمرس في إدارة سلاسل الإمداد والمخزون. البيانات:\n{df.to_string()}
-**المطلوب تقديم تحليل شامل لحالة المخزون:**
-1. **التقييم العام:** قراءة لحالة المخزون وكفاءة إدارته.
-2. **الأصناف الحرجة (Hot Items):** تحليل العناصر التي شارفت على النفاد وتأثيرها.
-3. **المخاطر التشغيلية والمالية:** ما الذي يسببه التكدس أو النقص الحالي؟
-4. **الإجراءات التصحيحية:** توصيات استراتيجية لتحسين معدل دوران المخزون وتفادي الخسائر."""
+المطلوب تقديم تحليل شامل لحالة المخزون:
+1. التقييم العام: قراءة لحالة المخزون وكفاءة إدارته.
+2. الأصناف الحرجة (Hot Items): تحليل العناصر التي شارفت على النفاد وتأثيرها.
+3. المخاطر التشغيلية والمالية: ما الذي يسببه التكدس أو النقص الحالي؟
+4. الإجراءات التصحيحية: توصيات استراتيجية لتحسين معدل دوران المخزون وتفادي الخسائر."""
                 with st.spinner("📦 جاري تحليل سلاسل الإمداد..."):
                     ans = query_groq(prompt, "حلل المخزون وقدم تقريراً إدارياً", model=model, max_tokens=2048)
-                render_ai_response(ans)
+                    render_ai_response(ans)
         if low:
             st.error(f"⚠️ يوجد {len(low)} منتجات تحت الحد الأدنى للطلب!")
             st.dataframe(pd.DataFrame(low), use_container_width=True)
@@ -257,12 +307,12 @@ def show():
             emp, sal = get_employee_info(nm)
             if emp:
                 info = f"{emp['name']} - {emp['position']} | الراتب الأساسي: {sal.get('basic_salary',0) if sal else 0}"
-                prompt = f"""أنت مدير موارد بشرية (HR Manager) محترف ولبق. 
+                prompt = f"""أنت مدير موارد بشرية (HR Manager) محترف ولبق.
 بيانات الموظف المستعلم: {info}.
-**المطلوب:** أجب على استفسار الموظف ({eq}) بأسلوب مهني، داعم، وواضح. قدم الإجابة بتفصيل كافٍ يشرح الوضع ويقدم التوجيه اللازم والتطوير المستقبلي."""
+المطلوب: أجب على استفسار الموظف ({eq}) بأسلوب مهني، داعم، وواضح. قدم الإجابة بتفصيل كافٍ يشرح الوضع ويقدم التوجيه اللازم والتطوير المستقبلي."""
                 with st.spinner("⏳ جاري صياغة الرد الوظيفي..."):
                     ans = query_groq(prompt, eq, model=model, max_tokens=1000)
-                render_ai_response(ans)
+                    render_ai_response(ans)
             else:
                 st.error("❌ الموظف غير موجود في قاعدة البيانات.")
 
@@ -274,55 +324,57 @@ def show():
         st.caption(f"📌 {get_operation_description(selected_op)}")
         st.markdown("<hr style='border-color: #374151;'>", unsafe_allow_html=True)
 
-        if is_mixed_operation(selected_op):
-            c1, c2, c3 = st.columns(3)
-            with c1: total_amount = st.number_input("المبلغ الإجمالي", min_value=0.0, step=10.0)
-            with c2: cash_amount = st.number_input("الجزء النقدي", min_value=0.0, step=10.0)
-            with c3: credit_amount = st.number_input("الجزء الآجل", min_value=0.0, step=10.0)
-            vat_rate = expense_name = adjustment_side = inventory_side = None
-        elif is_vat_operation(selected_op):
-            c1, c2 = st.columns(2)
-            with c1: total_amount = st.number_input("المبلغ شامل الضريبة", min_value=0.0, step=10.0)
-            with c2: vat_rate = st.number_input("نسبة الضريبة (%)", value=15.0) / 100
-            cash_amount = credit_amount = expense_name = adjustment_side = inventory_side = None
-        elif selected_op == "سداد مصروف":
-            c1, c2 = st.columns(2)
-            with c1: total_amount = st.number_input("المبلغ", min_value=0.0, step=10.0)
-            with c2: expense_name = st.text_input("اسم المصروف", value="كهرباء")
-            cash_amount = credit_amount = vat_rate = adjustment_side = inventory_side = None
-        elif is_inventory_adjustment(selected_op):
-            c1, c2 = st.columns(2)
-            with c1: total_amount = st.number_input("قيمة التسوية", min_value=0.0, step=10.0)
-            with c2:
-                adj_type = st.selectbox("نوع التسوية", ["عجز (نقص)", "فائض (زيادة)"])
-                if adj_type == "عجز (نقص)": adjustment_side, inventory_side = "debit", "credit"
-                else: adjustment_side, inventory_side = "credit", "debit"
-            cash_amount = credit_amount = vat_rate = expense_name = None
-        else:
-            total_amount = st.number_input("المبلغ", min_value=0.0, step=10.0)
-            cash_amount = credit_amount = vat_rate = expense_name = adjustment_side = inventory_side = None
+        if is_mixed_operation(selected_op):  
+            c1, c2, c3 = st.columns(3)  
+            with c1: total_amount = st.number_input("المبلغ الإجمالي", min_value=0.0, step=10.0)  
+            with c2: cash_amount = st.number_input("الجزء النقدي", min_value=0.0, step=10.0)  
+            with c3: credit_amount = st.number_input("الجزء الآجل", min_value=0.0, step=10.0)  
+            vat_rate = expense_name = adjustment_side = inventory_side = None  
+        elif is_vat_operation(selected_op):  
+            c1, c2 = st.columns(2)  
+            with c1: total_amount = st.number_input("المبلغ شامل الضريبة", min_value=0.0, step=10.0)  
+            with c2: vat_rate = st.number_input("نسبة الضريبة (%)", value=15.0) / 100  
+            cash_amount = credit_amount = expense_name = adjustment_side = inventory_side = None  
+        elif selected_op == "سداد مصروف":  
+            c1, c2 = st.columns(2)  
+            with c1: total_amount = st.number_input("المبلغ", min_value=0.0, step=10.0)  
+            with c2: expense_name = st.text_input("اسم المصروف", value="كهرباء")  
+            cash_amount = credit_amount = vat_rate = adjustment_side = inventory_side = None  
+        elif is_inventory_adjustment(selected_op):  
+            c1, c2 = st.columns(2)  
+            with c1: total_amount = st.number_input("قيمة التسوية", min_value=0.0, step=10.0)  
+            with c2:  
+                adj_type = st.selectbox("نوع التسوية", ["عجز (نقص)", "فائض (زيادة)"])  
+                if adj_type == "عجز (نقص)": 
+                    adjustment_side, inventory_side = "debit", "credit"  
+                else: 
+                    adjustment_side, inventory_side = "credit", "debit"  
+            cash_amount = credit_amount = vat_rate = expense_name = None  
+        else:  
+            total_amount = st.number_input("المبلغ", min_value=0.0, step=10.0)  
+            cash_amount = credit_amount = vat_rate = expense_name = adjustment_side = inventory_side = None  
 
-        if st.button("✨ توليد القيد المحاسبي", type="primary", use_container_width=True):
-            if total_amount > 0:
-                with st.spinner("⚙️ معالجة التوجيه المحاسبي..."):
-                    entry, display, confidence, confidence_label, confidence_color = generate_template_entry(
-                        operation_type=selected_op, amount=total_amount,
-                        cash_amount=cash_amount, credit_amount=credit_amount,
-                        expense_name=expense_name, vat_rate=vat_rate,
-                        adjustment_side=adjustment_side, inventory_side=inventory_side
-                    )
-                if entry:
-                    st.markdown("### 🧾 القيد المحاسبي المولد:")
-                    st.code(display, language="text")
-                    st.markdown(f"""
-                    <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid {confidence_color}; padding: 12px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
-                        <strong style="color: #FFF;">مستوى الثقة في التوجيه الآلي:</strong>
-                        <span style="background: {confidence_color}; color: #000; padding: 4px 12px; border-radius: 20px; font-weight: bold;">{confidence}% - {confidence_label}</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.error(display)
-            else:
+        if st.button("✨ توليد القيد المحاسبي", type="primary", use_container_width=True):  
+            if total_amount > 0:  
+                with st.spinner("⚙️ معالجة التوجيه المحاسبي..."):  
+                    entry, display, confidence, confidence_label, confidence_color = generate_template_entry(  
+                        operation_type=selected_op, amount=total_amount,  
+                        cash_amount=cash_amount, credit_amount=credit_amount,  
+                        expense_name=expense_name, vat_rate=vat_rate,  
+                        adjustment_side=adjustment_side, inventory_side=inventory_side  
+                    )  
+                if entry:  
+                    st.markdown("### 🧾 القيد المحاسبي المولد:")  
+                    st.code(display, language="text")  
+                    st.markdown(f"""  
+                    <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid {confidence_color}; padding: 12px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">  
+                        <strong style="color: #FFF;">مستوى الثقة في التوجيه الآلي:</strong>  
+                        <span style="background: {confidence_color}; color: #000; padding: 4px 12px; border-radius: 20px; font-weight: bold;">{confidence}% - {confidence_label}</span>  
+                    </div>  
+                    """, unsafe_allow_html=True)  
+                else:  
+                    st.error(display)  
+            else:  
                 st.warning("⚠️ يرجى إدخال مبلغ صحيح أكبر من الصفر.")
 
     # ====== تبويب 6: الاحتيال ======
@@ -332,16 +384,16 @@ def show():
             entries = get_recent_entries()
             if entries:
                 df = pd.DataFrame(entries)
-                prompt = f"""أنت مدقق مالي جنائي ومراجع داخلي (Forensic Auditor). 
+                prompt = f"""أنت مدقق مالي جنائي ومراجع داخلي (Forensic Auditor).
 افحص هذه القيود الأخيرة للكشف عن أي شذوذ، تلاعب، أو توجيه محاسبي غير منطقي:\n{df.to_string()}
-**المطلوب تقديم تقرير تدقيق مهيكل:**
-1. **نتيجة الفحص الأولية:** التقييم العام لسلامة القيود.
-2. **الملاحظات والتشوهات (إن وجدت):** تحديد القيود المشكوك فيها مع شرح السبب المالي.
-3. **مؤشرات الخطر الإداري:** دلالات هذه التشوهات على الرقابة.
-4. **التوصيات الرقابية:** خطوات عملية لضبط الرقابة الداخلية ومنع الاحتيال مستقبلاً."""
+المطلوب تقديم تقرير تدقيق مهيكل:
+1. نتيجة الفحص الأولية: التقييم العام لسلامة القيود.
+2. الملاحظات والتشوهات (إن وجدت): تحديد القيود المشكوك فيها مع شرح السبب المالي.
+3. مؤشرات الخطر الإداري: دلالات هذه التشوهات على الرقابة.
+4. التوصيات الرقابية: خطوات عملية لضبط الرقابة الداخلية ومنع الاحتيال مستقبلاً."""
                 with st.spinner("🔍 جاري الفحص الجنائي العميق للقيود..."):
                     ans = query_groq(prompt, "افحص القيود واستخرج تقريراً", model=model, max_tokens=2048)
-                render_ai_response(ans)
+                    render_ai_response(ans)
             else:
                 st.info("لا توجد قيود كافية للفحص.")
 
@@ -352,14 +404,14 @@ def show():
         if st.button("🚀 توليد التنبؤ المالي", type="primary"):
             data = get_comprehensive_data()
             prompt = f"""أنت خبير تخطيط مالي واستشراف أعمال (FP&A Manager). بناءً على البيانات الشاملة: {json.dumps(data, ensure_ascii=False)}
-**المطلوب إعداد خطة استشرافية للفترة ({period}) مهيكلة كالتالي:**
-1. **التوقعات المالية:** تحليل احترافي للاتجاهات المتوقعة (الإيرادات والنفقات).
-2. **جدول السيناريوهات:** تقديرات متوقعة رقمية (محافظة ومتفائلة).
-3. **المخاطر المحتملة (Risk Factors):** التحديات الاقتصادية والتشغيلية القادمة.
-4. **استراتيجيات التحوط والنمو:** توجيهات مالية وإدارية للحفاظ على استقرار التدفقات النقدية وتعظيم الأرباح."""
+المطلوب إعداد خطة استشرافية للفترة ({period}) مهيكلة كالتالي:
+1. التوقعات المالية: تحليل احترافي للاتجاهات المتوقعة (الإيرادات والنفقات).
+2. جدول السيناريوهات: تقديرات متوقعة رقمية (محافظة ومتفائلة).
+3. المخاطر المحتملة (Risk Factors): التحديات الاقتصادية والتشغيلية القادمة.
+4. استراتيجيات التحوط والنمو: توجيهات مالية وإدارية للحفاظ على استقرار التدفقات النقدية وتعظيم الأرباح."""
             with st.spinner("🔮 جاري محاكاة التوقعات المستقبلية..."):
                 ans = query_groq(prompt, "قم بتوليد التنبؤ المالي", model=model, max_tokens=2048)
-            render_ai_response(ans)
+                render_ai_response(ans)
 
     # ====== تبويب 8: التحليل الشامل ======
     with t8:
@@ -367,15 +419,15 @@ def show():
         if st.button("📄 إصدار التقرير الشامل", type="primary", use_container_width=True):
             data = get_comprehensive_data()
             prompt = f"""أنت مستشار استراتيجي ومالي لمجلس الإدارة. بناءً على: {json.dumps(data, ensure_ascii=False)}
-**المطلوب إعداد تقرير مجلس إدارة (Board Report) احترافي وشامل، مهيكل كالتالي:**
-1. **الملخص التنفيذي:** نظرة عامة ورؤية ثاقبة لوضع الشركة.
-2. **الأداء المالي (Financials):** تحليل معمق مدعوم بالأرقام والجداول لأهم المؤشرات.
-3. **الأداء التشغيلي (Operations):** تحليل لسلاسل الإمداد، المبيعات، والكوادر البشرية.
-4. **تقييم المخاطر (Risk Assessment):** تسليط الضوء على أبرز العقبات والمخاطر المحدقة.
-5. **القرارات الاستراتيجية المقترحة:** توصيات حاسمة موجهة للإدارة العليا لاتخاذها لضمان استدامة الأعمال ونموها."""
+المطلوب إعداد تقرير مجلس إدارة (Board Report) احترافي وشامل، مهيكل كالتالي:
+1. الملخص التنفيذي: نظرة عامة ورؤية ثاقبة لوضع الشركة.
+2. الأداء المالي (Financials): تحليل معمق مدعوم بالأرقام والجداول لأهم المؤشرات.
+3. الأداء التشغيلي (Operations): تحليل لسلاسل الإمداد، المبيعات، والكوادر البشرية.
+4. تقييم المخاطر (Risk Assessment): تسليط الضوء على أبرز العقبات والمخاطر المحدقة.
+5. القرارات الاستراتيجية المقترحة: توصيات حاسمة موجهة للإدارة العليا لاتخاذها لضمان استدامة الأعمال ونموها."""
             with st.spinner("🧠 يتم الآن تجميع وتوليد التقرير الشامل..."):
                 ans = query_groq(prompt, "أصدر تقرير مجلس الإدارة", model=model, max_tokens=3000)
-            render_ai_response(ans)
+                render_ai_response(ans)
 
     # ====== تبويب 9: مراكز التكلفة ======
     with t9:
@@ -385,22 +437,22 @@ def show():
             c_options = {f"{c['code']} - {c['name']}": c['id'] for c in centers}
             selected_cc = st.selectbox("حدد مركز التكلفة (القطاع):", list(c_options.keys()))
             cc_id = c_options[selected_cc]
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                if st.button("📊 تقييم الأداء", type="primary", use_container_width=True):
-                    with st.spinner("جاري التقييم التحليلي..."):
-                        analysis = analyze_cost_center_performance(cc_id)
-                        render_ai_response(analysis)
-            with col2:
-                if st.button("⚖️ مقارنة القطاعات", type="primary", use_container_width=True):
-                    with st.spinner("جاري مقارنة المراكز..."):
-                        comp = compare_cost_centers()
-                        render_ai_response(comp)
-            with col3:
-                if st.button("📉 تحليل الانحرافات", type="primary", use_container_width=True):
-                    with st.spinner("جاري تحليل الموازنة..."):
-                        budget = get_cost_center_budget_analysis(cc_id, datetime.now().year)
-                        render_ai_response(budget)
-        else:
+
+            col1, col2, col3 = st.columns(3)  
+            with col1:  
+                if st.button("📊 تقييم الأداء", type="primary", use_container_width=True):  
+                    with st.spinner("جاري التقييم التحليلي..."):  
+                        analysis = analyze_cost_center_performance(cc_id)  
+                        render_ai_response(analysis)  
+            with col2:  
+                if st.button("⚖️ مقارنة القطاعات", type="primary", use_container_width=True):  
+                    with st.spinner("جاري مقارنة المراكز..."):  
+                        comp = compare_cost_centers()  
+                        render_ai_response(comp)  
+            with col3:  
+                if st.button("📉 تحليل الانحرافات", type="primary", use_container_width=True):  
+                    with st.spinner("جاري تحليل الموازنة..."):  
+                        budget = get_cost_center_budget_analysis(cc_id, datetime.now().year)  
+                        render_ai_response(budget)  
+        else:  
             st.warning("⚠️ لا توجد مراكز تكلفة معرفة أو نشطة في النظام.")
