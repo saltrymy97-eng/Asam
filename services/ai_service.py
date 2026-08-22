@@ -118,7 +118,7 @@ def get_chat_sessions():
     return [dict(s) for s in sessions]
 
 # ===================== ذاكرة المحادثة (Memory Compression) =====================
-def compress_chat_memory(session_id,model="qwen/qwen3.6-27b"):
+def compress_chat_memory(session_id,model="openai/gpt-oss-20b"):
     history = get_chat_history(session_id, limit=10)
     if not history:
         return ""
