@@ -86,7 +86,7 @@ def render_ai_response(content):
     """, unsafe_allow_html=True)
 
 def show():
-    # ===== حقن CSS المعدل لحل مشكلة القائمة الجانبية =====
+    # ===== حقن CSS المعدل لحل مشكلة القائمة الجانبية والتبويبات =====
     st.markdown(f"""
     <style>
     /* 1. تغيير لون الخلفية للتطبيق بالكامل دون العبث باتجاه القائمة الجانبية */
@@ -123,7 +123,8 @@ def show():
     div[data-baseweb="tab-list"] {{
         background-color: transparent !important;
         gap: 8px;
-        direction: rtl; /* ضمان أن التبويبات تقرأ من اليمين */
+        direction: ltr; /* ⬅️ تم التعديل: جعل التبويبات من اليسار لليمين لمطابقة باقي النظام */
+        overflow-x: auto; /* ضمان تمرير التبويبات في شاشات الهاتف بسلاسة */
     }}
     div[data-baseweb="tab"] {{
         background-color: #1F2937 !important;
@@ -131,6 +132,7 @@ def show():
         color: {TEXT_SECONDARY} !important;
         border: 1px solid transparent;
         padding: 10px 16px !important;
+        white-space: nowrap; /* منع انقسام النص لسطرين في الهاتف */
     }}
     div[aria-selected="true"] {{
         background-color: #111827 !important;
