@@ -57,15 +57,12 @@ def audio_to_text(audio_file):
         return f"❌ خطأ في التعرف على الصوت: {str(e)}"
 
 def audio_input_widget(key="audio"):
+    # إزالة رسالة st.success من هنا لمنع تشوه التصميم في العمود الضيق
     audio_value = st.audio_input("🎤", key=key, label_visibility="collapsed")
     if audio_value:
         with st.spinner("🎙️ جاري تحويل الصوت إلى نص..."):
             text = audio_to_text(audio_value)
-            if text and not text.startswith("❌"):
-                st.success(f"✅ {text}")
-                return text
-            else:
-                st.error(text)
+            return text
     return ""
 
 def render_ai_response(content):
@@ -82,6 +79,8 @@ def render_ai_response(content):
         color: {TEXT_PRIMARY};
         font-size: 1.05rem;
         line-height: 1.7;
+        direction: rtl;
+        text-align: right;
     ">
         {content}
     </div>
@@ -91,9 +90,10 @@ def show():
     # ===== حقن CSS للتصميم الليلي الفاخر (مطابق للصور) =====
     st.markdown(f"""
     <style>
-    /* خلفية التطبيق */
+    /* دعم الاتجاه من اليمين لليسار */
     .stApp {{
         background-color: {BG_COLOR};
+        direction: rtl;
     }}
     
     /* تصميم الأزرار */
@@ -130,7 +130,7 @@ def show():
     div[aria-selected="true"] {{
         background-color: #111827 !important;
         color: {TEXT_PRIMARY} !important;
-        border-bottom: 2px solid {ACCENT_RED} !important; /* مطابق للخط الأحمر في الصورة */
+        border-bottom: 2px solid {ACCENT_RED} !important;
     }}
 
     /* الحقول والإدخالات */
@@ -139,6 +139,11 @@ def show():
         color: {TEXT_PRIMARY} !important;
         border: 1px solid #374151 !important;
         border-radius: 8px !important;
+    }}
+    
+    /* إصلاح عرض حاوية إدخال الصوت لتبدو أفضل على اللابتوب */
+    [data-testid="stAudioInput"] {{
+        min-width: 100px;
     }}
     </style>
     """, unsafe_allow_html=True)
@@ -155,7 +160,7 @@ def show():
 
     # ===== الهيدر الفاخر المطابق لتصميم ENTERPRISE HUB =====
     st.markdown(f"""
-    <div style="background: {CARD_BG}; border-radius: 20px; padding: 2rem; margin-bottom: 2rem; border: 1px solid #1F2937; box-shadow: {GLOW_SHADOW};">
+    <div style="background: {CARD_BG}; border-radius: 20px; padding: 2rem; margin-bottom: 2rem; border: 1px solid #1F2937; box-shadow: {GLOW_SHADOW}; direction: rtl;">
         <div style="display: inline-block; background: rgba(139, 92, 246, 0.15); padding: 6px 12px; border-radius: 8px; margin-bottom: 1rem;">
             <span style="color: {ACCENT_PURPLE}; font-weight: 800; font-size: 0.9rem; letter-spacing: 1px;">🪐 AI ENTERPRISE HUB</span>
         </div>
@@ -171,15 +176,29 @@ def show():
     # ====== تبويب 1: المساعد ======
     with t1:
         st.markdown(f"<h3 style='color:{TEXT_PRIMARY};'>💬 اسأل عن أي شيء في نظامك</h3>", unsafe_allow_html=True)
-        mic_col, chat_col = st.columns([1, 11])
+        
+        # تعديل مساحة الأعمدة لتناسب اللابتوب وتمنع تشوه التصميم
+        mic_col, chat_col = st.columns([2, 10])
+        
         with mic_col:
             voice_text = audio_input_widget("assistant_audio")
+            
         with chat_col:
             q = st.chat_input("اطرح سؤالك المالي أو التشغيلي هنا...", key="ai-chat-input")
         
-        if voice_text: q = voice_text
-        if q:
-            st.chat_message("user").write(q)
+        # معالجة المدخلات (صوت أو نص)
+        active_query = ""
+        if voice_text:
+            if voice_text.startswith("❌"):
+                st.error(voice_text)
+            else:
+                active_query = voice_text
+        elif q:
+            active_query = q
+
+        if active_query:
+            # الآن النص المستخرج من الصوت سيظهر بعرض الشاشة الكامل كرسالة دردشة
+            st.chat_message("user").write(active_query)
             data = get_comprehensive_data()
             d = json.dumps(data, ensure_ascii=False, default=str)
             # أمر صارم لمنع الإنشائيات
@@ -191,9 +210,9 @@ def show():
 3. يمنع منعاً باتاً كتابة أي خاتمة إنشائية."""
             
             with st.spinner("🧠 جاري المعالجة..."):
-                ans = query_groq(prompt, q, model=model, max_tokens=1500)
+                ans = query_groq(prompt, active_query, model=model, max_tokens=1500)
             st.chat_message("assistant").write(ans)
-            save_chat_history(st.session_state.active_session, "user", q, model, "مساعد")
+            save_chat_history(st.session_state.active_session, "user", active_query, model, "مساعد")
             save_chat_history(st.session_state.active_session, "assistant", ans, model, "مساعد")
 
     # ====== تبويب 2: المحلل ======
