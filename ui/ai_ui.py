@@ -123,7 +123,8 @@ def show():
     div[data-baseweb="tab-list"] {{
         background-color: transparent !important;
         gap: 8px;
-        direction: ltr !important; /* ⬅️ تم التعديل: فرض ترتيب التبويبات من اليسار لليمين بقوة */
+        display: flex !important;
+        flex-direction: row-reverse !important; /* ⬅️ الحل الجذري: عكس الترتيب المرئي للتبويبات لتبدأ من اليسار لليمين */
         overflow-x: auto; /* ضمان تمرير التبويبات في شاشات الهاتف بسلاسة */
     }}
     div[data-baseweb="tab"] {{
@@ -133,7 +134,6 @@ def show():
         border: 1px solid transparent;
         padding: 10px 16px !important;
         white-space: nowrap; /* منع انقسام النص لسطرين في الهاتف */
-        direction: rtl !important; /* ⬅️ تم التعديل: إبقاء النصوص والأيقونات داخل التبويب مرتبة من اليمين لليسار */
     }}
     div[aria-selected="true"] {{
         background-color: #111827 !important;
