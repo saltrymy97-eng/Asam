@@ -10,6 +10,15 @@ GROQ_API_KEY = "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"
 
 DB_PATH = os.path.join("data", "erp.db")
 
+# ========== موجه الذكاء الاصطناعي المالي (للاستخدام العام في الدردشة) ==========
+MASTER_FINANCIAL_PROMPT = """أنت المساعد الذكي لنظام (حوكمة ERP)، نظام محاسبي وإداري متقدم. 
+شخصيتك: احترافي جداً، دقيق، ولبق. تتحدث كمدير مالي (CFO) أو مستشار ضرائب ومحاسبة قانوني.
+قواعدك الأساسية:
+1. قدم إجابات وافية، منظمة، ومقسمة بعناية باستخدام العناوين العريضة والنقاط (Bullet points).
+2. استخدم المصطلحات المحاسبية الصحيحة دائماً.
+3. عندما تُسأل عن استشارة، لا تكتفِ بالإجابة المباشرة، بل اشرح التأثير المالي للقرار.
+4. حافظ على تنسيق ممتاز وسهل القراءة باستخدام الـ Markdown."""
+
 # ========== طبقة تخزين مؤقت بسيطة (Cache Layer) ==========
 _cache = {}          # { key: (data, timestamp) }
 CACHE_TTL_SECONDS = 300  # 5 دقائق
@@ -357,7 +366,7 @@ def get_financial_ratios():
     }
 def get_trend_analysis(): return get_trend_snapshot()
 
-# ===================== دوال مراكز التكلفة (مُعدّلة للاختصار) =====================
+# ===================== دوال مراكز التكلفة (مُعدّلة للاحترافية والتحليل العميق) =====================
 def analyze_cost_center_performance(center_id):
     from services import cost_center_service as ccs
     center = ccs.get_cost_center_by_id(center_id)
@@ -366,26 +375,34 @@ def analyze_cost_center_performance(center_id):
     income_stmt = ccs.get_cost_center_income_statement(center_id, '2020-01-01', datetime.now().strftime('%Y-%m-%d'))
     data_text = f"""المركز: {center['name']} | مدين: {balance['total_debit']} | دائن: {balance['total_credit']} | صافي: {balance['net']} | إيرادات: {income_stmt['income']} | مصروفات: {income_stmt['expenses']} | ربح: {income_stmt['net_profit']}"""
     
-    system_prompt = """أنت محلل مالي. قدم تحليلك بشكل مختصر جداً ومباشر.
-استخدم الجداول والنقاط (Bullet points) فقط. يمنع منعاً باتاً استخدام المقدمات أو الخاتمات.
-المطلوب:
-1. جدول ملخص الأداء.
-2. نقاط القوة والضعف (نقاط سريعة).
-3. توصيات محددة لتحسين الأداء."""
-    return query_groq(system_prompt, data_text, max_tokens=1000)
+    system_prompt = """أنت مستشار مالي ومحاسب إداري خبير تعمل ضمن نظام (حوكمة ERP). 
+مهمتك تقديم تحليل مالي شامل وعميق لأداء مركز التكلفة بناءً على البيانات المقدمة.
+استخدم لغة مهنية، رصينة، ومصطلحات محاسبية دقيقة.
+
+المطلوب هيكلة الإجابة كالتالي:
+1. **نظرة عامة (Executive Summary):** فقرة تحليلية توضح الحالة العامة للمركز المالي.
+2. **التحليل الرقمي (Financial Breakdown):** جدول أو نقاط تفصيلية توضح قراءة دقيقة للأرقام (الإيرادات، المصروفات، الربحية).
+3. **نقاط القوة والضعف (SWOT Analysis):** تحليل متعمق لأداء المركز.
+4. **توصيات استراتيجية (Strategic Recommendations):** 3-4 توصيات عملية قابلة للتنفيذ لتحسين كفاءة المركز وتقليل الهدر المالي."""
+    
+    return query_groq(system_prompt, data_text, max_tokens=2048, temperature=0.4)
 
 def compare_cost_centers():
     summary = get_cost_center_snapshot()
     if not summary: return "لا توجد بيانات"
     data_text = json.dumps(summary, ensure_ascii=False)
     
-    system_prompt = """أنت محلل مالي. قدم المقارنة باختصار شديد.
-يمنع استخدام أي مقدمات أو خاتمات إنشائية.
-المطلوب:
-1. جدول مقارنة مباشر للترتيب والربحية.
-2. نقطة واحدة لأفضل مركز ونقطة لأسوأ مركز.
-3. توصيتين استراتيجيتين فقط في شكل نقاط."""
-    return query_groq(system_prompt, data_text, max_tokens=1000)
+    system_prompt = """أنت مدير مالي (CFO) خبير تستخدم نظام (حوكمة ERP).
+المطلوب منك تقديم دراسة مقارنة تحليلية شاملة لمراكز التكلفة المختلفة في المؤسسة.
+تجنب السطحية، وقدم رؤى (Insights) تساعد الإدارة العليا في اتخاذ القرارات.
+
+المطلوب هيكلة الإجابة كالتالي:
+1. **ملخص الأداء المقارن:** مقدمة توضح التباين بين المراكز المختلفة.
+2. **جدول التصنيف المالي:** ترتيب المراكز من الأفضل إلى الأسوأ بناءً على العوائد وصافي الرصيد.
+3. **تحليل الفجوات (Gap Analysis):** تحليل لأسباب تفوق مراكز معينة وتراجع أخرى.
+4. **توجيهات إعادة هيكلة الموارد:** توصيات استراتيجية حول كيفية توجيه الاستثمارات أو تقليص النفقات في المراكز بناءً على نتائجها."""
+    
+    return query_groq(system_prompt, data_text, max_tokens=2500, temperature=0.4)
 
 def predict_cost_center_expenses(center_id, months=3):
     from services import cost_center_service as ccs
@@ -395,22 +412,32 @@ def predict_cost_center_expenses(center_id, months=3):
     history = [dict(m) for m in conn.execute("SELECT strftime('%Y-%m', je.date) as month, SUM(cca.amount) as total FROM cost_center_allocations cca JOIN journal_lines jl ON cca.journal_line_id = jl.id JOIN journal_entries je ON jl.entry_id = je.id WHERE cca.cost_center_id = ? AND jl.debit > 0 GROUP BY month ORDER BY month DESC LIMIT 12", (center_id,)).fetchall()]
     conn.close()
     
-    system_prompt = """أنت خبير مالي. اكتب التوقعات مباشرة بدون مقدمات.
+    system_prompt = """أنت محلل بيانات مالية وخبير في التنبؤ المالي (Financial Forecasting).
+بناءً على البيانات التاريخية لمركز التكلفة، قدم قراءة استشرافية للمصروفات المتوقعة.
+
 المطلوب:
-1. جدول التوقعات (الشهر، القيمة المتوقعة، نسبة التغير).
-2. ثلاث نقاط مختصرة جداً عن العوامل المؤثرة والتوصيات."""
-    return query_groq(system_prompt, json.dumps(history), max_tokens=800)
+1. **مقدمة التنبؤ:** تحليل للاتجاه العام (Trend Analysis) للمصروفات بناءً على التاريخ الماضي.
+2. **جدول التوقعات:** أرقام المتوقعة للأشهر القادمة مع نسب النمو أو الانكماش المحتملة.
+3. **مؤشرات الخطر (Risk Indicators):** تحديد أي طفرات مالية غير طبيعية قد تحدث.
+4. **توصيات التحوط المالي:** خطوات استباقية لضمان عدم تجاوز الميزانية المحددة."""
+    
+    return query_groq(system_prompt, json.dumps(history), max_tokens=2048, temperature=0.3)
 
 def get_cost_center_budget_analysis(center_id, fiscal_year):
     from services import cost_center_service as ccs
     variance_data = ccs.get_budget_variance(center_id, fiscal_year)
     if not variance_data: return "لا توجد موازنات مسجلة"
     
-    system_prompt = """أنت محلل موازنات. ادخل في صلب الموضوع مباشرة.
-المطلوب:
-1. جدول مباشر يوضح الانحرافات الرئيسية فقط.
-2. 3 نقاط مختصرة لتفسير الانحرافات والتوصيات. بدون أي كلام إنشائي."""
-    return query_groq(system_prompt, json.dumps(variance_data['details']), max_tokens=1000)
+    system_prompt = """أنت خبير في التخطيط المالي وتحليل الموازنات التقديرية.
+قم بتحليل بيانات الانحراف (Budget Variance) بين المخطط والفعلي لمركز التكلفة.
+
+المطلوب هيكلة الإجابة كالتالي:
+1. **الملخص التنفيذي:** تقييم عام لمدى الالتزام بالموازنة التقديرية.
+2. **تحليل الانحرافات الجوهرية:** جدول تفصيلي يوضح الحسابات التي شهدت أكبر انحرافات (سلبية أو إيجابية).
+3. **تفسير الانحراف (Root Cause Analysis):** تحليل الأسباب الإدارية أو التشغيلية التي قد تكون أدت إلى هذا التباين.
+4. **التوجيهات التصحيحية:** إجراءات محاسبية وإدارية فورية لضبط الأداء المالي خلال الفترة المتبقية من السنة المالية."""
+    
+    return query_groq(system_prompt, json.dumps(variance_data['details']), max_tokens=2048, temperature=0.3)
 
 # ===================== محرك القيود الآلي (Automated Entry Engine) =====================
 def extract_entry_data(text, model="openai/gpt-oss-120b"):
