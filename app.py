@@ -159,6 +159,8 @@ else:
 
         st.divider()
 
+        # 🆕 تعديل: عمود واحد مرتب بدلاً من عمودين متداخلين
+
         # المجموعة 1: الرئيسية
         st.markdown('<div class="menu-section">🏠 الرئيسية</div>', unsafe_allow_html=True)
         if st.button("📊 لوحة المعلومات", key="dashboard"):
@@ -166,61 +168,49 @@ else:
 
         # المجموعة 2: العمليات
         st.markdown('<div class="menu-section">📦 العمليات</div>', unsafe_allow_html=True)
-        col1, col2 = st.columns(2)
-        with col1:
-            if can_access("المبيعات") and st.button("🛒 مبيعات", key="sales"): st.session_state.current_page = "المبيعات"
-            if can_access("المشتريات") and st.button("📋 مشتريات", key="purchases"): st.session_state.current_page = "المشتريات"
-            if can_access("مرتجعات البضاعة") and st.button("🔄 مرتجعات", key="returns"): st.session_state.current_page = "مرتجعات البضاعة"
-            if can_access("سندات القبض والصرف") and st.button("💵 سندات قبض/صرف", key="receipts"): st.session_state.current_page = "سندات القبض والصرف"
-        with col2:
-            if can_access("المخزون") and st.button("📦 مخزون", key="inventory"): st.session_state.current_page = "المخزون"
-            if can_access("التسويات المخزنية") and st.button("📦 تسويات مخزنية", key="adjustments"): st.session_state.current_page = "التسويات المخزنية"
-            if can_access("المصروفات") and st.button("🧾 مصروفات", key="expenses"): st.session_state.current_page = "المصروفات"
-            # ❌ مُخفى: CRM
-            # if can_access("إدارة العملاء") and st.button("👥 CRM", key="crm"): st.session_state.current_page = "إدارة العملاء"
+        if can_access("المبيعات") and st.button("🛒 مبيعات", key="sales"): st.session_state.current_page = "المبيعات"
+        if can_access("المشتريات") and st.button("📋 مشتريات", key="purchases"): st.session_state.current_page = "المشتريات"
+        if can_access("مرتجعات البضاعة") and st.button("🔄 مرتجعات", key="returns"): st.session_state.current_page = "مرتجعات البضاعة"
+        if can_access("سندات القبض والصرف") and st.button("💵 سندات قبض/صرف", key="receipts"): st.session_state.current_page = "سندات القبض والصرف"
+        if can_access("المخزون") and st.button("📦 مخزون", key="inventory"): st.session_state.current_page = "المخزون"
+        if can_access("التسويات المخزنية") and st.button("📦 تسويات مخزنية", key="adjustments"): st.session_state.current_page = "التسويات المخزنية"
+        if can_access("المصروفات") and st.button("🧾 مصروفات", key="expenses"): st.session_state.current_page = "المصروفات"
+        # ❌ مُخفى: CRM
+        # if can_access("إدارة العملاء") and st.button("👥 CRM", key="crm"): st.session_state.current_page = "إدارة العملاء"
 
         # المجموعة 3: المحاسبة والمالية
         st.markdown('<div class="menu-section">💰 المحاسبة والمالية</div>', unsafe_allow_html=True)
-        col1, col2 = st.columns(2)
-        with col1:
-            if can_access("الحسابات") and st.button("🧾 حسابات", key="accounting"): st.session_state.current_page = "الحسابات"
-            if can_access("شجرة الحسابات") and st.button("🌳 شجرة الحسابات", key="chart"): st.session_state.current_page = "شجرة الحسابات"
-            if can_access("القوائم المالية") and st.button("📈 قوائم مالية", key="financial"): st.session_state.current_page = "القوائم المالية"
-            # ❌ مُخفى: مراكز التكلفة
-            # if can_access("مراكز التكلفة") and st.button("🏢 مراكز تكلفة", key="cost_center"): st.session_state.current_page = "مراكز التكلفة"
-            # ❌ مُخفى: العملات
-            # if can_access("العملات") and st.button("💱 عملات", key="currency"): st.session_state.current_page = "العملات"
-            if can_access("الأرصدة الافتتاحية") and st.button("📋 أرصدة افتتاحية", key="opening"): st.session_state.current_page = "الأرصدة الافتتاحية"
-            if can_access("الصندوق") and st.button("💰 صندوق", key="cash"): st.session_state.current_page = "الصندوق"
-        with col2:
-            if can_access("التعاملات البنكية") and st.button("🏦 بنوك", key="bank"): st.session_state.current_page = "التعاملات البنكية"
-            if can_access("الضريبة") and st.button("🧾 ضريبة", key="vat"): st.session_state.current_page = "الضريبة"
-            if can_access("إغلاق الحسابات") and st.button("🔒 إغلاق حسابات", key="closing"): st.session_state.current_page = "إغلاق الحسابات"
-            if can_access("إغلاق الفترات") and st.button("📅 إغلاق فترات", key="period"): st.session_state.current_page = "إغلاق الفترات"
-            if can_access("FIFO المخزون") and st.button("📊 FIFO", key="fifo"): st.session_state.current_page = "FIFO المخزون"
-            # ❌ مُخفى: تقييم العملات
-            # if can_access("تقييم العملات") and st.button("💱 تقييم عملات", key="revaluation"): st.session_state.current_page = "تقييم العملات"
-            if can_access("التقارير المالية XBRL") and st.button("🌐 تقارير XBRL", key="pdf"): st.session_state.current_page = "التقارير المالية XBRL"
+        if can_access("الحسابات") and st.button("🧾 حسابات", key="accounting"): st.session_state.current_page = "الحسابات"
+        if can_access("شجرة الحسابات") and st.button("🌳 شجرة الحسابات", key="chart"): st.session_state.current_page = "شجرة الحسابات"
+        if can_access("القوائم المالية") and st.button("📈 قوائم مالية", key="financial"): st.session_state.current_page = "القوائم المالية"
+        # ❌ مُخفى: مراكز التكلفة
+        # if can_access("مراكز التكلفة") and st.button("🏢 مراكز تكلفة", key="cost_center"): st.session_state.current_page = "مراكز التكلفة"
+        # ❌ مُخفى: العملات
+        # if can_access("العملات") and st.button("💱 عملات", key="currency"): st.session_state.current_page = "العملات"
+        if can_access("الأرصدة الافتتاحية") and st.button("📋 أرصدة افتتاحية", key="opening"): st.session_state.current_page = "الأرصدة الافتتاحية"
+        if can_access("الصندوق") and st.button("💰 صندوق", key="cash"): st.session_state.current_page = "الصندوق"
+        if can_access("التعاملات البنكية") and st.button("🏦 بنوك", key="bank"): st.session_state.current_page = "التعاملات البنكية"
+        if can_access("الضريبة") and st.button("🧾 ضريبة", key="vat"): st.session_state.current_page = "الضريبة"
+        if can_access("إغلاق الحسابات") and st.button("🔒 إغلاق حسابات", key="closing"): st.session_state.current_page = "إغلاق الحسابات"
+        if can_access("إغلاق الفترات") and st.button("📅 إغلاق فترات", key="period"): st.session_state.current_page = "إغلاق الفترات"
+        if can_access("FIFO المخزون") and st.button("📊 FIFO", key="fifo"): st.session_state.current_page = "FIFO المخزون"
+        # ❌ مُخفى: تقييم العملات
+        # if can_access("تقييم العملات") and st.button("💱 تقييم عملات", key="revaluation"): st.session_state.current_page = "تقييم العملات"
+        if can_access("التقارير المالية XBRL") and st.button("🌐 تقارير XBRL", key="pdf"): st.session_state.current_page = "التقارير المالية XBRL"
 
         # المجموعة 4: إدارة الأعمال — ❌ مُخفاة بالكامل
         # st.markdown('<div class="menu-section">👥 إدارة الأعمال</div>', unsafe_allow_html=True)
-        # col1, col2 = st.columns(2)
-        # with col1:
-        #     if can_access("الموارد البشرية") and st.button("👔 موارد بشرية", key="hr"): st.session_state.current_page = "الموارد البشرية"
-        #     if can_access("كشف الرواتب") and st.button("💰 رواتب", key="payroll"): st.session_state.current_page = "كشف الرواتب"
-        # with col2:
-        #     if can_access("الأصول الثابتة") and st.button("🏗️ أصول ثابتة", key="assets"): st.session_state.current_page = "الأصول الثابتة"
-        #     if can_access("المرفقات") and st.button("📎 مرفقات", key="attachments"): st.session_state.current_page = "المرفقات"
+        # if can_access("الموارد البشرية") and st.button("👔 موارد بشرية", key="hr"): st.session_state.current_page = "الموارد البشرية"
+        # if can_access("كشف الرواتب") and st.button("💰 رواتب", key="payroll"): st.session_state.current_page = "كشف الرواتب"
+        # if can_access("الأصول الثابتة") and st.button("🏗️ أصول ثابتة", key="assets"): st.session_state.current_page = "الأصول الثابتة"
+        # if can_access("المرفقات") and st.button("📎 مرفقات", key="attachments"): st.session_state.current_page = "المرفقات"
 
         # المجموعة 5: النظام والأمان
         st.markdown('<div class="menu-section">⚙️ النظام والأمان</div>', unsafe_allow_html=True)
-        col1, col2 = st.columns(2)
-        with col1:
-            if can_access("الصلاحيات") and st.button("🛡️ صلاحيات", key="roles"): st.session_state.current_page = "الصلاحيات"
-            # ❌ مُخفى: سجل التدقيق
-            # if can_access("سجل التدقيق") and st.button("📋 سجل تدقيق", key="audit"): st.session_state.current_page = "سجل التدقيق"
-        with col2:
-            if can_access("نسخ احتياطي") and st.button("💾 نسخ احتياطي", key="backup"): st.session_state.current_page = "نسخ احتياطي"
+        if can_access("الصلاحيات") and st.button("🛡️ صلاحيات", key="roles"): st.session_state.current_page = "الصلاحيات"
+        # ❌ مُخفى: سجل التدقيق
+        # if can_access("سجل التدقيق") and st.button("📋 سجل تدقيق", key="audit"): st.session_state.current_page = "سجل التدقيق"
+        if can_access("نسخ احتياطي") and st.button("💾 نسخ احتياطي", key="backup"): st.session_state.current_page = "نسخ احتياطي"
 
         # المجموعة 6: الذكاء الاصطناعي — ❌ مُخفاة بالكامل
         # st.markdown('<div class="menu-section">🤖 الذكاء الاصطناعي</div>', unsafe_allow_html=True)
@@ -228,22 +218,22 @@ else:
         #     st.session_state.current_page = "المساعد الذكي"
 
         st.divider()
-        
-        # ✅ زر حقن البيانات (للمدير فقط)
-        if username == 'admin':
-            st.markdown('<div class="menu-section">🧪 أدوات المطور</div>', unsafe_allow_html=True)
-            if st.button("⚡ حقن 15,000 عملية", key="seed_data", help="توليد بيانات تجريبية لاختبار النظام"):
-                with st.spinner("🔄 جاري حقن 15,000 عملية مالية..."):
-                    import subprocess
-                    import sys
-                    result = subprocess.run([sys.executable, "seed_data.py"], capture_output=True, text=True)
-                    if result.returncode == 0:
-                        st.success("✅ تم حقن 15,000 عملية بنجاح!")
-                        st.text(result.stdout[-500:])
-                    else:
-                        st.error("❌ فشل حقن البيانات")
-                        st.text(result.stderr[-500:])
-        
+
+        # ❌ مُخفى: أدوات المطور (زر حقن 15,000 عملية) — لا يظهر للعميل
+        # if username == 'admin':
+        #     st.markdown('<div class="menu-section">🧪 أدوات المطور</div>', unsafe_allow_html=True)
+        #     if st.button("⚡ حقن 15,000 عملية", key="seed_data", help="توليد بيانات تجريبية لاختبار النظام"):
+        #         with st.spinner("🔄 جاري حقن 15,000 عملية مالية..."):
+        #             import subprocess
+        #             import sys
+        #             result = subprocess.run([sys.executable, "seed_data.py"], capture_output=True, text=True)
+        #             if result.returncode == 0:
+        #                 st.success("✅ تم حقن 15,000 عملية بنجاح!")
+        #                 st.text(result.stdout[-500:])
+        #             else:
+        #                 st.error("❌ فشل حقن البيانات")
+        #                 st.text(result.stderr[-500:])
+
         # زر الخروج
         if st.button("🚪 تسجيل الخروج", key="logout", help="تسجيل الخروج من النظام"):
             logout_session()
