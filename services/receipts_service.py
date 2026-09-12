@@ -119,7 +119,11 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
     """
     if voucher_date is None:
         voucher_date = date.today().strftime("%Y-%m-%d")
-    
+
+    # ✅ حماية احترافية: رفض المبالغ الصفرية أو الفارغة
+    if not amount or amount <= 0:
+        return None, "المبلغ يجب أن يكون أكبر من صفر"
+
     create_vouchers_table()
     
     conn = get_connection()
@@ -176,23 +180,48 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
         conn.execute("UPDATE vouchers SET journal_entry_id=? WHERE id=?", 
                     (entry_id, voucher_id))
         
-        # ✅ ربط السندات بوحدة الصندوق تلقائياً
-        if account == cash_account_code:
-            try:
-                from services.cash_service import add_cash_transaction, get_all_cash_accounts
-                cash_accounts = get_all_cash_accounts(active_only=True)
-                if cash_accounts:
+        # ✅ ربط السندات بوحدة الصندوق (إصدار احترافي: مطابقة ذكية بدل أول صندوق)
+        try:
+            from services.cash_service import add_cash_transaction, get_all_cash_accounts
+            cash_accounts = get_all_cash_accounts(active_only=True)
+
+            # معرفة اسم حساب التغذية المختار (صندوق أم بنك؟)
+            row = conn.execute("SELECT name FROM accounts WHERE code=?", (account,)).fetchone()
+            acc_name = row["name"] if row else ""
+            is_cash = ("صندوق" in acc_name) or (account == cash_account_code)
+
+            cash_acc = None
+            if is_cash and cash_accounts:
+                # 1) الصندوق الذي رمزه المحاسبي = حساب التغذية المختار
+                for ca in cash_accounts:
+                    if ca.get('account_code') == account:
+                        cash_acc = ca
+                        break
+                # 2) وإلا الصندوق الذي رمزه = الصندوق الوظيفي
+                if cash_acc is None:
+                    for ca in cash_accounts:
+                        if ca.get('account_code') == cash_account_code:
+                            cash_acc = ca
+                            break
+                # 3) آخر حل: أول صندوق نشط
+                if cash_acc is None:
                     cash_acc = cash_accounts[0]
-                    trans_type = "deposit" if voucher_type == "receipt" else "withdrawal"
-                    add_cash_transaction(
-                        cash_acc['id'],
-                        voucher_date,
-                        f"سند {'قبض' if voucher_type == 'receipt' else 'صرف'} #{voucher_id} - {party_name}",
-                        trans_type,
-                        amount
-                    )
-            except Exception:
-                pass
+
+            if cash_acc and amount > 0:
+                trans_type = "deposit" if voucher_type == "receipt" else "withdrawal"
+                ok, msg = add_cash_transaction(
+                    cash_acc['id'],
+                    voucher_date,
+                    f"سند {'قبض' if voucher_type == 'receipt' else 'صرف'} #{voucher_id} - {party_name}",
+                    trans_type,
+                    amount,
+                    reference=f"voucher#{voucher_id}",
+                    create_journal=False  # القيد أُنشئ أعلاه — منع ازدواج القيود
+                )
+                if not ok:
+                    print(f"⚠️ فشل ربط السند بالصندوق: {msg}")
+        except Exception as e:
+            print(f"⚠️ خطأ ربط السند بالصندوق: {e}")
         
         conn.commit()
         
@@ -238,7 +267,7 @@ def get_voucher_details(voucher_id):
         LEFT JOIN customers c ON v.party_type='customer' AND v.party_id = c.id
         LEFT JOIN suppliers s ON v.party_type='supplier' AND v.party_id = s.id
         WHERE v.id = ?
-    """, (voucher_id,)).fetchone()
+    """, ).fetchone()
     if not voucher:
         conn.close()
         return None
