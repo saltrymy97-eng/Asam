@@ -1,4 +1,5 @@
-# services/sales_service.py – (منطق أعمال المبيعات المُحسَّن (إصدار احترافي - حسابات وظيفية)
+# services/sales_service.py – منطق أعمال المبيعات (إصدار احترافي v2.0)
+# ✅ يدعم: البيع النقدي الكامل + الآجل الكامل + الجزئي (دفعة + متبقي)
 import sqlite3
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
@@ -23,7 +24,7 @@ def _to_decimal(value) -> Decimal:
     return Decimal(str(value))
 
 
-# ---------- الدوال الرئيسية ----------
+# ---------- العملاء ----------
 def get_customers():
     """جلب العملاء (ID واسم فقط) للاختيار"""
     conn = get_connection()
@@ -71,15 +72,32 @@ def get_products_for_sale():
     ]
 
 
-def create_sale_invoice(customer_id, items, username="admin", currency_code="YER", exchange_rate=None):
+# ============================================================
+# ✅ الدالة الرئيسية — معدّلة لدعم نقدي/آجل/جزئي
+# ============================================================
+def create_sale_invoice(customer_id, items, username="admin",
+                        currency_code="YER", exchange_rate=None,
+                        paid_amount=None, payment_method="credit",
+                        cash_account=None):
     """
-    إنشاء فاتورة مبيعات كاملة مع:
-    - تجميع الكميات حسب المنتج وفحص المخزون
-    - حساب تكلفة البضاعة المباعة FIFO
-    - القيد المحاسبي قبل commit (ضمان التراجع الكامل)
+    إنشاء فاتورة مبيعات كاملة مع دعم 3 سيناريوهات:
+    
+    1. نقدي كامل:  paid_amount = total  → payment_method='cash'
+    2. آجل كامل:   paid_amount = 0      → payment_method='credit'
+    3. جزئي:       0 < paid_amount < total → payment_method='mixed'
+    
+    Args:
+        paid_amount:    المبلغ المدفوع فوراً (None = آجل كامل)
+        payment_method: 'cash' | 'credit' | 'bank' | 'mixed'
+        cash_account:   كود حساب الصندوق/البنك (مطلوب إذا كان فيه دفع)
+    
+    Returns:
+        (invoice_id, total, None)         عند النجاح
+        (None, Decimal("0"), "رسالة")      عند الفشل
     """
     if not items:
         return None, Decimal("0"), "يجب إضافة منتج واحد على الأقل"
+
     for item in items:
         if item["quantity"] <= 0:
             return None, Decimal("0"), "الكمية يجب أن تكون موجبة"
@@ -87,7 +105,7 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
         if Decimal(str(price)) < 0:
             return None, Decimal("0"), "سعر الوحدة يجب أن لا يكون سالباً"
 
-    # ✅ تجميع الكميات حسب المنتج للفحص الشامل (يمنع التجاوز إذا تكرر نفس المنتج)
+    # تجميع الكميات حسب المنتج
     from collections import defaultdict
     qty_by_product = defaultdict(int)
     for item in items:
@@ -112,7 +130,7 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
     try:
         conn.execute("BEGIN")
 
-        # 1. التحقق من المخزون لكل منتج (بعد تجميع الكميات)
+        # 1. التحقق من المخزون + حساب COGS
         product_prices = {}
         total_cogs = Decimal("0")
         fifo_details = []
@@ -124,16 +142,17 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
             ).fetchone()
             if not row:
                 raise Exception(f"المنتج {product_id} غير موجود")
-            
+
             available = row["quantity"]
             if available < total_qty:
-                raise Exception(f"المخزون غير كافٍ للمنتج '{product_id}'، المتاح: {available}، المطلوب: {total_qty}")
+                raise Exception(
+                    f"المخزون غير كافٍ للمنتج '{product_id}'، المتاح: {available}، المطلوب: {total_qty}"
+                )
 
-            # حساب تكلفة FIFO للكمية الإجمالية لهذا المنتج
             fifo_cost = get_fifo_cost(product_id, total_qty)
             if fifo_cost is None:
                 raise Exception(f"لا توجد دفعات FIFO كافية للمنتج {product_id}")
-            
+
             total_cogs += _to_decimal(fifo_cost)
             fifo_details.append({
                 "product_id": product_id,
@@ -141,17 +160,19 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
                 "fifo_cost": fifo_cost
             })
 
-        # تجهيز الأسعار حسب كل عنصر (قد تختلف الأسعار)
+        # تجهيز الأسعار
         for item in items:
             user_price = item.get("unit_price") or item.get("unit_price_base")
             if user_price is not None:
                 product_prices[item["product_id"]] = _to_decimal(user_price)
             elif item["product_id"] not in product_prices:
-                # إذا لم يحدد السعر، نأخذه من قاعدة البيانات مرة واحدة فقط
-                row = conn.execute("SELECT selling_price FROM products WHERE id = ?", (item["product_id"],)).fetchone()
+                row = conn.execute(
+                    "SELECT selling_price FROM products WHERE id = ?",
+                    (item["product_id"],)
+                ).fetchone()
                 product_prices[item["product_id"]] = _to_decimal(row["selling_price"])
 
-        # 2. حساب المبالغ
+        # 2. حساب الإجماليات
         subtotal_local = Decimal("0")
         subtotal_base = Decimal("0")
 
@@ -173,17 +194,50 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
         vat_amount_base = _quantize(subtotal_base * vat_rate)
         total_base = _quantize(subtotal_base + vat_amount_base)
 
-        # 3. إدراج الفاتورة (باستخدام customer_id)
+        # 3. ✅ معالجة paid_amount
+        if paid_amount is None:
+            paid_amount_dec = Decimal("0")           # آجل كامل افتراضي
+        else:
+            paid_amount_dec = _to_decimal(paid_amount)
+            if paid_amount_dec < 0:
+                raise Exception("المبلغ المدفوع لا يمكن أن يكون سالباً")
+            if paid_amount_dec > total_local:
+                raise Exception(
+                    f"المبلغ المدفوع ({paid_amount_dec}) أكبر من إجمالي الفاتورة ({total_local})"
+                )
+
+        remaining_dec = total_local - paid_amount_dec
+
+        # تحديد payment_method و payment_status تلقائياً إذا لم تُحدد
+        if paid_amount_dec == 0:
+            if payment_method in ('cash', 'bank', 'mixed'):
+                payment_method = 'credit'
+            payment_status = 'unpaid'
+        elif remaining_dec == 0:
+            if payment_method == 'credit':
+                payment_method = 'cash'
+            payment_status = 'paid'
+        else:
+            if payment_method in ('cash', 'bank', 'credit'):
+                payment_method = 'mixed'
+            payment_status = 'partial'
+
+        # 4. إدراج الفاتورة مع الحقول الجديدة
         cur = conn.execute(
             """INSERT INTO invoices 
-               (type, customer_id, invoice_date, total, total_base, status, vat_rate, vat_amount, currency_code, exchange_rate)
-               VALUES (?, ?, date('now'), ?, ?, 'completed', ?, ?, ?, ?)""",
-            ("sale", customer_id, float(total_local), float(total_base), float(vat_rate),
-             float(vat_amount_local), currency_code, float(exchange_rate))
+               (type, customer_id, invoice_date, total, total_base, status, 
+                vat_rate, vat_amount, currency_code, exchange_rate,
+                paid_amount, remaining_amount, payment_status, payment_method)
+               VALUES (?, ?, date('now'), ?, ?, 'completed', ?, ?, ?, ?,
+                       ?, ?, ?, ?)""",
+            ("sale", customer_id, float(total_local), float(total_base),
+             float(vat_rate), float(vat_amount_local), currency_code,
+             float(exchange_rate), float(paid_amount_dec),
+             float(remaining_dec), payment_status, payment_method)
         )
         invoice_id = cur.lastrowid
 
-        # 4. إدراج بنود الفاتورة
+        # 5. إدراج بنود الفاتورة
         for item in items:
             base_price = product_prices[item["product_id"]]
             qty = item["quantity"]
@@ -193,12 +247,12 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
                 (invoice_id, item["product_id"], qty, float(local_unit_price))
             )
 
-        # 5. استهلاك دفعات FIFO وتحديث المخزون
+        # 6. استهلاك FIFO
         for detail in fifo_details:
             consume_fifo(detail["product_id"], detail["quantity"], conn,
                         f"فاتورة مبيعات #{invoice_id}")
 
-        # 6. خصم المخزون من جدول products
+        # 7. خصم المخزون
         for product_id, total_qty in qty_by_product.items():
             conn.execute(
                 "UPDATE products SET quantity = quantity - ? WHERE id = ? AND quantity >= ?",
@@ -207,65 +261,79 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
             if conn.total_changes == 0:
                 raise Exception(f"تعذر خصم المخزون للمنتج {product_id} (تحديث متزامن)")
             conn.execute(
-                "INSERT INTO stock_movements (product_id, type, quantity, date, reference) VALUES (?, 'out', ?, date('now'), ?)",
+                "INSERT INTO stock_movements (product_id, type, quantity, date, reference) "
+                "VALUES (?, 'out', ?, date('now'), ?)",
                 (product_id, total_qty, f"فاتورة مبيعات #{invoice_id}")
             )
 
-        # 7. إنشاء القيد المحاسبي (قبل commit) - باستخدام الحسابات الوظيفية
-        customer_name = "غير معروف"
-        try:
-            row = conn.execute("SELECT name FROM customers WHERE id = ?", (customer_id,)).fetchone()
-            if row:
-                customer_name = row["name"]
-        except:
-            pass
+        # 8. جلب اسم العميل
+        row = conn.execute("SELECT name FROM customers WHERE id = ?", (customer_id,)).fetchone()
+        customer_name = row["name"] if row else "غير معروف"
 
+        # 9. ✅ إنشاء القيد المحاسبي (3 سيناريوهات)
         from services.accounting_service import save_journal_entry
 
-        # ✅ استخدام الحسابات الوظيفية بدلاً من الأكواد الثابتة
         customers_account = get_functional_account("accounts_receivable")
         sales_account = get_functional_account("sales_revenue")
         vat_account = get_functional_account("sales_tax")
         cogs_account = get_functional_account("cogs")
         inventory_account = get_functional_account("inventory")
 
-        lines = [
-            {
-                "account": customers_account,      # العملاء (مدين)
-                "debit": float(total_local),
+        lines = []
+
+        # ✅ الجزء النقدي: الصندوق/البنك مدين
+        if paid_amount_dec > 0:
+            if not cash_account:
+                raise Exception("يجب تحديد حساب الصندوق/البنك عند وجود دفعة نقدية")
+            lines.append({
+                "account": cash_account,
+                "debit": float(paid_amount_dec),
                 "credit": 0,
                 "currency_code": currency_code,
                 "exchange_rate": float(exchange_rate)
-            },
-            {
-                "account": sales_account,          # المبيعات (دائن)
-                "debit": 0,
-                "credit": float(subtotal_local),
+            })
+
+        # ✅ الجزء الآجل: العملاء مدين
+        if remaining_dec > 0:
+            lines.append({
+                "account": customers_account,
+                "debit": float(remaining_dec),
+                "credit": 0,
                 "currency_code": currency_code,
                 "exchange_rate": float(exchange_rate)
-            }
-        ]
+            })
 
+        # ✅ المبيعات دائن
+        lines.append({
+            "account": sales_account,
+            "debit": 0,
+            "credit": float(subtotal_local),
+            "currency_code": currency_code,
+            "exchange_rate": float(exchange_rate)
+        })
+
+        # ✅ الضريبة دائن
         if float(vat_amount_local) > 0:
             lines.append({
-                "account": vat_account,            # ضريبة القيمة المضافة المستحقة (دائن)
+                "account": vat_account,
                 "debit": 0,
                 "credit": float(vat_amount_local),
                 "currency_code": currency_code,
                 "exchange_rate": float(exchange_rate)
             })
 
+        # ✅ COGS + المخزون
         if float(total_cogs) > 0:
             lines.extend([
                 {
-                    "account": cogs_account,       # تكلفة البضاعة المباعة (مدين)
+                    "account": cogs_account,
                     "debit": float(total_cogs),
                     "credit": 0,
                     "currency_code": currency_code,
                     "exchange_rate": float(exchange_rate)
                 },
                 {
-                    "account": inventory_account,  # المخزون (دائن)
+                    "account": inventory_account,
                     "debit": 0,
                     "credit": float(total_cogs),
                     "currency_code": currency_code,
@@ -283,13 +351,41 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
         if entry_error:
             raise Exception(f"فشل إنشاء القيد المحاسبي: {entry_error}")
 
+        # 10. ✅ إنشاء سند قبض تلقائي (إذا فيه دفعة)
+        voucher_id = None
+        if paid_amount_dec > 0 and cash_account:
+            try:
+                from services.receipts_service import create_voucher
+                voucher_id, verr = create_voucher(
+                    voucher_type='receipt',
+                    party_type='customer',
+                    party_id=customer_id,
+                    amount=float(paid_amount_dec),
+                    account=cash_account,
+                    invoice_id=invoice_id,
+                    reference=f"دفعة فاتورة #{invoice_id}",
+                    notes=f"دفعة تلقائية عند إنشاء الفاتورة",
+                    created_by=username,
+                    auto_link=True,     # ← ربط تلقائي بـ invoice_payments
+                    conn=conn           # ← نفس المعاملة
+                )
+                if verr:
+                    # السند فشل، لكن الفاتورة نُشأت — نرمي خطأ لإلغاء كل شيء
+                    raise Exception(f"فشل إنشاء سند القبض: {verr}")
+            except ImportError as ie:
+                # لو الملف غير موجود، نكمل بدون سند
+                print(f"⚠️ لم يتم إنشاء سند تلقائي: {ie}")
+
         conn.commit()
 
         log_action(
             username=username, action="فاتورة مبيعات", table_name="invoices",
             record_id=invoice_id,
-            new_value=f"العميل: {customer_name}, الإجمالي: {float(total_local):,.2f} {currency_code}, "
-                      f"تكلفة البضاعة: {float(total_cogs):,.2f}, الضريبة: {float(vat_amount_local):,.2f}"
+            new_value=(
+                f"العميل: {customer_name}, الإجمالي: {float(total_local):,.2f} {currency_code}, "
+                f"المدفوع: {float(paid_amount_dec):,.2f}, المتبقي: {float(remaining_dec):,.2f}, "
+                f"تكلفة البضاعة: {float(total_cogs):,.2f}, الضريبة: {float(vat_amount_local):,.2f}"
+            )
         )
 
         return invoice_id, total_local, None
@@ -302,12 +398,16 @@ def create_sale_invoice(customer_id, items, username="admin", currency_code="YER
 
 
 def get_sale_invoices():
-    """جلب فواتير المبيعات"""
+    """جلب فواتير المبيعات (مع حقول الدفع الجديدة)"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     invoices = conn.execute("""
         SELECT i.id, c.name AS customer, i.invoice_date, i.total, i.total_base,
-               i.status, i.vat_rate, i.vat_amount, i.currency_code, i.exchange_rate
+               i.status, i.vat_rate, i.vat_amount, i.currency_code, i.exchange_rate,
+               COALESCE(i.paid_amount, 0) AS paid_amount,
+               COALESCE(i.remaining_amount, i.total) AS remaining_amount,
+               COALESCE(i.payment_status, 'unpaid') AS payment_status,
+               i.payment_method
         FROM invoices i
         LEFT JOIN customers c ON i.customer_id = c.id
         WHERE i.type = 'sale' ORDER BY i.id DESC
@@ -320,6 +420,8 @@ def get_sale_invoices():
         d["total_base"] = _to_decimal(d["total_base"])
         d["vat_amount"] = _to_decimal(d["vat_amount"])
         d["exchange_rate"] = _to_decimal(d["exchange_rate"])
+        d["paid_amount"] = _to_decimal(d["paid_amount"])
+        d["remaining_amount"] = _to_decimal(d["remaining_amount"])
         result.append(d)
     return result
 
