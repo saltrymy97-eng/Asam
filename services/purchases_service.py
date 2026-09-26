@@ -1,6 +1,6 @@
-# services/purchases_service.py – منطق أعمال المشتريات (v5.0)
-# ✅ معاملتان قصيرتان بدل معاملة طويلة واحدة
-# ✅ يدعم نقدي/آجل/جزئي + ملاحظة عند فشل السند
+# services/purchases_service.py – منطق أعمال المشتريات (v5.1)
+# ✅ القيد في المرحلة 1 متوازن بذاته (الموردون بالإجمالي)
+# ✅ المرحلة 2 (السند) تُسجّل الدفع بقيد منفصل
 import sqlite3
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
@@ -23,7 +23,6 @@ def _to_decimal(value) -> Decimal:
 
 
 def _read_functional_account(conn, functional_type):
-    """قراءة كود الحساب الوظيفي من نفس الاتصال"""
     try:
         r = conn.execute(
             "SELECT code FROM accounts WHERE functional_type = ? AND is_active = 1 LIMIT 1",
@@ -86,19 +85,20 @@ def get_products_for_purchase():
 
 
 # ============================================================
-# 🎯 المرحلة 1: حفظ الفاتورة الأساسية (معاملة قصيرة)
+# 🎯 المرحلة 1: حفظ الفاتورة + القيد (متوازن بذاته)
 # ============================================================
 def _save_invoice_core(supplier_id, items, username, currency_code,
                        exchange_rate, paid_amount_dec, remaining_dec,
                        payment_method, payment_status, total_local, total_base,
                        subtotal_local, vat_amount_local, vat_rate):
     """
-    حفظ الفاتورة + القيد المحاسبي — معاملة قصيرة.
-    لا تشمل السند ولا الصندوق.
+    حفظ الفاتورة + القيد المحاسبي.
     
-    Returns:
-        (invoice_id, supplier_name, None) عند النجاح
-        (None, None, "رسالة الخطأ") عند الفشل
+    ✅ القيد متوازن بذاته:
+       مدين: المخزون + ضريبة المدخلات
+       دائن: الموردون (بالإجمالي)
+    
+    الدفع (سند صرف) يُسجَّل في المرحلة 2 بقيد منفصل.
     """
     conn = get_connection()
     try:
@@ -176,7 +176,7 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
             if not success:
                 raise Exception(f"فشل إضافة دفعة FIFO للمنتج {item['product_id']}: {error}")
 
-        # القيد المحاسبي (بدون السند)
+        # ✅ القيد المحاسبي — متوازن بذاته
         from services.accounting_service import save_journal_entry
 
         inventory_account = _read_functional_account(conn, "inventory")
@@ -184,6 +184,8 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
         vat_account = _read_functional_account(conn, "purchase_tax")
 
         lines = []
+
+        # ✅ مدين: المخزون (بالمبلغ قبل الضريبة)
         lines.append({
             "account": inventory_account,
             "debit": float(subtotal_local),
@@ -191,6 +193,8 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
             "currency_code": currency_code,
             "exchange_rate": float(exchange_rate)
         })
+
+        # ✅ مدين: ضريبة المدخلات (إن وُجدت)
         if float(vat_amount_local) > 0:
             lines.append({
                 "account": vat_account,
@@ -199,14 +203,15 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
                 "currency_code": currency_code,
                 "exchange_rate": float(exchange_rate)
             })
-        if remaining_dec > 0:
-            lines.append({
-                "account": suppliers_account,
-                "debit": 0,
-                "credit": float(remaining_dec),
-                "currency_code": currency_code,
-                "exchange_rate": float(exchange_rate)
-            })
+
+        # ✅ دائن: الموردون بالإجمالي الكامل (بغض النظر عن المدفوع)
+        lines.append({
+            "account": suppliers_account,
+            "debit": 0,
+            "credit": float(total_local),   # ← الإجمالي، وليس remaining
+            "currency_code": currency_code,
+            "exchange_rate": float(exchange_rate)
+        })
 
         entry_id, entry_error = save_journal_entry(
             description=f"فاتورة مشتريات #{invoice_id} - {supplier_name}",
@@ -231,20 +236,16 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
 
 
 # ============================================================
-# 🎯 المرحلة 2: حفظ الدفع (معاملة قصيرة منفصلة)
+# 🎯 المرحلة 2: سند الصرف (معاملة قصيرة منفصلة)
 # ============================================================
 def _save_payment_side(invoice_id, supplier_id, supplier_name,
                        paid_amount_dec, cash_account, username):
     """
-    إنشاء السند + حركة الصندوق + ربط بالفاتورة.
+    إنشاء السند + القيد (مدين الموردون / دائن الصندوق).
     معاملة قصيرة منفصلة.
-    
-    Returns:
-        (voucher_id, None) عند النجاح
-        (None, "رسالة الخطأ") عند الفشل
     """
     if paid_amount_dec <= 0 or not cash_account:
-        return None, None  # لا دفع — لا حاجة للسند
+        return None, None
 
     try:
         from services.receipts_service import create_voucher
@@ -259,7 +260,7 @@ def _save_payment_side(invoice_id, supplier_id, supplier_name,
             notes="دفعة تلقائية عند إنشاء الفاتورة",
             created_by=username,
             auto_link=True,
-            conn=None,   # ← معاملة مستقلة تماماً
+            conn=None,
         )
         if verr:
             return None, f"فشل إنشاء سند الصرف: {verr}"
@@ -271,26 +272,13 @@ def _save_payment_side(invoice_id, supplier_id, supplier_name,
 
 
 # ============================================================
-# 🎯 الدالة الرئيسية — create_purchase_invoice
+# 🎯 الدالة الرئيسية
 # ============================================================
 def create_purchase_invoice(supplier_id, items, username="admin",
                              currency_code="YER", exchange_rate=None,
                              paid_amount=None, payment_method="credit",
                              cash_account=None):
-    """
-    إنشاء فاتورة مشتريات كاملة.
-    
-    الخطوات:
-    1. التحقق من المدخلات
-    2. حفظ الفاتورة + القيد (معاملة 1) ✅
-    3. إنشاء السند + الصندوق (معاملة 2) ✅
-    4. إذا فشلت المعاملة 2 → ملاحظة على الفاتورة
-    
-    Returns:
-        (invoice_id, total, None)                     عند النجاح الكامل
-        (invoice_id, total, "ملاحظة: السند لم يُنشأ")  عند نجاح الفاتورة
-        (None, Decimal("0"), "رسالة الخطأ")           عند فشل الفاتورة
-    """
+    """إنشاء فاتورة مشتريات كاملة — معاملتان قصيرتان"""
     # ============ التحقق الأولي ============
     if not items:
         return None, Decimal("0"), "يجب إضافة منتج واحد على الأقل"
@@ -316,14 +304,12 @@ def create_purchase_invoice(supplier_id, items, username="admin",
     vat_rate = _to_decimal(get_vat_rate())
 
     # ============ حساب المبالغ ============
-    # (نحتاجها قبل الفاتورة لحساب المدفوع/المتبقي)
     product_prices = {}
     for item in items:
         user_price = item.get("unit_price") or item.get("unit_price_base")
         if user_price is not None:
             product_prices[item["product_id"]] = _to_decimal(user_price)
         else:
-            # قراءة السعر — اتصال مؤقت
             conn_tmp = get_connection()
             try:
                 row = conn_tmp.execute(
@@ -353,7 +339,7 @@ def create_purchase_invoice(supplier_id, items, username="admin",
     vat_amount_base = _quantize(subtotal_base * vat_rate)
     total_base = _quantize(subtotal_base + vat_amount_base)
 
-    # معالجة paid_amount
+    # ============ معالجة paid_amount ============
     if paid_amount is None:
         paid_amount_dec = Decimal("0")
     else:
@@ -380,7 +366,7 @@ def create_purchase_invoice(supplier_id, items, username="admin",
             payment_method = 'mixed'
         payment_status = 'partial'
 
-    # ============ المرحلة 1: حفظ الفاتورة + القيد ============
+    # ============ المرحلة 1: الفاتورة + القيد ============
     invoice_id, supplier_name, err = _save_invoice_core(
         supplier_id=supplier_id,
         items=items,
@@ -401,9 +387,7 @@ def create_purchase_invoice(supplier_id, items, username="admin",
     if err:
         return None, Decimal("0"), f"فشل حفظ الفاتورة: {err}"
 
-    # ✅ الفاتورة محفوظة الآن — حتى لو فشل السند، لا نخسرها
-
-    # ============ المرحلة 2: حفظ الدفع (سند + صندوق) ============
+    # ============ المرحلة 2: السند ============
     payment_note = None
     if paid_amount_dec > 0 and cash_account:
         voucher_id, perr = _save_payment_side(
@@ -416,10 +400,7 @@ def create_purchase_invoice(supplier_id, items, username="admin",
         )
         if perr:
             payment_note = f"⚠️ السند لم يُنشأ تلقائياً — راجعه. السبب: {perr}"
-            # حفظ الملاحظة في الفاتورة
             _add_note_to_invoice(invoice_id, payment_note)
-        else:
-            payment_note = None
 
     # ============ تسجيل التدقيق ============
     try:
@@ -434,7 +415,6 @@ def create_purchase_invoice(supplier_id, items, username="admin",
     except Exception:
         pass
 
-    # ============ الإرجاع ============
     if payment_note:
         return invoice_id, total_local, payment_note
     return invoice_id, total_local, None
@@ -444,7 +424,6 @@ def create_purchase_invoice(supplier_id, items, username="admin",
 # مساعد: إضافة ملاحظة إلى فاتورة
 # ============================================================
 def _add_note_to_invoice(invoice_id, note):
-    """إضافة ملاحظة إلى الفاتورة (لتتبع فشل السند)"""
     try:
         conn = get_connection()
         try:
@@ -487,7 +466,6 @@ def get_purchase_invoices():
             d["exchange_rate"] = _to_decimal(d["exchange_rate"])
             d["paid_amount"] = _to_decimal(d["paid_amount"])
             d["remaining_amount"] = _to_decimal(d["remaining_amount"])
-            # علم: هل يوجد تنبيه؟
             d["has_warning"] = bool(
                 d.get("reference") and "⚠️" in d["reference"]
             )
@@ -518,17 +496,9 @@ def get_invoice_details(invoice_id):
 
 
 # ============================================================
-# مساعد: إنشاء السند لاحقاً (يدوياً)
+# مساعد: إنشاء السند يدوياً
 # ============================================================
 def create_payment_voucher_for_invoice(invoice_id, username="admin"):
-    """
-    إنشاء سند صرف لفاتورة مشتريات موجودة (يدوياً).
-    يُستخدم عندما يفشل السند التلقائي.
-    
-    Returns:
-        (voucher_id, None) عند النجاح
-        (None, "رسالة الخطأ") عند الفشل
-    """
     conn = get_connection()
     try:
         inv = conn.execute("""
@@ -541,14 +511,12 @@ def create_payment_voucher_for_invoice(invoice_id, username="admin"):
             return None, "الفاتورة غير موجودة"
 
         inv = dict(inv)
-        # إذا كانت مدفوعة بالكامل بلا سند → نحتاج نعرف كم دُفع فعلاً
         paid = float(inv.get("paid_amount") or 0)
         if paid <= 0:
             return None, "لا يوجد مبلغ مدفوع على هذه الفاتورة"
 
         supplier_id = inv["supplier_id"]
 
-        # نبحث عن الحساب النقدي — نستخدم الصندوق الافتراضي
         row = conn.execute("""
             SELECT account_code FROM cash_accounts 
             WHERE is_active = 1 LIMIT 1
@@ -560,7 +528,6 @@ def create_payment_voucher_for_invoice(invoice_id, username="admin"):
     finally:
         close_connection(conn)
 
-    # إنشاء السند في معاملة مستقلة
     voucher_id, perr = _save_payment_side(
         invoice_id=invoice_id,
         supplier_id=supplier_id,
@@ -573,7 +540,6 @@ def create_payment_voucher_for_invoice(invoice_id, username="admin"):
     if perr:
         return None, perr
 
-    # إزالة الملاحظة
     try:
         conn = get_connection()
         try:
