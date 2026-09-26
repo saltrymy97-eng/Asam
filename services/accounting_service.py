@@ -1,5 +1,5 @@
 # services/accounting_service.py - منطق الحسابات وقيود اليومية
-# v2.0 — دعم conn خارجي + توافق كامل مع نظام السندات والفواتير
+# v3.0 — إصلاح database is locked: تمرير conn لـ is_period_closed
 import sqlite3
 import uuid
 import os
@@ -20,7 +20,6 @@ def get_conn():
 def get_account_code(account_input, conn=None):
     """
     تحويل اسم الحساب أو كوده إلى كود نصي موحد.
-    تتعامل الدالة مع الرقم الصحيح أو النص.
     """
     if account_input is None:
         return None
@@ -56,6 +55,23 @@ def get_account_code(account_input, conn=None):
     return None
 
 
+def _safe_is_period_closed(entry_date, conn):
+    """
+    استدعاء آمن لـ is_period_closed مع تمرير conn.
+    إذا فشل لأي سبب (مثل period_service قديم لا يقبل conn) → نعتبر الفترة مفتوحة.
+    """
+    try:
+        return is_period_closed(entry_date, conn=conn)
+    except TypeError:
+        # period_service قديم لا يقبل conn → نستدعيه بالطريقة القديمة
+        try:
+            return is_period_closed(entry_date)
+        except Exception:
+            return False
+    except Exception:
+        return False
+
+
 def save_journal_entry(description, lines, entry_date=None,
                        cost_center_allocations=None, conn=None,
                        skip_period_check=False):
@@ -72,18 +88,20 @@ def save_journal_entry(description, lines, entry_date=None,
     if entry_date is None:
         entry_date = date.today().strftime("%Y-%m-%d")
 
-    if not skip_period_check and is_period_closed(entry_date):
-        return None, f"لا يمكن حفظ القيد في فترة مغلقة: {entry_date}. يرجى فتح الفترة أولاً."
-
-    base_currency = get_base_currency()
-    base_code = base_currency['code'] if base_currency else 'YER'
-
+    # ✅ نُحدِّد conn أولاً — قبل أي استدعاء يحتاجه
     own_conn = False
     if conn is None:
         conn = get_conn()
         own_conn = True
 
     try:
+        # ✅ الآن نمرر conn لـ is_period_closed (لا اتصال جديد)
+        if not skip_period_check and _safe_is_period_closed(entry_date, conn):
+            return None, f"لا يمكن حفظ القيد في فترة مغلقة: {entry_date}. يرجى فتح الفترة أولاً."
+
+        base_currency = get_base_currency()
+        base_code = base_currency['code'] if base_currency else 'YER'
+
         if own_conn:
             conn.execute("BEGIN")
 
@@ -99,7 +117,6 @@ def save_journal_entry(description, lines, entry_date=None,
         total_credit_base = 0.0
 
         for line in lines:
-            # إعطاء الأولوية للاسم إذا كان موجوداً
             if line.get("account"):
                 account_name = line["account"]
             else:
@@ -114,15 +131,12 @@ def save_journal_entry(description, lines, entry_date=None,
                     account_name = code
 
             currency_code = line.get("currency_code", base_code)
-
-            # تحويل القيم بأمان إلى أرقام عشرية
             debit = float(line.get("debit", 0.0) or 0.0)
             credit = float(line.get("credit", 0.0) or 0.0)
 
             raw_rate = line.get("exchange_rate")
             exchange_rate = float(raw_rate) if raw_rate not in [None, ""] else 1.0
 
-            # جلب سعر الصرف بناءً على العملة وتاريخ القيد عند الحاجة
             if currency_code != base_code and exchange_rate == 1.0:
                 fetched_rate = get_exchange_rate(currency_code, base_code, entry_date)
                 if fetched_rate:
@@ -131,7 +145,6 @@ def save_journal_entry(description, lines, entry_date=None,
                 else:
                     return None, f"لم يتم العثور على سعر صرف للعملة {currency_code} بتاريخ {entry_date}."
 
-            # تحويل العملة الأجنبية فقط إلى العملة الأساسية
             if currency_code != base_code:
                 debit_base = debit * exchange_rate
                 credit_base = credit * exchange_rate
@@ -150,8 +163,9 @@ def save_journal_entry(description, lines, entry_date=None,
             )
             line_ids.append(cur_line.lastrowid)
 
-        # التحقق من توازن القيد
         if round(abs(total_debit_base - total_credit_base), 2) > 0.01:
+            if own_conn:
+                conn.rollback()
             return None, (
                 f"القيد غير متوازن! "
                 f"المدين الأساسي: {total_debit_base:,.2f} ، "
@@ -181,20 +195,26 @@ def save_journal_entry(description, lines, entry_date=None,
 
 
 def update_journal_entry(entry_id, description, lines, entry_date=None,
-                         cost_center_allocations=None):
+                         cost_center_allocations=None, conn=None):
     """تحديث قيد موجود مع دعم العملات متعددة"""
     if entry_date is None:
         entry_date = date.today().strftime("%Y-%m-%d")
 
-    if is_period_closed(entry_date):
-        return False, f"لا يمكن تحديث قيد في فترة مغلقة: {entry_date}. يرجى فتح الفترة أولاً."
+    own_conn = False
+    if conn is None:
+        conn = get_conn()
+        own_conn = True
 
-    base_currency = get_base_currency()
-    base_code = base_currency['code'] if base_currency else 'YER'
-
-    conn = get_conn()
     try:
-        conn.execute("BEGIN")
+        if _safe_is_period_closed(entry_date, conn):
+            return False, f"لا يمكن تحديث قيد في فترة مغلقة: {entry_date}. يرجى فتح الفترة أولاً."
+
+        base_currency = get_base_currency()
+        base_code = base_currency['code'] if base_currency else 'YER'
+
+        if own_conn:
+            conn.execute("BEGIN")
+
         conn.execute(
             "UPDATE journal_entries SET date = ?, description = ? WHERE id = ?",
             (entry_date, description, entry_id)
@@ -276,13 +296,17 @@ def update_journal_entry(entry_id, description, lines, entry_date=None,
                     if allocations:
                         cost_center_service.allocate_journal_line(journal_line_id, allocations)
 
-        conn.commit()
+        if own_conn:
+            conn.commit()
         return True, None
+
     except Exception as e:
-        conn.rollback()
+        if own_conn:
+            conn.rollback()
         return False, str(e)
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
 
 
 def get_recent_entries(limit=10):
