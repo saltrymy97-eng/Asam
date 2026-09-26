@@ -1,71 +1,91 @@
 # database.py - قاعدة بيانات نظام حوكمة ERP (SQLite)
-# v3.5 — حماية شاملة ضد database is locked (Connection Registry)
+# v4.0 — Connection Registry احترافي (لا إغلاق، لا تعارض)
 import sqlite3
 import bcrypt
 import os
 import threading
+import atexit
 
 DB_PATH = os.path.join("data", "erp.db")
 
 # ============================================================
-# 🧠 Connection Registry — يضمن نفس الاتصال داخل نفس Thread
+# 🧠 Connection Registry — نفس الاتصال لكل Thread
 # ============================================================
 _local = threading.local()
+_registry_lock = threading.Lock()
+_all_connections = []   # ← قائمة بكل الاتصالات (للإغلاق عند الخروج)
 
 
-def get_connection():
-    """
-    إنشاء أو إعادة استخدام اتصال قاعدة البيانات.
-    
-    ✅ الميزة الجديدة: إذا كان هناك اتصال مفتوح في نفس Thread — يُعاد.
-    هذا يمنع 'database is locked' عندما تُستدعى get_connection() 
-    داخل معاملة مفتوحة.
-    """
+def _create_connection():
+    """إنشاء اتصال جديد مع كل إعدادات PRAGMA"""
     os.makedirs("data", exist_ok=True)
 
-    # ✅ إذا كان هناك اتصال مفتوح لنفس Thread → أعده
-    existing = getattr(_local, "conn", None)
-    if existing is not None:
-        try:
-            existing.execute("SELECT 1")   # اختبار سريع: هل ما زال صالحاً؟
-            return existing
-        except Exception:
-            # اتصال ميت → احذفه وأنشئ جديداً
-            try:
-                existing.close()
-            except Exception:
-                pass
-            _local.conn = None
-
-    # إنشاء اتصال جديد
     conn = sqlite3.connect(
         DB_PATH,
         check_same_thread=False,
-        timeout=30,              # ← 30 ثانية
-        isolation_level=None     # ← نُدير المعاملات يدوياً
+        timeout=30,
+        isolation_level=None
     )
 
     # === إعدادات PRAGMA المحسّنة ===
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 30000")     # ← 30 ثانية
+    conn.execute("PRAGMA busy_timeout = 30000")
     conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute("PRAGMA temp_store = MEMORY")
-    conn.execute("PRAGMA cache_size = -16000")      # 16MB cache
-    conn.execute("PRAGMA wal_autocheckpoint = 1000")  # checkpoint تلقائي
-    conn.execute("PRAGMA mmap_size = 268435456")    # 256MB mmap
+    conn.execute("PRAGMA cache_size = -16000")
+    conn.execute("PRAGMA wal_autocheckpoint = 1000")
+    conn.execute("PRAGMA mmap_size = 268435456")
 
     conn.row_factory = sqlite3.Row
-
-    # ✅ احفظ الاتصال في Registry
-    _local.conn = conn
     return conn
+
+
+def get_connection():
+    """
+    إعادة نفس الاتصال داخل نفس Thread.
+    
+    ✅ لا يُغلق أبداً — يُعاد استخدامه.
+    ✅ آمن تماماً في Streamlit (لكل جلسة Thread خاص).
+    """
+    existing = getattr(_local, "conn", None)
+    if existing is not None:
+        # فحص سريع: هل الاتصال ما زال صالحاً؟
+        try:
+            existing.execute("SELECT 1")
+            return existing
+        except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+            # اتصال مغلق أو مشكلة — نتجاهله
+            _local.conn = None
+        except Exception:
+            _local.conn = None
+
+    # إنشاء اتصال جديد
+    conn = _create_connection()
+    _local.conn = conn
+
+    # تسجيله في القائمة العامة (للإغلاق عند الخروج)
+    with _registry_lock:
+        _all_connections.append(conn)
+
+    return conn
+
+
+def close_connection(conn=None):
+    """
+    ⚠️ دالة بديلة لـ `conn.close()`.
+    لا تُغلق الاتصال — فقط لا تفعل شيئاً.
+    
+    هذا مقصود: في تطبيق Streamlit، إغلاق الاتصال يدوياً
+    يسبب مشاكل. نترك SQLite يدير الموارد.
+    """
+    # ✅ لا تفعل شيئاً — الاتصال يبقى في Registry
+    return None
 
 
 def release_connection(conn=None):
     """
-    إغلاق الاتصال الحالي وحذفه من Registry.
-    يُستدعى بعد انتهاء المعاملة الكبيرة.
+    إغلاق نهائي حقيقي — يُستخدم نادراً (عند تسجيل خروج أو إعادة تشغيل).
     """
     target = conn if conn is not None else getattr(_local, "conn", None)
     if target is not None:
@@ -76,20 +96,27 @@ def release_connection(conn=None):
     _local.conn = None
 
 
+def _close_all_on_exit():
+    """يُستدعى عند إغلاق التطبيق — لإغلاق كل الاتصالات بأمان"""
+    with _registry_lock:
+        for conn in _all_connections:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        _all_connections.clear()
+
+
+# تسجيل دالة الإغلاق عند خروج التطبيق
+atexit.register(_close_all_on_exit)
+
+
 # ============================================================
 # 🔧 دوال مساعدة للترحيل الآمن
 # ============================================================
 def _column_exists(cursor, table: str, column: str) -> bool:
     cursor.execute(f"PRAGMA table_info({table})")
     return column in [row[1] for row in cursor.fetchall()]
-
-
-def _table_exists(cursor, table: str) -> bool:
-    cursor.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-        (table,)
-    )
-    return cursor.fetchone() is not None
 
 
 def _safe_add_column(cursor, table: str, column: str, definition: str):
@@ -107,7 +134,6 @@ def _migrate_payment_cycle(cursor):
     _safe_add_column(cursor, "invoices", "payment_status",
                      "TEXT DEFAULT 'unpaid'")
     _safe_add_column(cursor, "invoices", "payment_method",   "TEXT")
-
     _safe_add_column(cursor, "cash_transactions", "voucher_id", "INTEGER")
     _safe_add_column(cursor, "bank_transactions", "voucher_id", "INTEGER")
     _safe_add_column(cursor, "cash_accounts", "account_code", "TEXT")
@@ -722,7 +748,6 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_crm_interactions_lead ON crm_interactions(lead_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_cash_transactions_account ON cash_transactions(cash_account_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_cash_transactions_date ON cash_transactions(transaction_date)")
-
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_payment_status ON invoices(payment_status)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_paid_amount ON invoices(paid_amount)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoice_payments_invoice ON invoice_payments(invoice_id)")
@@ -731,8 +756,9 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_cash_transactions_voucher ON cash_transactions(voucher_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_bank_transactions_voucher ON bank_transactions(voucher_id)")
 
-    conn.commit()
-    conn.close()
+    # ⚠️ لا نُغلق الاتصال — يبقى في Registry
+    # (استبدلنا conn.close() بـ close_connection())
+    close_connection()
 
 
 def create_default_admin():
@@ -753,7 +779,7 @@ def create_default_admin():
             conn.commit()
         except sqlite3.IntegrityError:
             pass
-    conn.close()
+    close_connection()
 
 
 # تهيئة قاعدة البيانات تلقائياً عند استيراد الملف
