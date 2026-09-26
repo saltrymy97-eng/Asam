@@ -1,6 +1,6 @@
-# services/sales_service.py – منطق أعمال المبيعات (v4.0)
-# ✅ معاملتان قصيرتان بدل معاملة طويلة واحدة
-# ✅ يدعم نقدي/آجل/جزئي + ملاحظة عند فشل السند
+# services/sales_service.py – منطق أعمال المبيعات (v5.0)
+# ✅ القيد في المرحلة 1 متوازن بذاته (العميل بالإجمالي)
+# ✅ المرحلة 2 (السند) تُسجّل القبض بقيد منفصل
 import sqlite3
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
@@ -12,7 +12,6 @@ from services.fifo_service import consume_fifo, get_fifo_cost
 from services.chart_service import get_functional_account
 
 
-# ---------- دوال مساعدة ----------
 def _quantize(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
@@ -24,7 +23,6 @@ def _to_decimal(value) -> Decimal:
 
 
 def _read_functional_account(conn, functional_type):
-    """قراءة كود الحساب الوظيفي من نفس الاتصال"""
     try:
         r = conn.execute(
             "SELECT code FROM accounts WHERE functional_type = ? AND is_active = 1 LIMIT 1",
@@ -89,7 +87,7 @@ def get_products_for_sale():
 
 
 # ============================================================
-# 🎯 المرحلة 1: حفظ الفاتورة + القيد + FIFO (معاملة قصيرة)
+# 🎯 المرحلة 1: حفظ الفاتورة + القيد + FIFO (متوازن بذاته)
 # ============================================================
 def _save_sale_core(customer_id, items, qty_by_product, product_prices,
                     fifo_details, total_cogs, currency_code, exchange_rate,
@@ -97,12 +95,11 @@ def _save_sale_core(customer_id, items, qty_by_product, product_prices,
                     subtotal_base, vat_rate, paid_amount_dec, remaining_dec,
                     payment_method, payment_status, cash_account):
     """
-    حفظ الفاتورة + البنود + المخزون + FIFO + القيد المحاسبي.
-    معاملة قصيرة — لا تتضمن السند ولا الصندوق.
+    حفظ الفاتورة + القيد المحاسبي.
     
-    Returns:
-        (invoice_id, customer_name, None) عند النجاح
-        (None, None, "رسالة الخطأ") عند الفشل
+    ✅ القيد متوازن بذاته:
+       مدين: العميل (بالإجمالي) + COGS
+       دائن: المبيعات + الضريبة + المخزون
     """
     conn = get_connection()
     try:
@@ -157,7 +154,7 @@ def _save_sale_core(customer_id, items, qty_by_product, product_prices,
         row = conn.execute("SELECT name FROM customers WHERE id = ?", (customer_id,)).fetchone()
         customer_name = row["name"] if row else "غير معروف"
 
-        # القيد المحاسبي
+        # ✅ القيد المحاسبي — متوازن بذاته
         from services.accounting_service import save_journal_entry
 
         customers_account = _read_functional_account(conn, "accounts_receivable")
@@ -168,17 +165,16 @@ def _save_sale_core(customer_id, items, qty_by_product, product_prices,
 
         lines = []
 
-        # ✅ الجزء الآجل فقط (النقدي في المرحلة 2)
-        if remaining_dec > 0:
-            lines.append({
-                "account": customers_account,
-                "debit": float(remaining_dec),
-                "credit": 0,
-                "currency_code": currency_code,
-                "exchange_rate": float(exchange_rate)
-            })
+        # ✅ مدين: العميل بالإجمالي (بغض النظر عن المدفوع)
+        lines.append({
+            "account": customers_account,
+            "debit": float(total_local),   # ← الإجمالي، وليس remaining
+            "credit": 0,
+            "currency_code": currency_code,
+            "exchange_rate": float(exchange_rate)
+        })
 
-        # ✅ المبيعات دائن
+        # ✅ دائن: المبيعات (قبل الضريبة)
         lines.append({
             "account": sales_account,
             "debit": 0,
@@ -187,7 +183,7 @@ def _save_sale_core(customer_id, items, qty_by_product, product_prices,
             "exchange_rate": float(exchange_rate)
         })
 
-        # ✅ الضريبة دائن
+        # ✅ دائن: ضريبة المخرجات
         if float(vat_amount_local) > 0:
             lines.append({
                 "account": vat_account,
@@ -197,7 +193,7 @@ def _save_sale_core(customer_id, items, qty_by_product, product_prices,
                 "exchange_rate": float(exchange_rate)
             })
 
-        # ✅ COGS + المخزون
+        # ✅ COGS مدين + المخزون دائن
         if float(total_cogs) > 0:
             lines.extend([
                 {
@@ -239,16 +235,12 @@ def _save_sale_core(customer_id, items, qty_by_product, product_prices,
 
 
 # ============================================================
-# 🎯 المرحلة 2: حفظ الدفع (سند قبض + صندوق) — معاملة منفصلة
+# 🎯 المرحلة 2: سند القبض (معاملة قصيرة منفصلة)
 # ============================================================
 def _save_receipt_side(invoice_id, customer_id, customer_name,
                        paid_amount_dec, cash_account, currency_code, exchange_rate):
     """
-    إنشاء سند قبض + ربط بالفاتورة — معاملة قصيرة منفصلة.
-    
-    Returns:
-        (voucher_id, None) عند النجاح
-        (None, "رسالة الخطأ") عند الفشل
+    إنشاء سند قبض + قيد القبض (مدين الصندوق / دائن العميل).
     """
     if paid_amount_dec <= 0 or not cash_account:
         return None, None
@@ -266,7 +258,7 @@ def _save_receipt_side(invoice_id, customer_id, customer_name,
             notes="دفعة تلقائية عند إنشاء الفاتورة",
             created_by="system",
             auto_link=True,
-            conn=None,   # ← معاملة مستقلة
+            conn=None,
         )
         if verr:
             return None, f"فشل إنشاء سند القبض: {verr}"
@@ -284,16 +276,7 @@ def create_sale_invoice(customer_id, items, username="admin",
                         currency_code="YER", exchange_rate=None,
                         paid_amount=None, payment_method="credit",
                         cash_account=None):
-    """
-    إنشاء فاتورة مبيعات كاملة.
-    
-    الخطوات:
-    1. التحقق + حساب المبالغ
-    2. حفظ الفاتورة + القيد (معاملة 1) ✅
-    3. إنشاء سند القبض + الصندوق (معاملة 2) ✅
-    4. إذا فشلت المرحلة 2 → ملاحظة على الفاتورة
-    """
-    # ============ التحقق الأولي ============
+    """إنشاء فاتورة مبيعات كاملة — معاملتان قصيرتان"""
     if not items:
         return None, Decimal("0"), "يجب إضافة منتج واحد على الأقل"
 
@@ -441,9 +424,7 @@ def create_sale_invoice(customer_id, items, username="admin",
     if err:
         return None, Decimal("0"), f"فشل حفظ الفاتورة: {err}"
 
-    # ✅ الفاتورة محفوظة الآن — حتى لو فشل السند لا نخسرها
-
-    # ============ المرحلة 2: سند القبض (منفصلة) ============
+    # ============ المرحلة 2: سند القبض ============
     payment_note = None
     if paid_amount_dec > 0 and cash_account:
         voucher_id, perr = _save_receipt_side(
@@ -479,7 +460,7 @@ def create_sale_invoice(customer_id, items, username="admin",
 
 
 # ============================================================
-# مساعد: إضافة ملاحظة إلى فاتورة
+# مساعد: إضافة ملاحظة
 # ============================================================
 def _add_note_to_invoice(invoice_id, note):
     try:
@@ -554,13 +535,9 @@ def get_invoice_details(invoice_id):
 
 
 # ============================================================
-# مساعد: إنشاء سند القبض لاحقاً (يدوياً)
+# مساعد: إنشاء سند القبض يدوياً
 # ============================================================
 def create_receipt_voucher_for_invoice(invoice_id, username="admin"):
-    """
-    إنشاء سند قبض لفاتورة مبيعات موجودة (يدوياً).
-    يُستخدم عندما يفشل السند التلقائي.
-    """
     conn = get_connection()
     try:
         inv = conn.execute("""
@@ -602,7 +579,6 @@ def create_receipt_voucher_for_invoice(invoice_id, username="admin"):
     if perr:
         return None, perr
 
-    # إزالة الملاحظة
     try:
         conn = get_connection()
         try:
