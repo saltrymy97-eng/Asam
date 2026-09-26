@@ -1,5 +1,5 @@
 # database.py - قاعدة بيانات نظام حوكمة ERP (SQLite) – إصدار إنتاجي نهائي
-# v3.2 — إصلاح: account_code في cash_accounts + voucher_id في cash_transactions
+# v3.3 — حل database is locked + تحسينات أداء + ترحيل آمن
 import sqlite3
 import bcrypt
 import os
@@ -8,11 +8,30 @@ DB_PATH = os.path.join("data", "erp.db")
 
 
 def get_connection():
-    """إنشاء اتصال بقاعدة البيانات مع دعم الوصول القاموسي للصفوف"""
+    """
+    إنشاء اتصال بقاعدة البيانات مع:
+    - دعم WAL Mode (كتابة/قراءة متزامنة أفضل)
+    - Foreign Keys مُفعّلة
+    - busy_timeout = 10 ثوان (لمنع 'database is locked')
+    - تحسينات أداء (synchronous, temp_store, cache)
+    """
     os.makedirs("data", exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=15)
-    conn.execute("PRAGMA journal_mode=WAL")
+
+    conn = sqlite3.connect(
+        DB_PATH,
+        check_same_thread=False,
+        timeout=15,          # مهلة الاتصال على مستوى Python
+        isolation_level=None # ← مهم: نُدير المعاملات يدوياً
+    )
+
+    # === إعدادات PRAGMA ===
+    conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 10000")     # ← الحل الرئيسي
+    conn.execute("PRAGMA synchronous = NORMAL")     # أسرع مع WAL
+    conn.execute("PRAGMA temp_store = MEMORY")      # temp في الذاكرة
+    conn.execute("PRAGMA cache_size = -8000")       # 8MB cache
+
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -34,6 +53,7 @@ def _table_exists(cursor, table: str) -> bool:
 
 
 def _safe_add_column(cursor, table: str, column: str, definition: str):
+    """إضافة عمود إذا لم يكن موجوداً (آمن مع قواعد موجودة)"""
     if _column_exists(cursor, table, column):
         return False
     cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
@@ -54,7 +74,7 @@ def _migrate_payment_cycle(cursor):
     _safe_add_column(cursor, "cash_transactions", "voucher_id", "INTEGER")
     _safe_add_column(cursor, "bank_transactions", "voucher_id", "INTEGER")
 
-    # 3) ✅ إصلاح cash_accounts (account_code قد يكون مفقوداً في الجداول القديمة)
+    # 3) إصلاح cash_accounts (قد يكون account_code مفقوداً في الجداول القديمة)
     _safe_add_column(cursor, "cash_accounts", "account_code", "TEXT")
 
     # 4) تعبئة البيانات القديمة
