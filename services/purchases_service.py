@@ -1,6 +1,7 @@
-# services/purchases_service.py – منطق أعمال المشتريات (إصدار احترافي v2.0)
-# ✅ يدعم: الشراء النقدي الكامل + الآجل الكامل + الجزئي (دفعة + متبقي)
+# services/purchases_service.py – منطق أعمال المشتريات (v3.0)
+# ✅ يدعم: نقدي/آجل/جزئي + كود تشخيصي مؤقت
 import sqlite3
+import traceback  # ← للتشخيص
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
 from database import get_connection
@@ -11,22 +12,17 @@ from services.fifo_service import add_batch
 from services.chart_service import get_functional_account
 
 
-# ---------- دوال مساعدة ----------
 def _quantize(value: Decimal) -> Decimal:
-    """تقريب المبلغ إلى منزلتين عشريتين"""
     return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def _to_decimal(value) -> Decimal:
-    """تحويل القيمة إلى Decimal مع معالجة None"""
     if value is None:
         return Decimal("0")
     return Decimal(str(value))
 
 
-# ---------- الموردون ----------
 def get_suppliers():
-    """جلب الموردين (ID واسم فقط)"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     suppliers = conn.execute("SELECT id, name FROM suppliers ORDER BY name").fetchall()
@@ -35,7 +31,6 @@ def get_suppliers():
 
 
 def get_all_suppliers():
-    """جلب جميع بيانات الموردين"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     suppliers = conn.execute("SELECT * FROM suppliers ORDER BY id DESC").fetchall()
@@ -44,7 +39,6 @@ def get_all_suppliers():
 
 
 def add_supplier(name, phone, address, username="admin"):
-    """إضافة مورد جديد"""
     conn = get_connection()
     cur = conn.execute(
         "INSERT INTO suppliers (name, phone, address) VALUES (?, ?, ?)",
@@ -59,7 +53,6 @@ def add_supplier(name, phone, address, username="admin"):
 
 
 def get_products_for_purchase():
-    """جلب جميع المنتجات للشراء"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     products = conn.execute(
@@ -73,28 +66,23 @@ def get_products_for_purchase():
 
 
 # ============================================================
-# ✅ الدالة الرئيسية — معدّلة لدعم نقدي/آجل/جزئي
+# ✅ الدالة الرئيسية — مع كود تشخيصي
 # ============================================================
 def create_purchase_invoice(supplier_id, items, username="admin",
                              currency_code="YER", exchange_rate=None,
                              paid_amount=None, payment_method="credit",
                              cash_account=None):
-    """
-    إنشاء فاتورة مشتريات كاملة مع دعم 3 سيناريوهات:
-    
-    1. نقدي كامل:  paid_amount = total  → payment_method='cash'
-    2. آجل كامل:   paid_amount = 0      → payment_method='credit'
-    3. جزئي:       0 < paid_amount < total → payment_method='mixed'
-    
-    Args:
-        paid_amount:    المبلغ المدفوع للمورد فوراً (None = آجل كامل)
-        payment_method: 'cash' | 'credit' | 'bank' | 'mixed'
-        cash_account:   كود حساب الصندوق/البنك (مطلوب إذا فيه دفع)
-    
-    Returns:
-        (invoice_id, total, None)         عند النجاح
-        (None, Decimal("0"), "رسالة")      عند الفشل
-    """
+    """إنشاء فاتورة مشتريات — مع دعم 3 سيناريوهات + تشخيص"""
+    # ============================================================
+    # 🔍 تشخيص 1: بداية الدالة
+    # ============================================================
+    print("\n" + "=" * 70)
+    print("🚀 [تشخيص] بداية create_purchase_invoice")
+    print(f"   supplier_id={supplier_id}, items_count={len(items) if items else 0}")
+    print(f"   paid_amount={paid_amount}, method={payment_method}")
+    print(f"   cash_account={cash_account}")
+    print("=" * 70)
+
     if not items:
         return None, Decimal("0"), "يجب إضافة منتج واحد على الأقل"
     for item in items:
@@ -104,8 +92,13 @@ def create_purchase_invoice(supplier_id, items, username="admin",
         if price is not None and Decimal(str(price)) < 0:
             return None, Decimal("0"), "سعر الوحدة يجب أن لا يكون سالباً"
 
+    # ============================================================
+    # 🔍 تشخيص 2: قراءة العملة
+    # ============================================================
+    print("➡️ [تشخيص] قراءة العملة الأساسية")
     base_currency = get_base_currency()
     base_code = base_currency["code"]
+    print(f"   ✅ base_code = {base_code}")
 
     if currency_code == base_code:
         exchange_rate = Decimal("1")
@@ -116,22 +109,38 @@ def create_purchase_invoice(supplier_id, items, username="admin",
             return None, Decimal("0"), f"سعر صرف العملة {currency_code} غير متوفر"
         exchange_rate = Decimal(str(exchange_rate))
 
+    # ============================================================
+    # 🔍 تشخيص 3: قراءة الضريبة
+    # ============================================================
+    print("➡️ [تشخيص] قراءة نسبة الضريبة")
     vat_rate = _to_decimal(get_vat_rate())
+    print(f"   ✅ vat_rate = {vat_rate}")
 
+    # ============================================================
+    # 🔍 تشخيص 4: فتح الاتصال
+    # ============================================================
+    print("➡️ [تشخيص] فتح اتصال قاعدة البيانات")
     conn = get_connection()
     conn.row_factory = sqlite3.Row
+    print(f"   ✅ conn id = {id(conn)}")  # ← هذا الرقم سنراقبه
+
     try:
+        print("➡️ [تشخيص] BEGIN")
         conn.execute("BEGIN")
+        print("   ✅ BEGIN نجح")
 
         # 1. التحقق من وجود المورد
+        print("➡️ [تشخيص] قراءة بيانات المورد")
         supplier_row = conn.execute(
             "SELECT id, name FROM suppliers WHERE id = ?", (supplier_id,)
         ).fetchone()
         if not supplier_row:
             raise Exception("المورد غير موجود")
         supplier_name = supplier_row["name"]
+        print(f"   ✅ supplier_name = {supplier_name}")
 
-        # 2. التحقق من المنتجات وتجهيز البيانات
+        # 2. التحقق من المنتجات
+        print("➡️ [تشخيص] قراءة بيانات المنتجات")
         product_prices = {}
         for item in items:
             row = conn.execute(
@@ -147,8 +156,10 @@ def create_purchase_invoice(supplier_id, items, username="admin",
             else:
                 base_price = _to_decimal(row["purchase_price"])
             product_prices[item["product_id"]] = base_price
+        print(f"   ✅ عدد المنتجات = {len(product_prices)}")
 
         # 3. حساب المبالغ
+        print("➡️ [تشخيص] حساب المبالغ")
         subtotal_local = Decimal("0")
         subtotal_base = Decimal("0")
 
@@ -169,10 +180,11 @@ def create_purchase_invoice(supplier_id, items, username="admin",
         subtotal_base = _quantize(subtotal_base)
         vat_amount_base = _quantize(subtotal_base * vat_rate)
         total_base = _quantize(subtotal_base + vat_amount_base)
+        print(f"   ✅ total_local = {total_local}")
 
-        # 4. ✅ معالجة paid_amount
+        # 4. معالجة paid_amount
         if paid_amount is None:
-            paid_amount_dec = Decimal("0")           # آجل كامل افتراضي
+            paid_amount_dec = Decimal("0")
         else:
             paid_amount_dec = _to_decimal(paid_amount)
             if paid_amount_dec < 0:
@@ -184,7 +196,6 @@ def create_purchase_invoice(supplier_id, items, username="admin",
 
         remaining_dec = total_local - paid_amount_dec
 
-        # تحديد payment_method و payment_status تلقائياً
         if paid_amount_dec == 0:
             if payment_method in ('cash', 'bank', 'mixed'):
                 payment_method = 'credit'
@@ -198,7 +209,8 @@ def create_purchase_invoice(supplier_id, items, username="admin",
                 payment_method = 'mixed'
             payment_status = 'partial'
 
-        # 5. إدراج الفاتورة مع الحقول الجديدة
+        # 5. إدراج الفاتورة
+        print("➡️ [تشخيص] إدراج الفاتورة في قاعدة البيانات")
         cur = conn.execute(
             """INSERT INTO invoices 
                (type, supplier_id, invoice_date, total, total_base, status, 
@@ -212,8 +224,10 @@ def create_purchase_invoice(supplier_id, items, username="admin",
              float(remaining_dec), payment_status, payment_method)
         )
         invoice_id = cur.lastrowid
+        print(f"   ✅ invoice_id = {invoice_id}")
 
-        # 6. إدراج بنود الفاتورة + تحديث المخزون + FIFO
+        # 6. إدراج البنود + FIFO
+        print("➡️ [تشخيص] إدراج البنود + FIFO")
         for item in items:
             base_price = product_prices[item["product_id"]]
             qty = item["quantity"]
@@ -246,17 +260,18 @@ def create_purchase_invoice(supplier_id, items, username="admin",
             )
             if not success:
                 raise Exception(f"فشل إضافة دفعة FIFO للمنتج {item['product_id']}: {error}")
+        print("   ✅ انتهت البنود")
 
-        # 7. ✅ إنشاء القيد المحاسبي (3 سيناريوهات)
+        # 7. القيد المحاسبي
+        print("➡️ [تشخيص] تحضير القيد المحاسبي")
         from services.accounting_service import save_journal_entry
 
         inventory_account = get_functional_account("inventory")
         suppliers_account = get_functional_account("accounts_payable")
         vat_account = get_functional_account("purchase_tax")
+        print(f"   inventory={inventory_account}, suppliers={suppliers_account}, vat={vat_account}")
 
         lines = []
-
-        # ✅ المخزون مدين (كامل المبلغ قبل الضريبة)
         lines.append({
             "account": inventory_account,
             "debit": float(subtotal_local),
@@ -264,8 +279,6 @@ def create_purchase_invoice(supplier_id, items, username="admin",
             "currency_code": currency_code,
             "exchange_rate": float(exchange_rate)
         })
-
-        # ✅ ضريبة المدخلات مدين
         if float(vat_amount_local) > 0:
             lines.append({
                 "account": vat_account,
@@ -274,8 +287,6 @@ def create_purchase_invoice(supplier_id, items, username="admin",
                 "currency_code": currency_code,
                 "exchange_rate": float(exchange_rate)
             })
-
-        # ✅ الجزء النقدي: الصندوق/البنك دائن (المورد قبض فوراً)
         if paid_amount_dec > 0:
             if not cash_account:
                 raise Exception("يجب تحديد حساب الصندوق/البنك عند وجود دفعة نقدية")
@@ -286,8 +297,6 @@ def create_purchase_invoice(supplier_id, items, username="admin",
                 "currency_code": currency_code,
                 "exchange_rate": float(exchange_rate)
             })
-
-        # ✅ الجزء الآجل: الموردون دائن
         if remaining_dec > 0:
             lines.append({
                 "account": suppliers_account,
@@ -297,6 +306,13 @@ def create_purchase_invoice(supplier_id, items, username="admin",
                 "exchange_rate": float(exchange_rate)
             })
 
+        # ============================================================
+        # 🔍 تشخيص 5: قبل القيد
+        # ============================================================
+        print("=" * 70)
+        print(f"➡️ [تشخيص] قبل save_journal_entry — conn id = {id(conn)}")
+        print("=" * 70)
+
         entry_id, entry_error = save_journal_entry(
             description=f"فاتورة مشتريات #{invoice_id} - {supplier_name}",
             lines=lines,
@@ -304,16 +320,28 @@ def create_purchase_invoice(supplier_id, items, username="admin",
             conn=conn
         )
 
+        # ============================================================
+        # 🔍 تشخيص 6: بعد القيد
+        # ============================================================
+        print("=" * 70)
+        print(f"✅ [تشخيص] بعد save_journal_entry")
+        print(f"   entry_id = {entry_id}, error = {entry_error}")
+        print("=" * 70)
+
         if entry_error:
             raise Exception(f"فشل إنشاء القيد المحاسبي: {entry_error}")
 
-        # 8. ✅ إنشاء سند صرف تلقائي (إذا فيه دفعة للمورد)
+        # 8. سند الصرف التلقائي
         voucher_id = None
         if paid_amount_dec > 0 and cash_account:
             try:
+                print("=" * 70)
+                print(f"➡️ [تشخيص] قبل create_voucher — conn id = {id(conn)}")
+                print("=" * 70)
+
                 from services.receipts_service import create_voucher
                 voucher_id, verr = create_voucher(
-                    voucher_type='payment',        # ← سند صرف للمورد
+                    voucher_type='payment',
                     party_type='supplier',
                     party_id=supplier_id,
                     amount=float(paid_amount_dec),
@@ -322,15 +350,24 @@ def create_purchase_invoice(supplier_id, items, username="admin",
                     reference=f"دفعة فاتورة مشتريات #{invoice_id}",
                     notes=f"دفعة تلقائية عند إنشاء الفاتورة",
                     created_by=username,
-                    auto_link=True,     # ← ربط تلقائي بـ invoice_payments
-                    conn=conn           # ← نفس المعاملة
+                    auto_link=True,
+                    conn=conn
                 )
+
+                print("=" * 70)
+                print(f"✅ [تشخيص] بعد create_voucher")
+                print(f"   voucher_id = {voucher_id}, error = {verr}")
+                print("=" * 70)
+
                 if verr:
                     raise Exception(f"فشل إنشاء سند الصرف: {verr}")
             except ImportError as ie:
                 print(f"⚠️ لم يتم إنشاء سند تلقائي: {ie}")
 
+        # 9. COMMIT
+        print("➡️ [تشخيص] COMMIT نهائي")
         conn.commit()
+        print("   ✅ COMMIT نجح")
 
         log_action(
             username=username, action="فاتورة مشتريات", table_name="invoices",
@@ -342,17 +379,34 @@ def create_purchase_invoice(supplier_id, items, username="admin",
             )
         )
 
+        print(f"🎉 [تشخيص] انتهت بنجاح — invoice_id={invoice_id}\n")
         return invoice_id, total_local, None
 
     except Exception as e:
-        conn.rollback()
+        # ============================================================
+        # 🔍 تشخيص 7: عند الخطأ
+        # ============================================================
+        print("=" * 70)
+        print(f"❌ [تشخيص] فشل: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        print("=" * 70)
+
+        try:
+            conn.rollback()
+            print("   🔄 rollback نجح")
+        except Exception as rb_err:
+            print(f"   ❌ rollback فشل: {rb_err}")
+
         return None, Decimal("0"), str(e)
     finally:
-        conn.close()
+        try:
+            conn.close()
+            print("   🔒 conn أُغلق\n")
+        except Exception:
+            pass
 
 
 def get_purchase_invoices():
-    """جلب فواتير المشتريات (مع حقول الدفع الجديدة)"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     invoices = conn.execute("""
@@ -381,7 +435,6 @@ def get_purchase_invoices():
 
 
 def get_invoice_details(invoice_id):
-    """تفاصيل فاتورة المشتريات"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     details = conn.execute("""
