@@ -1,9 +1,9 @@
-# services/sales_service.py – منطق أعمال المبيعات (إصدار احترافي v2.0)
-# ✅ يدعم: البيع النقدي الكامل + الآجل الكامل + الجزئي (دفعة + متبقي)
+# services/sales_service.py – منطق أعمال المبيعات (إصدار احترافي v3.0)
+# ✅ متوافق مع Connection Registry + يدعم نقدي/آجل/جزئي
 import sqlite3
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
-from database import get_connection
+from database import get_connection, close_connection
 from services.audit_service import log_action
 from services.vat_service import get_vat_rate
 from services.currency_service import get_exchange_rate, get_base_currency
@@ -13,88 +13,95 @@ from services.chart_service import get_functional_account
 
 # ---------- دوال مساعدة ----------
 def _quantize(value: Decimal) -> Decimal:
-    """تقريب المبلغ إلى منزلتين عشريتين"""
     return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def _to_decimal(value) -> Decimal:
-    """تحويل القيمة إلى Decimal مع معالجة None"""
     if value is None:
         return Decimal("0")
     return Decimal(str(value))
+
+
+# ============================================================
+# ✅ مساعد: قراءة الحسابات الوظيفية من نفس الاتصال
+# ============================================================
+def _read_functional_account(conn, functional_type):
+    """قراءة كود الحساب الوظيفي من نفس الاتصال (بدون get_functional_account)"""
+    try:
+        r = conn.execute(
+            "SELECT code FROM accounts WHERE functional_type = ? AND is_active = 1 LIMIT 1",
+            (functional_type,)
+        ).fetchone()
+        if r:
+            return r["code"]
+    except Exception:
+        pass
+    return get_functional_account(functional_type)
 
 
 # ---------- العملاء ----------
 def get_customers():
     """جلب العملاء (ID واسم فقط) للاختيار"""
     conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    customers = conn.execute("SELECT id, name FROM customers ORDER BY name").fetchall()
-    conn.close()
-    return [dict(c) for c in customers]
+    try:
+        customers = conn.execute("SELECT id, name FROM customers ORDER BY name").fetchall()
+        return [dict(c) for c in customers]
+    finally:
+        close_connection(conn)
 
 
 def get_all_customers():
     """جلب جميع بيانات العملاء"""
     conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    customers = conn.execute("SELECT * FROM customers ORDER BY id DESC").fetchall()
-    conn.close()
-    return [dict(c) for c in customers]
+    try:
+        customers = conn.execute("SELECT * FROM customers ORDER BY id DESC").fetchall()
+        return [dict(c) for c in customers]
+    finally:
+        close_connection(conn)
 
 
 def add_customer(name, phone, address, username="admin"):
     """إضافة عميل جديد"""
     conn = get_connection()
-    cur = conn.execute(
-        "INSERT INTO customers (name, phone, address) VALUES (?, ?, ?)",
-        (name, phone, address)
-    )
-    customer_id = cur.lastrowid
-    conn.commit()
-    conn.close()
-    log_action(username=username, action="إضافة عميل", table_name="customers",
-               new_value=f"العميل: {name}, الهاتف: {phone}")
-    return customer_id
+    try:
+        cur = conn.execute(
+            "INSERT INTO customers (name, phone, address) VALUES (?, ?, ?)",
+            (name, phone, address)
+        )
+        customer_id = cur.lastrowid
+        conn.commit()
+        log_action(username=username, action="إضافة عميل", table_name="customers",
+                   new_value=f"العميل: {name}, الهاتف: {phone}")
+        return customer_id
+    finally:
+        close_connection(conn)
 
 
 def get_products_for_sale():
     """جلب المنتجات المتاحة للبيع (الكمية > 0)"""
     conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    products = conn.execute(
-        "SELECT id, name, selling_price, quantity FROM products WHERE quantity > 0 ORDER BY name"
-    ).fetchall()
-    conn.close()
-    return [
-        {"id": p["id"], "name": p["name"], "selling_price": p["selling_price"], "quantity": p["quantity"]}
-        for p in products
-    ]
+    try:
+        products = conn.execute(
+            "SELECT id, name, selling_price, quantity FROM products "
+            "WHERE quantity > 0 ORDER BY name"
+        ).fetchall()
+        return [
+            {"id": p["id"], "name": p["name"],
+             "selling_price": p["selling_price"], "quantity": p["quantity"]}
+            for p in products
+        ]
+    finally:
+        close_connection(conn)
 
 
 # ============================================================
-# ✅ الدالة الرئيسية — معدّلة لدعم نقدي/آجل/جزئي
+# ✅ الدالة الرئيسية — create_sale_invoice
 # ============================================================
 def create_sale_invoice(customer_id, items, username="admin",
                         currency_code="YER", exchange_rate=None,
                         paid_amount=None, payment_method="credit",
                         cash_account=None):
-    """
-    إنشاء فاتورة مبيعات كاملة مع دعم 3 سيناريوهات:
-    
-    1. نقدي كامل:  paid_amount = total  → payment_method='cash'
-    2. آجل كامل:   paid_amount = 0      → payment_method='credit'
-    3. جزئي:       0 < paid_amount < total → payment_method='mixed'
-    
-    Args:
-        paid_amount:    المبلغ المدفوع فوراً (None = آجل كامل)
-        payment_method: 'cash' | 'credit' | 'bank' | 'mixed'
-        cash_account:   كود حساب الصندوق/البنك (مطلوب إذا كان فيه دفع)
-    
-    Returns:
-        (invoice_id, total, None)         عند النجاح
-        (None, Decimal("0"), "رسالة")      عند الفشل
-    """
+    """إنشاء فاتورة مبيعات كاملة — كل العمليات من نفس الاتصال"""
     if not items:
         return None, Decimal("0"), "يجب إضافة منتج واحد على الأقل"
 
@@ -105,7 +112,7 @@ def create_sale_invoice(customer_id, items, username="admin",
         if Decimal(str(price)) < 0:
             return None, Decimal("0"), "سعر الوحدة يجب أن لا يكون سالباً"
 
-    # تجميع الكميات حسب المنتج
+    # تجميع الكميات
     from collections import defaultdict
     qty_by_product = defaultdict(int)
     for item in items:
@@ -126,7 +133,6 @@ def create_sale_invoice(customer_id, items, username="admin",
     vat_rate = _to_decimal(get_vat_rate())
 
     conn = get_connection()
-    conn.row_factory = sqlite3.Row
     try:
         conn.execute("BEGIN")
 
@@ -194,9 +200,9 @@ def create_sale_invoice(customer_id, items, username="admin",
         vat_amount_base = _quantize(subtotal_base * vat_rate)
         total_base = _quantize(subtotal_base + vat_amount_base)
 
-        # 3. ✅ معالجة paid_amount
+        # 3. معالجة paid_amount
         if paid_amount is None:
-            paid_amount_dec = Decimal("0")           # آجل كامل افتراضي
+            paid_amount_dec = Decimal("0")
         else:
             paid_amount_dec = _to_decimal(paid_amount)
             if paid_amount_dec < 0:
@@ -208,7 +214,7 @@ def create_sale_invoice(customer_id, items, username="admin",
 
         remaining_dec = total_local - paid_amount_dec
 
-        # تحديد payment_method و payment_status تلقائياً إذا لم تُحدد
+        # تحديد payment_method و payment_status
         if paid_amount_dec == 0:
             if payment_method in ('cash', 'bank', 'mixed'):
                 payment_method = 'credit'
@@ -222,7 +228,7 @@ def create_sale_invoice(customer_id, items, username="admin",
                 payment_method = 'mixed'
             payment_status = 'partial'
 
-        # 4. إدراج الفاتورة مع الحقول الجديدة
+        # 4. إدراج الفاتورة
         cur = conn.execute(
             """INSERT INTO invoices 
                (type, customer_id, invoice_date, total, total_base, status, 
@@ -243,7 +249,8 @@ def create_sale_invoice(customer_id, items, username="admin",
             qty = item["quantity"]
             local_unit_price = _quantize(base_price / exchange_rate)
             conn.execute(
-                "INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price) VALUES (?, ?, ?, ?)",
+                "INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price) "
+                "VALUES (?, ?, ?, ?)",
                 (invoice_id, item["product_id"], qty, float(local_unit_price))
             )
 
@@ -270,18 +277,17 @@ def create_sale_invoice(customer_id, items, username="admin",
         row = conn.execute("SELECT name FROM customers WHERE id = ?", (customer_id,)).fetchone()
         customer_name = row["name"] if row else "غير معروف"
 
-        # 9. ✅ إنشاء القيد المحاسبي (3 سيناريوهات)
+        # 9. القيد المحاسبي — قراءة الحسابات من نفس الاتصال
         from services.accounting_service import save_journal_entry
 
-        customers_account = get_functional_account("accounts_receivable")
-        sales_account = get_functional_account("sales_revenue")
-        vat_account = get_functional_account("sales_tax")
-        cogs_account = get_functional_account("cogs")
-        inventory_account = get_functional_account("inventory")
+        customers_account = _read_functional_account(conn, "accounts_receivable")
+        sales_account = _read_functional_account(conn, "sales_revenue")
+        vat_account = _read_functional_account(conn, "sales_tax")
+        cogs_account = _read_functional_account(conn, "cogs")
+        inventory_account = _read_functional_account(conn, "inventory")
 
         lines = []
 
-        # ✅ الجزء النقدي: الصندوق/البنك مدين
         if paid_amount_dec > 0:
             if not cash_account:
                 raise Exception("يجب تحديد حساب الصندوق/البنك عند وجود دفعة نقدية")
@@ -293,7 +299,6 @@ def create_sale_invoice(customer_id, items, username="admin",
                 "exchange_rate": float(exchange_rate)
             })
 
-        # ✅ الجزء الآجل: العملاء مدين
         if remaining_dec > 0:
             lines.append({
                 "account": customers_account,
@@ -303,7 +308,6 @@ def create_sale_invoice(customer_id, items, username="admin",
                 "exchange_rate": float(exchange_rate)
             })
 
-        # ✅ المبيعات دائن
         lines.append({
             "account": sales_account,
             "debit": 0,
@@ -312,7 +316,6 @@ def create_sale_invoice(customer_id, items, username="admin",
             "exchange_rate": float(exchange_rate)
         })
 
-        # ✅ الضريبة دائن
         if float(vat_amount_local) > 0:
             lines.append({
                 "account": vat_account,
@@ -322,7 +325,6 @@ def create_sale_invoice(customer_id, items, username="admin",
                 "exchange_rate": float(exchange_rate)
             })
 
-        # ✅ COGS + المخزون
         if float(total_cogs) > 0:
             lines.extend([
                 {
@@ -351,7 +353,7 @@ def create_sale_invoice(customer_id, items, username="admin",
         if entry_error:
             raise Exception(f"فشل إنشاء القيد المحاسبي: {entry_error}")
 
-        # 10. ✅ إنشاء سند قبض تلقائي (إذا فيه دفعة)
+        # 10. سند القبض التلقائي
         voucher_id = None
         if paid_amount_dec > 0 and cash_account:
             try:
@@ -366,14 +368,12 @@ def create_sale_invoice(customer_id, items, username="admin",
                     reference=f"دفعة فاتورة #{invoice_id}",
                     notes=f"دفعة تلقائية عند إنشاء الفاتورة",
                     created_by=username,
-                    auto_link=True,     # ← ربط تلقائي بـ invoice_payments
-                    conn=conn           # ← نفس المعاملة
+                    auto_link=True,
+                    conn=conn
                 )
                 if verr:
-                    # السند فشل، لكن الفاتورة نُشأت — نرمي خطأ لإلغاء كل شيء
                     raise Exception(f"فشل إنشاء سند القبض: {verr}")
             except ImportError as ie:
-                # لو الملف غير موجود، نكمل بدون سند
                 print(f"⚠️ لم يتم إنشاء سند تلقائي: {ie}")
 
         conn.commit()
@@ -391,55 +391,61 @@ def create_sale_invoice(customer_id, items, username="admin",
         return invoice_id, total_local, None
 
     except Exception as e:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return None, Decimal("0"), str(e)
     finally:
-        conn.close()
+        close_connection(conn)
 
 
 def get_sale_invoices():
-    """جلب فواتير المبيعات (مع حقول الدفع الجديدة)"""
+    """جلب فواتير المبيعات"""
     conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    invoices = conn.execute("""
-        SELECT i.id, c.name AS customer, i.invoice_date, i.total, i.total_base,
-               i.status, i.vat_rate, i.vat_amount, i.currency_code, i.exchange_rate,
-               COALESCE(i.paid_amount, 0) AS paid_amount,
-               COALESCE(i.remaining_amount, i.total) AS remaining_amount,
-               COALESCE(i.payment_status, 'unpaid') AS payment_status,
-               i.payment_method
-        FROM invoices i
-        LEFT JOIN customers c ON i.customer_id = c.id
-        WHERE i.type = 'sale' ORDER BY i.id DESC
-    """).fetchall()
-    conn.close()
-    result = []
-    for inv in invoices:
-        d = dict(inv)
-        d["total"] = _to_decimal(d["total"])
-        d["total_base"] = _to_decimal(d["total_base"])
-        d["vat_amount"] = _to_decimal(d["vat_amount"])
-        d["exchange_rate"] = _to_decimal(d["exchange_rate"])
-        d["paid_amount"] = _to_decimal(d["paid_amount"])
-        d["remaining_amount"] = _to_decimal(d["remaining_amount"])
-        result.append(d)
-    return result
+    try:
+        invoices = conn.execute("""
+            SELECT i.id, c.name AS customer, i.invoice_date, i.total, i.total_base,
+                   i.status, i.vat_rate, i.vat_amount, i.currency_code, i.exchange_rate,
+                   COALESCE(i.paid_amount, 0) AS paid_amount,
+                   COALESCE(i.remaining_amount, i.total) AS remaining_amount,
+                   COALESCE(i.payment_status, 'unpaid') AS payment_status,
+                   i.payment_method
+            FROM invoices i
+            LEFT JOIN customers c ON i.customer_id = c.id
+            WHERE i.type = 'sale' ORDER BY i.id DESC
+        """).fetchall()
+        result = []
+        for inv in invoices:
+            d = dict(inv)
+            d["total"] = _to_decimal(d["total"])
+            d["total_base"] = _to_decimal(d["total_base"])
+            d["vat_amount"] = _to_decimal(d["vat_amount"])
+            d["exchange_rate"] = _to_decimal(d["exchange_rate"])
+            d["paid_amount"] = _to_decimal(d["paid_amount"])
+            d["remaining_amount"] = _to_decimal(d["remaining_amount"])
+            result.append(d)
+        return result
+    finally:
+        close_connection(conn)
 
 
 def get_invoice_details(invoice_id):
     """تفاصيل فاتورة المبيعات"""
     conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    details = conn.execute("""
-        SELECT p.name, ii.quantity, ii.unit_price,
-               (ii.quantity * ii.unit_price) AS total
-        FROM invoice_items ii
-        JOIN products p ON ii.product_id = p.id
-        WHERE ii.invoice_id = ?
-    """, (invoice_id,)).fetchall()
-    conn.close()
-    return [
-        {"name": d["name"], "quantity": d["quantity"],
-         "unit_price": _to_decimal(d["unit_price"]), "total": _to_decimal(d["total"])}
-        for d in details
-    ]
+    try:
+        details = conn.execute("""
+            SELECT p.name, ii.quantity, ii.unit_price,
+                   (ii.quantity * ii.unit_price) AS total
+            FROM invoice_items ii
+            JOIN products p ON ii.product_id = p.id
+            WHERE ii.invoice_id = ?
+        """, (invoice_id,)).fetchall()
+        return [
+            {"name": d["name"], "quantity": d["quantity"],
+             "unit_price": _to_decimal(d["unit_price"]),
+             "total": _to_decimal(d["total"])}
+            for d in details
+        ]
+    finally:
+        close_connection(conn)
