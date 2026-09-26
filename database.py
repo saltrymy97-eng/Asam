@@ -1,10 +1,9 @@
 # database.py - قاعدة بيانات نظام حوكمة ERP (SQLite) – إصدار إنتاجي نهائي
-# v3.1 — إضافة دورة الدفع الكاملة (نقدي / آجل / جزئي)
+# v3.2 — إصلاح: account_code في cash_accounts + voucher_id في cash_transactions
 import sqlite3
 import bcrypt
 import os
 
-# تغيير مسار قاعدة البيانات إلى مجلد data/ ليتم حفظه مع المشروع
 DB_PATH = os.path.join("data", "erp.db")
 
 
@@ -19,16 +18,14 @@ def get_connection():
 
 
 # ============================================================
-# 🔧 دوال مساعدة للترحيل الآمن (Safe Migrations)
+# 🔧 دوال مساعدة للترحيل الآمن
 # ============================================================
 def _column_exists(cursor, table: str, column: str) -> bool:
-    """فحص وجود عمود في جدول"""
     cursor.execute(f"PRAGMA table_info({table})")
     return column in [row[1] for row in cursor.fetchall()]
 
 
 def _table_exists(cursor, table: str) -> bool:
-    """فحص وجود جدول"""
     cursor.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
         (table,)
@@ -37,7 +34,6 @@ def _table_exists(cursor, table: str) -> bool:
 
 
 def _safe_add_column(cursor, table: str, column: str, definition: str):
-    """إضافة عمود إذا لم يكن موجوداً (ترحيل آمن)"""
     if _column_exists(cursor, table, column):
         return False
     cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
@@ -46,13 +42,8 @@ def _safe_add_column(cursor, table: str, column: str, definition: str):
 
 
 def _migrate_payment_cycle(cursor):
-    """
-    ترحيل آمن لدورة الدفع الكاملة:
-    - إضافة حقول الدفع لجدول invoices
-    - إضافة voucher_id لحركات الصندوق والبنك
-    - تحديث الفواتير القديمة بحالة 'unpaid' إذا كان الحقل NULL
-    """
-    # 1) حقول جديدة في invoices
+    """ترحيل آمن لدورة الدفع الكاملة"""
+    # 1) حقول الدفع في invoices
     _safe_add_column(cursor, "invoices", "paid_amount",      "REAL DEFAULT 0")
     _safe_add_column(cursor, "invoices", "remaining_amount", "REAL DEFAULT 0")
     _safe_add_column(cursor, "invoices", "payment_status",
@@ -63,14 +54,16 @@ def _migrate_payment_cycle(cursor):
     _safe_add_column(cursor, "cash_transactions", "voucher_id", "INTEGER")
     _safe_add_column(cursor, "bank_transactions", "voucher_id", "INTEGER")
 
-    # 3) تعبئة remaining_amount و paid_amount و payment_status للفواتير القديمة
+    # 3) ✅ إصلاح cash_accounts (account_code قد يكون مفقوداً في الجداول القديمة)
+    _safe_add_column(cursor, "cash_accounts", "account_code", "TEXT")
+
+    # 4) تعبئة البيانات القديمة
     cursor.execute("""
         UPDATE invoices
         SET remaining_amount = COALESCE(total, 0) - COALESCE(paid_amount, 0)
         WHERE remaining_amount IS NULL OR remaining_amount = 0
     """)
 
-    # ضبط payment_status للفواتير القديمة بناءً على paid_amount
     cursor.execute("""
         UPDATE invoices
         SET payment_status = CASE
@@ -210,7 +203,7 @@ def init_db():
         address TEXT
     )''')
 
-    # ========== 6. الفواتير (مع حقول الدفع الجديدة) ==========
+    # ========== 6. الفواتير ==========
     c.execute('''CREATE TABLE IF NOT EXISTS invoices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
@@ -226,7 +219,6 @@ def init_db():
         supplier_id INTEGER,
         reason TEXT,
         reference TEXT,
-        -- ✅ حقول دورة الدفع الجديدة
         paid_amount REAL DEFAULT 0,
         remaining_amount REAL DEFAULT 0,
         payment_status TEXT DEFAULT 'unpaid'
@@ -247,7 +239,7 @@ def init_db():
         FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT
     )''')
 
-    # ========== 6.ب جدول الدفعات المرتبطة بالفواتير (NEW) ==========
+    # ========== 6.ب جدول الدفعات المرتبطة بالفواتير ==========
     c.execute('''CREATE TABLE IF NOT EXISTS invoice_payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         invoice_id INTEGER NOT NULL,
@@ -263,8 +255,7 @@ def init_db():
         notes TEXT,
         created_by TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE,
-        FOREIGN KEY (voucher_id) REFERENCES vouchers(id) ON DELETE SET NULL
+        FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
     )''')
 
     # ========== 7. الموارد البشرية والرواتب ==========
@@ -421,6 +412,7 @@ def init_db():
         reference TEXT,
         journal_id INTEGER,
         journal_line_id INTEGER,
+        voucher_id INTEGER,
         reconciled INTEGER DEFAULT 0 CHECK(reconciled IN (0,1)),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (bank_account_id) REFERENCES bank_accounts(id) ON DELETE CASCADE
@@ -628,6 +620,7 @@ def init_db():
         currency_code TEXT NOT NULL DEFAULT 'YER',
         opening_balance REAL DEFAULT 0.0,
         current_balance REAL DEFAULT 0.0,
+        account_code TEXT,
         is_active INTEGER DEFAULT 1 CHECK(is_active IN (0,1)),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
@@ -642,17 +635,17 @@ def init_db():
         reference TEXT,
         journal_id INTEGER,
         journal_line_id INTEGER,
+        voucher_id INTEGER,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (cash_account_id) REFERENCES cash_accounts(id)
     )''')
 
     # ============================================================
-    # 🔄 تشغيل الترحيلات الآمنة (Safe Migrations)
+    # 🔄 تشغيل الترحيلات الآمنة
     # ============================================================
     _migrate_payment_cycle(c)
 
     # ========== 17. الفهارس ==========
-    # فهارس موجودة سابقاً
     c.execute("CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_date ON invoices(invoice_date)")
@@ -677,7 +670,7 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_cash_transactions_account ON cash_transactions(cash_account_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_cash_transactions_date ON cash_transactions(transaction_date)")
 
-    # ✅ فهارس جديدة لدورة الدفع
+    # فهارس جديدة لدورة الدفع
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_payment_status ON invoices(payment_status)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_paid_amount ON invoices(paid_amount)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoice_payments_invoice ON invoice_payments(invoice_id)")
@@ -701,8 +694,10 @@ def create_default_admin():
         try:
             c.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (1, 'مدير')")
             hashed = bcrypt.hashpw("admin".encode(), bcrypt.gensalt()).decode()
-            c.execute("INSERT INTO users (username, password, full_name, role_id) VALUES (?, ?, ?, ?)",
-                      ("admin", hashed, "مدير النظام", 1))
+            c.execute(
+                "INSERT INTO users (username, password, full_name, role_id) VALUES (?, ?, ?, ?)",
+                ("admin", hashed, "مدير النظام", 1)
+            )
             conn.commit()
         except sqlite3.IntegrityError:
             pass
