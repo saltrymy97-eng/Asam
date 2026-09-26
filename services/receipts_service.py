@@ -1,5 +1,5 @@
 # services/receipts_service.py – سندات القبض والصرف الاحترافية
-# v3.0 — ربط يدوي للفواتير + دفعات متعددة + إلغاء الربط + فحوصات سلامة
+# v3.1 — إصلاح database is locked: قراءة الصناديق من نفس الاتصال
 import sqlite3
 from datetime import date
 from database import get_connection
@@ -55,10 +55,7 @@ def get_cash_accounts():
 # ============================================================
 
 def get_voucher_linked_amount(voucher_id, conn=None):
-    """
-    حساب المبلغ الإجمالي الذي تم ربطه من هذا السند (عبر invoice_payments).
-    يُستخدم لفحص عدم تجاوز قيمة السند.
-    """
+    """حساب المبلغ الإجمالي الذي تم ربطه من هذا السند"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -75,14 +72,7 @@ def get_voucher_linked_amount(voucher_id, conn=None):
 
 
 def get_unlinked_vouchers(party_type=None, party_id=None, limit=100, conn=None):
-    """
-    جلب السندات التي لم يتم ربطها بأي فاتورة (أو رُبط منها جزء فقط).
-    
-    Args:
-        party_type: 'customer' أو 'supplier' (اختياري)
-        party_id:   معرف الطرف (اختياري)
-        limit:      الحد الأقصى للنتائج
-    """
+    """جلب السندات غير المربوطة بالكامل"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -120,7 +110,7 @@ def get_unlinked_vouchers(party_type=None, party_id=None, limit=100, conn=None):
 
 
 def get_vouchers_by_party(party_type, party_id, limit=50, conn=None):
-    """جلب جميع سندات طرف معين (مربوطة أو غير مربوطة)"""
+    """جلب جميع سندات طرف معين"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -144,12 +134,7 @@ def get_vouchers_by_party(party_type, party_id, limit=50, conn=None):
 
 
 def get_party_invoices_with_status(party_type, party_id, only_pending=True, conn=None):
-    """
-    جلب فواتير طرف معين مع حالتها الحالية (المدفوع/المتبقي/الحالة).
-    
-    Args:
-        only_pending: إذا True → فقط الفواتير غير المدفوعة بالكامل
-    """
+    """جلب فواتير طرف معين مع حالتها الحالية"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -186,20 +171,9 @@ def get_party_invoices_with_status(party_type, party_id, only_pending=True, conn
 def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
     """
     ربط سند بفاتورة (يدوياً أو تلقائياً).
-    
     - تُدرج صفاً في invoice_payments
     - تُحدّث invoices.paid_amount و remaining_amount و payment_status
     - تفحص أن مجموع المربوط لا يتجاوز قيمة السند نفسه
-    
-    Args:
-        voucher_id: معرف السند (يمكن None للدفعات اليدوية بلا سند)
-        invoice_id: معرف الفاتورة
-        amount:     المبلغ (يجب > 0)
-        conn:       اتصال خارجي (للمعاملة الواحدة)
-    
-    Returns:
-        (True, None)          عند النجاح
-        (False, "رسالة")     عند الفشل
     """
     if amount is None or float(amount) <= 0:
         return False, "المبلغ يجب أن يكون أكبر من صفر"
@@ -234,7 +208,7 @@ def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
                 f"({remaining:,.2f}) على الفاتورة #{invoice_id}"
             )
 
-        # 2. ✅ فحص السند إن وُجد: لا يتجاوز المبلغ المتبقي من السند
+        # 2. فحص السند إن وُجد
         if voucher_id:
             v_row = conn.execute(
                 "SELECT id, amount, account FROM vouchers WHERE id=?",
@@ -314,16 +288,10 @@ def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
 
 
 # ============================================================
-# ✅ دالة جديدة: إلغاء ربط دفعة (unlink)
+# إلغاء ربط دفعة
 # ============================================================
 def unlink_voucher_from_invoice(payment_id, conn=None):
-    """
-    إلغاء ربط دفعة بفاتورة (حذف صف من invoice_payments).
-    يُستخدم لتصحيح الأخطاء دون حذف السند نفسه.
-    
-    Args:
-        payment_id: معرف صف الدفعة في invoice_payments
-    """
+    """إلغاء ربط دفعة بفاتورة (حذف صف من invoice_payments)"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -333,7 +301,6 @@ def unlink_voucher_from_invoice(payment_id, conn=None):
         if own_conn:
             conn.execute("BEGIN")
 
-        # 1. جلب معلومات الدفعة
         row = conn.execute(
             "SELECT invoice_id, voucher_id, amount FROM invoice_payments WHERE id=?",
             (payment_id,)
@@ -346,10 +313,8 @@ def unlink_voucher_from_invoice(payment_id, conn=None):
         invoice_id = row["invoice_id"]
         amount = float(row["amount"] or 0)
 
-        # 2. حذف الدفعة
         conn.execute("DELETE FROM invoice_payments WHERE id=?", (payment_id,))
 
-        # 3. إعادة حساب حالة الفاتورة
         inv = conn.execute(
             "SELECT total, paid_amount FROM invoices WHERE id=?",
             (invoice_id,)
@@ -428,12 +393,12 @@ def get_suppliers_with_balances():
 
 
 def get_invoices_for_party(party_type, party_id):
-    """جلب الفواتير المعلقة للطرف (للاختيار في الواجهة)"""
+    """جلب الفواتير المعلقة للطرف"""
     return get_party_invoices_with_status(party_type, party_id, only_pending=True)
 
 
 # ============================================================
-# إنشاء السندات (كما هو بدون تغيير جوهري)
+# إنشاء السندات (مع إصلاح database is locked)
 # ============================================================
 def create_voucher(voucher_type, party_type, party_id, amount, account,
                    invoice_id=None, reference="", notes="", created_by="admin",
@@ -503,10 +468,17 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
         conn.execute("UPDATE vouchers SET journal_entry_id=? WHERE id=?",
                     (entry_id, voucher_id))
 
-        # 4. ربط السند بالصندوق
+        # ============================================================
+        # ✅ 4. ربط السند بالصندوق (الإصلاح: قراءة من نفس الاتصال)
+        # ============================================================
         try:
-            from services.cash_service import add_cash_transaction, get_all_cash_accounts
-            cash_accounts = get_all_cash_accounts(active_only=True)
+            from services.cash_service import add_cash_transaction
+
+            # ✅ نقرأ الصناديق من نفس الاتصال الحالي — لا اتصال جديد
+            _rows = conn.execute(
+                "SELECT * FROM cash_accounts WHERE is_active = 1 ORDER BY name"
+            ).fetchall()
+            cash_accounts = [dict(r) for r in _rows]
 
             row_acc = conn.execute("SELECT name FROM accounts WHERE code=?", (account,)).fetchone()
             acc_name = row_acc["name"] if row_acc else ""
@@ -621,7 +593,6 @@ def get_voucher_details(voucher_id):
 
     voucher = dict(voucher)
 
-    # القيد
     entry_id = voucher.get("journal_entry_id")
     if entry_id:
         lines = conn.execute(
@@ -630,7 +601,6 @@ def get_voucher_details(voucher_id):
         ).fetchall()
         voucher["lines"] = [dict(l) for l in lines]
 
-    # ✅ الدفعات المرتبطة (invoice_payments)
     payments = conn.execute("""
         SELECT ip.*, i.type AS invoice_type, i.invoice_date AS invoice_date
         FROM invoice_payments ip
@@ -640,7 +610,6 @@ def get_voucher_details(voucher_id):
     """, (voucher_id,)).fetchall()
     voucher["linked_payments"] = [dict(p) for p in payments]
 
-    # ✅ المبلغ المربوط والمتبقي من السند
     linked_total = sum(float(p["amount"] or 0) for p in voucher["linked_payments"])
     voucher["linked_amount"] = linked_total
     voucher["unlinked_amount"] = max(0.0, float(voucher["amount"] or 0) - linked_total)
