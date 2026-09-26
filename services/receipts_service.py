@@ -1,5 +1,5 @@
 # services/receipts_service.py – سندات القبض والصرف الاحترافية
-# v3.1 — إصلاح database is locked: قراءة الصناديق من نفس الاتصال
+# v3.2 — إصلاح database is locked: منع كل فتح اتصال داخل المعاملة
 import sqlite3
 from datetime import date
 from database import get_connection
@@ -9,30 +9,37 @@ from services.chart_service import get_functional_account
 
 
 # ============================================================
-# إنشاء الجداول
+# إنشاء الجداول (تقبل conn — لا تفتح اتصالاً داخل معاملة)
 # ============================================================
-def create_vouchers_table():
+def create_vouchers_table(conn=None):
     """إنشاء جدول السندات إذا لم يكن موجوداً"""
-    conn = get_connection()
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS vouchers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            type TEXT NOT NULL,
-            date TEXT NOT NULL,
-            party_type TEXT NOT NULL,
-            party_id INTEGER,
-            amount REAL NOT NULL,
-            account TEXT NOT NULL,
-            invoice_id INTEGER,
-            journal_entry_id INTEGER,
-            reference TEXT,
-            notes TEXT,
-            created_by TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    conn.commit()
-    conn.close()
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS vouchers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT NOT NULL,
+                date TEXT NOT NULL,
+                party_type TEXT NOT NULL,
+                party_id INTEGER,
+                amount REAL NOT NULL,
+                account TEXT NOT NULL,
+                invoice_id INTEGER,
+                journal_entry_id INTEGER,
+                reference TEXT,
+                notes TEXT,
+                created_by TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        if own_conn:
+            conn.commit()
+    finally:
+        if own_conn:
+            conn.close()
 
 
 def get_cash_accounts():
@@ -51,7 +58,7 @@ def get_cash_accounts():
 
 
 # ============================================================
-# ✅ دوال جديدة: الربط اليدوي وإدارة العلاقات
+# ✅ دوال الربط اليدوي وإدارة العلاقات
 # ============================================================
 
 def get_voucher_linked_amount(voucher_id, conn=None):
@@ -169,12 +176,7 @@ def get_party_invoices_with_status(party_type, party_id, only_pending=True, conn
 
 
 def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
-    """
-    ربط سند بفاتورة (يدوياً أو تلقائياً).
-    - تُدرج صفاً في invoice_payments
-    - تُحدّث invoices.paid_amount و remaining_amount و payment_status
-    - تفحص أن مجموع المربوط لا يتجاوز قيمة السند نفسه
-    """
+    """ربط سند بفاتورة (يدوياً أو تلقائياً)"""
     if amount is None or float(amount) <= 0:
         return False, "المبلغ يجب أن يكون أكبر من صفر"
 
@@ -209,6 +211,7 @@ def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
             )
 
         # 2. فحص السند إن وُجد
+        v_row = None
         if voucher_id:
             v_row = conn.execute(
                 "SELECT id, amount, account FROM vouchers WHERE id=?",
@@ -233,9 +236,9 @@ def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
                     f"({voucher_remaining:,.2f})"
                 )
 
-        # 3. تحديد طريقة الدفع من السند
+        # 3. تحديد طريقة الدفع
         payment_method = 'cash'
-        if voucher_id:
+        if voucher_id and v_row:
             acc_code = v_row["account"]
             acc_row = conn.execute(
                 "SELECT name FROM accounts WHERE code=?", (acc_code,)
@@ -287,11 +290,8 @@ def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
             conn.close()
 
 
-# ============================================================
-# إلغاء ربط دفعة
-# ============================================================
 def unlink_voucher_from_invoice(payment_id, conn=None):
-    """إلغاء ربط دفعة بفاتورة (حذف صف من invoice_payments)"""
+    """إلغاء ربط دفعة بفاتورة"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -357,7 +357,6 @@ def unlink_voucher_from_invoice(payment_id, conn=None):
 # ============================================================
 
 def get_customers_with_balances():
-    """جلب العملاء مع رصيدهم المستحق"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     customers = conn.execute("SELECT id, name FROM customers ORDER BY name").fetchall()
@@ -375,7 +374,6 @@ def get_customers_with_balances():
 
 
 def get_suppliers_with_balances():
-    """جلب الموردين مع رصيدهم المستحق"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     suppliers = conn.execute("SELECT id, name FROM suppliers ORDER BY name").fetchall()
@@ -393,24 +391,23 @@ def get_suppliers_with_balances():
 
 
 def get_invoices_for_party(party_type, party_id):
-    """جلب الفواتير المعلقة للطرف"""
     return get_party_invoices_with_status(party_type, party_id, only_pending=True)
 
 
 # ============================================================
-# إنشاء السندات (مع إصلاح database is locked)
+# ✅ إنشاء السندات — الحل الاحترافي
 # ============================================================
 def create_voucher(voucher_type, party_type, party_id, amount, account,
                    invoice_id=None, reference="", notes="", created_by="admin",
                    voucher_date=None, auto_link=True, conn=None):
-    """إنشاء سند قبض أو صرف مع القيد المحاسبي والربط التلقائي بالفواتير"""
+    """
+    إنشاء سند قبض أو صرف — كل العمليات من نفس الاتصال (لا فتح اتصال جديد).
+    """
     if voucher_date is None:
         voucher_date = date.today().strftime("%Y-%m-%d")
 
     if not amount or float(amount) <= 0:
         return None, "المبلغ يجب أن يكون أكبر من صفر"
-
-    create_vouchers_table()
 
     own_conn = False
     if conn is None:
@@ -420,6 +417,28 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
     try:
         if own_conn:
             conn.execute("BEGIN")
+
+        # ✅ إنشاء الجدول من نفس الاتصال (بدون فتح اتصال جديد)
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS vouchers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    type TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    party_type TEXT NOT NULL,
+                    party_id INTEGER,
+                    amount REAL NOT NULL,
+                    account TEXT NOT NULL,
+                    invoice_id INTEGER,
+                    journal_entry_id INTEGER,
+                    reference TEXT,
+                    notes TEXT,
+                    created_by TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        except Exception:
+            pass
 
         # 1. إدراج السند
         cur = conn.execute("""
@@ -437,9 +456,19 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
             row = conn.execute("SELECT name FROM suppliers WHERE id=?", (party_id,)).fetchone()
         party_name = row["name"] if row else "غير معروف"
 
-        # 3. القيد المحاسبي
-        customers_account = get_functional_account("accounts_receivable")
-        suppliers_account = get_functional_account("accounts_payable")
+        # ✅ 3. قراءة الحسابات الوظيفية من نفس الاتصال (بدون get_functional_account)
+        def _read_functional_account(functional_type):
+            r = conn.execute(
+                "SELECT code FROM accounts WHERE functional_type = ? AND is_active = 1 LIMIT 1",
+                (functional_type,)
+            ).fetchone()
+            if r:
+                return r["code"]
+            # fallback — في حال لم يوجد، نستخدم الدالة الأصلية
+            return get_functional_account(functional_type)
+
+        customers_account = _read_functional_account("accounts_receivable")
+        suppliers_account = _read_functional_account("accounts_payable")
 
         if voucher_type == 'receipt':
             lines = [
@@ -469,12 +498,12 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
                     (entry_id, voucher_id))
 
         # ============================================================
-        # ✅ 4. ربط السند بالصندوق (الإصلاح: قراءة من نفس الاتصال)
+        # ✅ 4. ربط السند بالصندوق — كل شيء من نفس الاتصال
         # ============================================================
         try:
             from services.cash_service import add_cash_transaction
 
-            # ✅ نقرأ الصناديق من نفس الاتصال الحالي — لا اتصال جديد
+            # ✅ قراءة الصناديق من نفس الاتصال
             _rows = conn.execute(
                 "SELECT * FROM cash_accounts WHERE is_active = 1 ORDER BY name"
             ).fetchall()
@@ -482,7 +511,13 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
 
             row_acc = conn.execute("SELECT name FROM accounts WHERE code=?", (account,)).fetchone()
             acc_name = row_acc["name"] if row_acc else ""
-            cash_account_code = get_functional_account("cash")
+
+            # ✅ قراءة كود الصندوق الوظيفي من نفس الاتصال
+            cash_row = conn.execute(
+                "SELECT code FROM accounts WHERE functional_type = 'cash' AND is_active = 1 LIMIT 1"
+            ).fetchone()
+            cash_account_code = cash_row["code"] if cash_row else None
+
             is_cash = ("صندوق" in acc_name) or (account == cash_account_code)
 
             cash_acc = None
@@ -491,7 +526,7 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
                     if ca.get('account_code') == account:
                         cash_acc = ca
                         break
-                if cash_acc is None:
+                if cash_acc is None and cash_account_code:
                     for ca in cash_accounts:
                         if ca.get('account_code') == cash_account_code:
                             cash_acc = ca
@@ -555,7 +590,6 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
 # ============================================================
 
 def get_vouchers(limit=50):
-    """سجل السندات"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     vouchers = conn.execute("""
@@ -575,7 +609,6 @@ def get_vouchers(limit=50):
 
 
 def get_voucher_details(voucher_id):
-    """تفاصيل سند مع القيد + الدفعات المرتبطة"""
     conn = get_connection()
     conn.row_factory = sqlite3.Row
     voucher = conn.execute("""
