@@ -1,5 +1,5 @@
-# ui/sales_ui.py – واجهة المبيعات (تصميم زجاجي فخم + دعم العملات + دورة الدفع الكاملة)
-# v2.0 — دعم: بيع نقدي / آجل / جزئي
+# ui/sales_ui.py – واجهة المبيعات (v3.0)
+# ✅ يدعم: بيع نقدي/آجل/جزئي + عرض تحذيرات السند + إنشاء يدوي
 import streamlit as st
 import pandas as pd
 from services.sales_service import (
@@ -9,7 +9,8 @@ from services.sales_service import (
     get_sale_invoices,
     get_invoice_details,
     add_customer,
-    get_all_customers
+    get_all_customers,
+    create_receipt_voucher_for_invoice,   # ✅ جديد
 )
 from services.currency_service import get_all_currencies, get_base_currency
 from services.cash_service import get_all_cash_accounts
@@ -28,7 +29,6 @@ ACCENT_RED = "#EF4444"
 ACCENT_PURPLE = "#8B5CF6"
 
 
-# ========== خريطة عرض حالة الدفع ==========
 PAYMENT_STATUS_LABELS = {
     "unpaid":  "🔴 غير مدفوعة",
     "partial": "🟡 مدفوعة جزئياً",
@@ -136,7 +136,6 @@ def show():
             st.markdown(f"<h4 style='color:{ACCENT_GREEN};'>💰 تفاصيل الدفع</h4>",
                         unsafe_allow_html=True)
 
-            # ✅ اختيار طريقة الدفع
             payment_options = {
                 "نقدي (دفع كامل الآن)": "cash",
                 "آجل (بدون دفع الآن)": "credit",
@@ -150,20 +149,19 @@ def show():
             )
             payment_choice = payment_options[selected_payment_label]
 
-            # ✅ إذا نقدي أو جزئي: نحتاج الصندوق/البنك
             cash_account = None
             paid_amount = 0.0
 
             if payment_choice in ('cash', 'partial'):
-                # جلب الصناديق
                 cash_accounts = get_all_cash_accounts(active_only=True)
                 if not cash_accounts:
                     st.error("⚠️ لا يوجد صندوق أو حساب بنكي. أضف صندوقاً من وحدة الصندوق أولاً.")
                     return
 
-                # اختيار الصندوق
-                cash_labels = [f"{ca['name']} ({ca['currency_code']}) - الرصيد: {ca['current_balance']:,.2f}"
-                               for ca in cash_accounts]
+                cash_labels = [
+                    f"{ca['name']} ({ca['currency_code']}) - الرصيد: {ca['current_balance']:,.2f}"
+                    for ca in cash_accounts
+                ]
                 selected_cash_label = st.selectbox(
                     "💵 من أي صندوق/بنك تم استلام المبلغ؟",
                     cash_labels,
@@ -172,13 +170,10 @@ def show():
                 cash_idx = cash_labels.index(selected_cash_label)
                 cash_account = cash_accounts[cash_idx]['account_code']
 
-                # إذا نقدي كامل: paid = total
                 if payment_choice == 'cash':
                     paid_amount = total_invoice
                     st.info(f"💵 سيتم استلام {total_invoice:,.2f} {currency_code} نقداً")
-
-                # إذا جزئي: حقل المبلغ المدفوع
-                else:  # partial
+                else:
                     paid_amount = st.number_input(
                         f"💵 المبلغ المدفوع الآن (من إجمالي {total_invoice:,.2f})",
                         min_value=0.0,
@@ -196,8 +191,7 @@ def show():
                         f"</div>",
                         unsafe_allow_html=True
                     )
-
-            else:  # credit (آجل كامل)
+            else:
                 st.info(f"📌 سيتم تسجيل المبلغ كاملاً ({total_invoice:,.2f} {currency_code}) على حساب العميل")
 
             # 5) زر الحفظ
@@ -211,28 +205,43 @@ def show():
                 st.session_state.saving_sale = True
                 st.rerun()
 
-            # تنفيذ الحفظ
             if st.session_state.saving_sale:
                 try:
-                    # ✅ تمرير معاملات الدفع للـ service
                     invoice_id, total, error = create_sale_invoice(
                         customer_id=customer_id,
                         items=st.session_state.invoice_items,
                         username=st.session_state.user.get('username', 'admin'),
                         currency_code=currency_code,
-                        paid_amount=paid_amount,               # ← جديد
+                        paid_amount=paid_amount,
                         payment_method=(
                             'cash' if payment_choice == 'cash'
                             else 'credit' if payment_choice == 'credit'
                             else 'mixed'
-                        ),                                      # ← جديد
-                        cash_account=cash_account               # ← جديد
+                        ),
+                        cash_account=cash_account
                     )
-                    if error:
-                        st.error(f"فشل في حفظ الفاتورة: {error}")
+
+                    if error and invoice_id is None:
+                        # ❌ فشل كامل
+                        st.error(f"❌ فشل في حفظ الفاتورة: {error}")
+
+                    elif error and invoice_id is not None:
+                        # ⚠️ نجاح جزئي — الفاتورة محفوظة، السند لم يُنشأ
+                        st.warning(
+                            f"⚠️ **تم حفظ الفاتورة رقم {invoice_id} بنجاح** "
+                            f"لكن **لم يُنشأ سند القبض التلقائي**.\n\n"
+                            f"**السبب:** {error}\n\n"
+                            f"👉 اذهب لتبويب **'فواتير المبيعات'** واضغط **'إنشاء السند يدوياً'**."
+                        )
+                        st.session_state.invoice_items = []
+
                     else:
+                        # ✅ نجاح كامل
                         st.success(f"✅ تم حفظ الفاتورة رقم {invoice_id} بنجاح")
                         st.session_state.invoice_items = []
+
+                except Exception as e:
+                    st.error(f"❌ خطأ غير متوقع: {e}")
                 finally:
                     st.session_state.saving_sale = False
                     st.rerun()
@@ -247,10 +256,19 @@ def show():
     with tab2:
         st.markdown(f"<h3 style='color:{ACCENT_GREEN};'>فواتير المبيعات المسجلة</h3>",
                     unsafe_allow_html=True)
-        invoices = get_sale_invoices()
-        if invoices:
-            # ✅ تجهيز عرض مُحسّن مع حالة الدفع
-            df_invoices = pd.DataFrame(invoices)
+
+        all_invoices = get_sale_invoices()
+
+        # ⚠️ تنبيه عام
+        invoices_with_warnings = [inv for inv in all_invoices if inv.get('has_warning')]
+        if invoices_with_warnings:
+            st.error(
+                f"⚠️ يوجد **{len(invoices_with_warnings)}** فاتورة "
+                f"لم يُنشأ لها سند قبض تلقائي. راجعها أدناه."
+            )
+
+        if all_invoices:
+            df_invoices = pd.DataFrame(all_invoices)
             display_cols = ["id", "customer", "invoice_date", "total",
                             "paid_amount", "remaining_amount", "payment_status"]
             display_cols = [c for c in display_cols if c in df_invoices.columns]
@@ -261,11 +279,16 @@ def show():
                     PAYMENT_STATUS_LABELS
                 ).fillna(df_display["payment_status"])
 
+            if "has_warning" in df_invoices.columns:
+                df_display["⚠️"] = df_invoices["has_warning"].apply(
+                    lambda x: "⚠️" if x else "✅"
+                )
+
             st.dataframe(df_display, use_container_width=True, hide_index=True)
 
-            # تفاصيل فاتورة
-            invoice_ids = [inv['id'] for inv in invoices]
-            selected_id = st.selectbox("اختر فاتورة لعرض تفاصيلها", invoice_ids)
+            invoice_ids = [inv['id'] for inv in all_invoices]
+            selected_id = st.selectbox("اختر فاتورة لعرض تفاصيلها",
+                                        invoice_ids, key="sale_inv_sel")
             if selected_id:
                 details = get_invoice_details(selected_id)
                 if details:
@@ -274,8 +297,7 @@ def show():
                     total = sum(d['total'] for d in details)
                     st.markdown(f"**إجمالي الفاتورة: {total:,.2f}**")
 
-                # ✅ عرض حالة الدفع للفاتورة المختارة
-                inv_sel = next((i for i in invoices if i['id'] == selected_id), None)
+                inv_sel = next((i for i in all_invoices if i['id'] == selected_id), None)
                 if inv_sel:
                     st.markdown("### حالة الدفع")
                     c1, c2, c3 = st.columns(3)
@@ -287,6 +309,27 @@ def show():
                         f"**حالة الدفع:** {PAYMENT_STATUS_LABELS.get(inv_sel.get('payment_status'), '—')} "
                         f"| **طريقة الدفع:** {PAYMENT_METHOD_LABELS.get(inv_sel.get('payment_method'), '—')}"
                     )
+
+                    # ✅ زر الإنشاء اليدوي
+                    if inv_sel.get('has_warning'):
+                        st.warning(f"⚠️ **تنبيه:** {inv_sel.get('reference', '')}")
+
+                        if float(inv_sel.get('paid_amount', 0)) > 0:
+                            if st.button(
+                                f"🔧 إنشاء سند القبض يدوياً للفاتورة #{selected_id}",
+                                type="primary",
+                                key=f"create_receipt_btn_{selected_id}"
+                            ):
+                                with st.spinner("جاري إنشاء سند القبض..."):
+                                    vid, verr = create_receipt_voucher_for_invoice(
+                                        invoice_id=selected_id,
+                                        username=st.session_state.user.get('username', 'admin')
+                                    )
+                                    if verr:
+                                        st.error(f"❌ فشل: {verr}")
+                                    else:
+                                        st.success(f"✅ تم إنشاء سند القبض رقم {vid}")
+                                        st.rerun()
         else:
             st.info("لا توجد فواتير مبيعات بعد")
 
