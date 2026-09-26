@@ -1,8 +1,9 @@
 # database.py - قاعدة بيانات نظام حوكمة ERP (SQLite) – إصدار إنتاجي نهائي
-# v3.3 — حل database is locked + تحسينات أداء + ترحيل آمن
+# v3.4 — إضافة كود تشخيص مؤقت لتتبع اتصالات قاعدة البيانات
 import sqlite3
 import bcrypt
 import os
+import traceback as _tb
 
 DB_PATH = os.path.join("data", "erp.db")
 
@@ -10,29 +11,40 @@ DB_PATH = os.path.join("data", "erp.db")
 def get_connection():
     """
     إنشاء اتصال بقاعدة البيانات مع:
-    - دعم WAL Mode (كتابة/قراءة متزامنة أفضل)
+    - دعم WAL Mode
     - Foreign Keys مُفعّلة
-    - busy_timeout = 10 ثوان (لمنع 'database is locked')
-    - تحسينات أداء (synchronous, temp_store, cache)
+    - busy_timeout = 10 ثوان
+    - 🔍 كود تشخيص مؤقت (يُطبع عند كل اتصال)
     """
     os.makedirs("data", exist_ok=True)
 
     conn = sqlite3.connect(
         DB_PATH,
         check_same_thread=False,
-        timeout=15,          # مهلة الاتصال على مستوى Python
-        isolation_level=None # ← مهم: نُدير المعاملات يدوياً
+        timeout=15,
+        isolation_level=None
     )
 
     # === إعدادات PRAGMA ===
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 10000")     # ← الحل الرئيسي
-    conn.execute("PRAGMA synchronous = NORMAL")     # أسرع مع WAL
-    conn.execute("PRAGMA temp_store = MEMORY")      # temp في الذاكرة
-    conn.execute("PRAGMA cache_size = -8000")       # 8MB cache
+    conn.execute("PRAGMA busy_timeout = 10000")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA temp_store = MEMORY")
+    conn.execute("PRAGMA cache_size = -8000")
 
     conn.row_factory = sqlite3.Row
+
+    # ============================================================
+    # 🔍 كود تشخيص مؤقت — يطبع مكان كل اتصال جديد
+    # ============================================================
+    stack = _tb.extract_stack()
+    if len(stack) >= 2:
+        caller = stack[-2]
+        filename = os.path.basename(caller.filename)
+        print(f"🔌 [DB] {filename}:{caller.lineno} → {caller.name}()")
+    # ============================================================
+
     return conn
 
 
@@ -53,7 +65,6 @@ def _table_exists(cursor, table: str) -> bool:
 
 
 def _safe_add_column(cursor, table: str, column: str, definition: str):
-    """إضافة عمود إذا لم يكن موجوداً (آمن مع قواعد موجودة)"""
     if _column_exists(cursor, table, column):
         return False
     cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
@@ -63,21 +74,16 @@ def _safe_add_column(cursor, table: str, column: str, definition: str):
 
 def _migrate_payment_cycle(cursor):
     """ترحيل آمن لدورة الدفع الكاملة"""
-    # 1) حقول الدفع في invoices
     _safe_add_column(cursor, "invoices", "paid_amount",      "REAL DEFAULT 0")
     _safe_add_column(cursor, "invoices", "remaining_amount", "REAL DEFAULT 0")
     _safe_add_column(cursor, "invoices", "payment_status",
                      "TEXT DEFAULT 'unpaid'")
     _safe_add_column(cursor, "invoices", "payment_method",   "TEXT")
 
-    # 2) ربط حركات النقد بالسندات
     _safe_add_column(cursor, "cash_transactions", "voucher_id", "INTEGER")
     _safe_add_column(cursor, "bank_transactions", "voucher_id", "INTEGER")
-
-    # 3) إصلاح cash_accounts (قد يكون account_code مفقوداً في الجداول القديمة)
     _safe_add_column(cursor, "cash_accounts", "account_code", "TEXT")
 
-    # 4) تعبئة البيانات القديمة
     cursor.execute("""
         UPDATE invoices
         SET remaining_amount = COALESCE(total, 0) - COALESCE(paid_amount, 0)
@@ -100,7 +106,7 @@ def init_db():
     conn = get_connection()
     c = conn.cursor()
 
-    # ========== 1. الصلاحيات والأدوار والمستخدمين ==========
+    # ========== 1. الصلاحيات ==========
     c.execute('''CREATE TABLE IF NOT EXISTS roles (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT UNIQUE NOT NULL
@@ -142,7 +148,7 @@ def init_db():
         FOREIGN KEY (parent_id) REFERENCES accounts(id) ON DELETE SET NULL
     )''')
 
-    # ========== 3. القيود المحاسبية ==========
+    # ========== 3. القيود ==========
     c.execute('''CREATE TABLE IF NOT EXISTS journal_entries (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         entry_number TEXT UNIQUE,
@@ -259,7 +265,6 @@ def init_db():
         FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT
     )''')
 
-    # ========== 6.ب جدول الدفعات المرتبطة بالفواتير ==========
     c.execute('''CREATE TABLE IF NOT EXISTS invoice_payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         invoice_id INTEGER NOT NULL,
@@ -278,7 +283,7 @@ def init_db():
         FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
     )''')
 
-    # ========== 7. الموارد البشرية والرواتب ==========
+    # ========== 7. الموارد البشرية ==========
     c.execute('''CREATE TABLE IF NOT EXISTS employees (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -451,7 +456,7 @@ def init_db():
         FOREIGN KEY (bank_account_id) REFERENCES bank_accounts(id) ON DELETE CASCADE
     )''')
 
-    # ========== 12. المرفقات وضريبة القيمة المضافة ==========
+    # ========== 12. المرفقات والضريبة ==========
     c.execute('''CREATE TABLE IF NOT EXISTS attachments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         filename TEXT NOT NULL,
@@ -661,7 +666,7 @@ def init_db():
     )''')
 
     # ============================================================
-    # 🔄 تشغيل الترحيلات الآمنة
+    # 🔄 الترحيلات الآمنة
     # ============================================================
     _migrate_payment_cycle(c)
 
@@ -690,7 +695,6 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_cash_transactions_account ON cash_transactions(cash_account_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_cash_transactions_date ON cash_transactions(transaction_date)")
 
-    # فهارس جديدة لدورة الدفع
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_payment_status ON invoices(payment_status)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_paid_amount ON invoices(paid_amount)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoice_payments_invoice ON invoice_payments(invoice_id)")
