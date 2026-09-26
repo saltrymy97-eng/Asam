@@ -1,15 +1,15 @@
 # services/receipts_service.py – سندات القبض والصرف الاحترافية
-# v3.2 — إصلاح database is locked: منع كل فتح اتصال داخل المعاملة
+# v4.0 — متوافق مع Connection Registry (لا يُغلق الاتصالات)
 import sqlite3
 from datetime import date
-from database import get_connection
+from database import get_connection, close_connection
 from services.audit_service import log_action
 from services.accounting_service import save_journal_entry
 from services.chart_service import get_functional_account
 
 
 # ============================================================
-# إنشاء الجداول (تقبل conn — لا تفتح اتصالاً داخل معاملة)
+# إنشاء الجداول
 # ============================================================
 def create_vouchers_table(conn=None):
     """إنشاء جدول السندات إذا لم يكن موجوداً"""
@@ -39,26 +39,31 @@ def create_vouchers_table(conn=None):
             conn.commit()
     finally:
         if own_conn:
-            conn.close()
+            close_connection(conn)
 
 
-def get_cash_accounts():
+def get_cash_accounts(conn=None):
     """جلب حسابات النقدية (المستوى الثاني تحت الأصول)"""
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    accounts = conn.execute("""
-        SELECT code, name FROM accounts
-        WHERE parent_id = (SELECT id FROM accounts WHERE code = '1')
-        ORDER BY code
-    """).fetchall()
-    conn.close()
-    if not accounts:
-        return [{"code": "صندوق", "name": "صندوق"}, {"code": "بنك", "name": "بنك"}]
-    return [{"code": a["code"], "name": a["name"]} for a in accounts]
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
+    try:
+        accounts = conn.execute("""
+            SELECT code, name FROM accounts
+            WHERE parent_id = (SELECT id FROM accounts WHERE code = '1')
+            ORDER BY code
+        """).fetchall()
+        if not accounts:
+            return [{"code": "صندوق", "name": "صندوق"}, {"code": "بنك", "name": "بنك"}]
+        return [{"code": a["code"], "name": a["name"]} for a in accounts]
+    finally:
+        if own_conn:
+            close_connection(conn)
 
 
 # ============================================================
-# ✅ دوال الربط اليدوي وإدارة العلاقات
+# ✅ الربط اليدوي وإدارة العلاقات
 # ============================================================
 
 def get_voucher_linked_amount(voucher_id, conn=None):
@@ -75,7 +80,7 @@ def get_voucher_linked_amount(voucher_id, conn=None):
         return float(row[0]) if row else 0.0
     finally:
         if own_conn:
-            conn.close()
+            close_connection(conn)
 
 
 def get_unlinked_vouchers(party_type=None, party_id=None, limit=100, conn=None):
@@ -85,7 +90,6 @@ def get_unlinked_vouchers(party_type=None, party_id=None, limit=100, conn=None):
         conn = get_connection()
         own_conn = True
     try:
-        conn.row_factory = sqlite3.Row
         sql = """
             SELECT v.*,
                    CASE WHEN v.party_type='customer' THEN c.name ELSE s.name END AS party_name,
@@ -113,7 +117,7 @@ def get_unlinked_vouchers(party_type=None, party_id=None, limit=100, conn=None):
         return [dict(r) for r in rows]
     finally:
         if own_conn:
-            conn.close()
+            close_connection(conn)
 
 
 def get_vouchers_by_party(party_type, party_id, limit=50, conn=None):
@@ -123,7 +127,6 @@ def get_vouchers_by_party(party_type, party_id, limit=50, conn=None):
         conn = get_connection()
         own_conn = True
     try:
-        conn.row_factory = sqlite3.Row
         rows = conn.execute("""
             SELECT v.*,
                    COALESCE((
@@ -137,7 +140,7 @@ def get_vouchers_by_party(party_type, party_id, limit=50, conn=None):
         return [dict(r) for r in rows]
     finally:
         if own_conn:
-            conn.close()
+            close_connection(conn)
 
 
 def get_party_invoices_with_status(party_type, party_id, only_pending=True, conn=None):
@@ -147,7 +150,6 @@ def get_party_invoices_with_status(party_type, party_id, only_pending=True, conn
         conn = get_connection()
         own_conn = True
     try:
-        conn.row_factory = sqlite3.Row
         if party_type == 'customer':
             type_filter = 'sale'
             id_col = 'customer_id'
@@ -172,7 +174,7 @@ def get_party_invoices_with_status(party_type, party_id, only_pending=True, conn
         return [dict(r) for r in rows]
     finally:
         if own_conn:
-            conn.close()
+            close_connection(conn)
 
 
 def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
@@ -189,7 +191,6 @@ def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
         if own_conn:
             conn.execute("BEGIN")
 
-        # 1. التحقق من الفاتورة
         inv = conn.execute(
             "SELECT id, type, total, paid_amount, remaining_amount FROM invoices WHERE id=?",
             (invoice_id,)
@@ -210,7 +211,6 @@ def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
                 f"({remaining:,.2f}) على الفاتورة #{invoice_id}"
             )
 
-        # 2. فحص السند إن وُجد
         v_row = None
         if voucher_id:
             v_row = conn.execute(
@@ -236,7 +236,6 @@ def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
                     f"({voucher_remaining:,.2f})"
                 )
 
-        # 3. تحديد طريقة الدفع
         payment_method = 'cash'
         if voucher_id and v_row:
             acc_code = v_row["account"]
@@ -247,7 +246,6 @@ def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
             if "بنك" in acc_name:
                 payment_method = 'bank'
 
-        # 4. إدراج في invoice_payments
         conn.execute("""
             INSERT INTO invoice_payments
                 (invoice_id, voucher_id, amount, payment_date, payment_method,
@@ -260,7 +258,6 @@ def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
             f"ربط بسند #{voucher_id}" if voucher_id else "دفعة يدوية"
         ))
 
-        # 5. تحديث الفاتورة
         new_paid = paid + float(amount)
         new_remaining = max(0.0, total - new_paid)
         if new_remaining < 0.01:
@@ -283,11 +280,12 @@ def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
 
     except Exception as e:
         if own_conn:
-            conn.rollback()
+            try: conn.rollback()
+            except Exception: pass
         return False, str(e)
     finally:
         if own_conn:
-            conn.close()
+            close_connection(conn)
 
 
 def unlink_voucher_from_invoice(payment_id, conn=None):
@@ -345,49 +343,62 @@ def unlink_voucher_from_invoice(payment_id, conn=None):
 
     except Exception as e:
         if own_conn:
-            conn.rollback()
+            try: conn.rollback()
+            except Exception: pass
         return False, str(e)
     finally:
         if own_conn:
-            conn.close()
+            close_connection(conn)
 
 
 # ============================================================
 # الأرصدة والفواتير المعلقة
 # ============================================================
 
-def get_customers_with_balances():
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    customers = conn.execute("SELECT id, name FROM customers ORDER BY name").fetchall()
-    result = []
-    for c in customers:
-        row = conn.execute("""
-            SELECT COALESCE(SUM(remaining_amount), 0)
-            FROM invoices
-            WHERE type='sale' AND customer_id=? AND status='completed'
-        """, (c["id"],)).fetchone()
-        balance = row[0] if row else 0.0
-        result.append({"id": c["id"], "name": c["name"], "balance": balance})
-    conn.close()
-    return result
+def get_customers_with_balances(conn=None):
+    """جلب العملاء مع رصيدهم المستحق"""
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
+    try:
+        customers = conn.execute("SELECT id, name FROM customers ORDER BY name").fetchall()
+        result = []
+        for c in customers:
+            row = conn.execute("""
+                SELECT COALESCE(SUM(remaining_amount), 0)
+                FROM invoices
+                WHERE type='sale' AND customer_id=? AND status='completed'
+            """, (c["id"],)).fetchone()
+            balance = row[0] if row else 0.0
+            result.append({"id": c["id"], "name": c["name"], "balance": balance})
+        return result
+    finally:
+        if own_conn:
+            close_connection(conn)
 
 
-def get_suppliers_with_balances():
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    suppliers = conn.execute("SELECT id, name FROM suppliers ORDER BY name").fetchall()
-    result = []
-    for s in suppliers:
-        row = conn.execute("""
-            SELECT COALESCE(SUM(remaining_amount), 0)
-            FROM invoices
-            WHERE type='purchase' AND supplier_id=? AND status='completed'
-        """, (s["id"],)).fetchone()
-        balance = row[0] if row else 0.0
-        result.append({"id": s["id"], "name": s["name"], "balance": balance})
-    conn.close()
-    return result
+def get_suppliers_with_balances(conn=None):
+    """جلب الموردين مع رصيدهم المستحق"""
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
+    try:
+        suppliers = conn.execute("SELECT id, name FROM suppliers ORDER BY name").fetchall()
+        result = []
+        for s in suppliers:
+            row = conn.execute("""
+                SELECT COALESCE(SUM(remaining_amount), 0)
+                FROM invoices
+                WHERE type='purchase' AND supplier_id=? AND status='completed'
+            """, (s["id"],)).fetchone()
+            balance = row[0] if row else 0.0
+            result.append({"id": s["id"], "name": s["name"], "balance": balance})
+        return result
+    finally:
+        if own_conn:
+            close_connection(conn)
 
 
 def get_invoices_for_party(party_type, party_id):
@@ -418,7 +429,7 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
         if own_conn:
             conn.execute("BEGIN")
 
-        # ✅ إنشاء الجدول من نفس الاتصال (بدون فتح اتصال جديد)
+        # إنشاء الجدول من نفس الاتصال
         try:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS vouchers (
@@ -456,7 +467,7 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
             row = conn.execute("SELECT name FROM suppliers WHERE id=?", (party_id,)).fetchone()
         party_name = row["name"] if row else "غير معروف"
 
-        # ✅ 3. قراءة الحسابات الوظيفية من نفس الاتصال (بدون get_functional_account)
+        # 3. قراءة الحسابات الوظيفية من نفس الاتصال
         def _read_functional_account(functional_type):
             r = conn.execute(
                 "SELECT code FROM accounts WHERE functional_type = ? AND is_active = 1 LIMIT 1",
@@ -464,7 +475,6 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
             ).fetchone()
             if r:
                 return r["code"]
-            # fallback — في حال لم يوجد، نستخدم الدالة الأصلية
             return get_functional_account(functional_type)
 
         customers_account = _read_functional_account("accounts_receivable")
@@ -497,13 +507,10 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
         conn.execute("UPDATE vouchers SET journal_entry_id=? WHERE id=?",
                     (entry_id, voucher_id))
 
-        # ============================================================
-        # ✅ 4. ربط السند بالصندوق — كل شيء من نفس الاتصال
-        # ============================================================
+        # 4. ربط السند بالصندوق — من نفس الاتصال
         try:
             from services.cash_service import add_cash_transaction
 
-            # ✅ قراءة الصناديق من نفس الاتصال
             _rows = conn.execute(
                 "SELECT * FROM cash_accounts WHERE is_active = 1 ORDER BY name"
             ).fetchall()
@@ -512,7 +519,6 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
             row_acc = conn.execute("SELECT name FROM accounts WHERE code=?", (account,)).fetchone()
             acc_name = row_acc["name"] if row_acc else ""
 
-            # ✅ قراءة كود الصندوق الوظيفي من نفس الاتصال
             cash_row = conn.execute(
                 "SELECT code FROM accounts WHERE functional_type = 'cash' AND is_active = 1 LIMIT 1"
             ).fetchone()
@@ -578,11 +584,12 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
 
     except Exception as e:
         if own_conn:
-            conn.rollback()
+            try: conn.rollback()
+            except Exception: pass
         return None, str(e)
     finally:
         if own_conn:
-            conn.close()
+            close_connection(conn)
 
 
 # ============================================================
@@ -591,61 +598,62 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
 
 def get_vouchers(limit=50):
     conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    vouchers = conn.execute("""
-        SELECT v.*,
-               CASE WHEN v.party_type='customer' THEN c.name ELSE s.name END as party_name,
-               COALESCE((
-                   SELECT SUM(amount) FROM invoice_payments WHERE voucher_id = v.id
-               ), 0) AS linked_amount
-        FROM vouchers v
-        LEFT JOIN customers c ON v.party_type='customer' AND v.party_id = c.id
-        LEFT JOIN suppliers s ON v.party_type='supplier' AND v.party_id = s.id
-        ORDER BY v.id DESC
-        LIMIT ?
-    """, (limit,)).fetchall()
-    conn.close()
-    return [dict(v) for v in vouchers]
+    try:
+        vouchers = conn.execute("""
+            SELECT v.*,
+                   CASE WHEN v.party_type='customer' THEN c.name ELSE s.name END as party_name,
+                   COALESCE((
+                       SELECT SUM(amount) FROM invoice_payments WHERE voucher_id = v.id
+                   ), 0) AS linked_amount
+            FROM vouchers v
+            LEFT JOIN customers c ON v.party_type='customer' AND v.party_id = c.id
+            LEFT JOIN suppliers s ON v.party_type='supplier' AND v.party_id = s.id
+            ORDER BY v.id DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+        return [dict(v) for v in vouchers]
+    finally:
+        close_connection(conn)
 
 
 def get_voucher_details(voucher_id):
     conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    voucher = conn.execute("""
-        SELECT v.*,
-               CASE WHEN v.party_type='customer' THEN c.name ELSE s.name END as party_name
-        FROM vouchers v
-        LEFT JOIN customers c ON v.party_type='customer' AND v.party_id = c.id
-        LEFT JOIN suppliers s ON v.party_type='supplier' AND v.party_id = s.id
-        WHERE v.id = ?
-    """, (voucher_id,)).fetchone()
+    try:
+        voucher = conn.execute("""
+            SELECT v.*,
+                   CASE WHEN v.party_type='customer' THEN c.name ELSE s.name END as party_name
+            FROM vouchers v
+            LEFT JOIN customers c ON v.party_type='customer' AND v.party_id = c.id
+            LEFT JOIN suppliers s ON v.party_type='supplier' AND v.party_id = s.id
+            WHERE v.id = ?
+        """, (voucher_id,)).fetchone()
 
-    if not voucher:
-        conn.close()
-        return None
+        if not voucher:
+            return None
 
-    voucher = dict(voucher)
+        voucher = dict(voucher)
 
-    entry_id = voucher.get("journal_entry_id")
-    if entry_id:
-        lines = conn.execute(
-            "SELECT account_name, debit, credit FROM journal_lines WHERE entry_id=?",
-            (entry_id,)
-        ).fetchall()
-        voucher["lines"] = [dict(l) for l in lines]
+        entry_id = voucher.get("journal_entry_id")
+        if entry_id:
+            lines = conn.execute(
+                "SELECT account_name, debit, credit FROM journal_lines WHERE entry_id=?",
+                (entry_id,)
+            ).fetchall()
+            voucher["lines"] = [dict(l) for l in lines]
 
-    payments = conn.execute("""
-        SELECT ip.*, i.type AS invoice_type, i.invoice_date AS invoice_date
-        FROM invoice_payments ip
-        LEFT JOIN invoices i ON ip.invoice_id = i.id
-        WHERE ip.voucher_id = ?
-        ORDER BY ip.id
-    """, (voucher_id,)).fetchall()
-    voucher["linked_payments"] = [dict(p) for p in payments]
+        payments = conn.execute("""
+            SELECT ip.*, i.type AS invoice_type, i.invoice_date AS invoice_date
+            FROM invoice_payments ip
+            LEFT JOIN invoices i ON ip.invoice_id = i.id
+            WHERE ip.voucher_id = ?
+            ORDER BY ip.id
+        """, (voucher_id,)).fetchall()
+        voucher["linked_payments"] = [dict(p) for p in payments]
 
-    linked_total = sum(float(p["amount"] or 0) for p in voucher["linked_payments"])
-    voucher["linked_amount"] = linked_total
-    voucher["unlinked_amount"] = max(0.0, float(voucher["amount"] or 0) - linked_total)
+        linked_total = sum(float(p["amount"] or 0) for p in voucher["linked_payments"])
+        voucher["linked_amount"] = linked_total
+        voucher["unlinked_amount"] = max(0.0, float(voucher["amount"] or 0) - linked_total)
 
-    conn.close()
-    return voucher
+        return voucher
+    finally:
+        close_connection(conn)
