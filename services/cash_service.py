@@ -1,4 +1,5 @@
 # services/cash_service.py – وحدة الصندوق متعدد العملات والقيود الآلية (احترافي)
+# v2.0 — دعم Atomic Transactions + ربط السندات بحركات الصندوق
 import sqlite3
 from datetime import date
 from database import get_connection
@@ -6,6 +7,7 @@ from services.audit_service import log_action
 from services.currency_service import get_base_currency, get_exchange_rate, convert_amount
 from services.chart_service import get_functional_account
 from services.accounting_service import save_journal_entry
+
 
 def create_cash_tables():
     """إنشاء جداول الصندوق إذا لم تكن موجودة"""
@@ -33,12 +35,14 @@ def create_cash_tables():
             reference TEXT,
             journal_id INTEGER,
             journal_line_id INTEGER,
+            voucher_id INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (cash_account_id) REFERENCES cash_accounts(id)
         )
     """)
     conn.commit()
     conn.close()
+
 
 # ========== إدارة حسابات الصندوق ==========
 
@@ -61,6 +65,7 @@ def create_cash_account(name, currency_code="YER", opening_balance=0.0, account_
     finally:
         conn.close()
 
+
 def get_all_cash_accounts(active_only=True):
     """جلب جميع حسابات الصندوق"""
     conn = get_connection()
@@ -73,17 +78,26 @@ def get_all_cash_accounts(active_only=True):
     conn.close()
     return [dict(a) for a in accounts]
 
-def get_cash_account_by_id(account_id):
-    """جلب حساب صندوق محدد"""
-    conn = get_connection()
+
+def get_cash_account_by_id(account_id, conn=None):
+    """جلب حساب صندوق محدد (يدعم conn خارجي)"""
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
     conn.row_factory = sqlite3.Row
     account = conn.execute("SELECT * FROM cash_accounts WHERE id=?", (account_id,)).fetchone()
-    conn.close()
+    if own_conn:
+        conn.close()
     return dict(account) if account else None
 
-def update_cash_balance(account_id):
-    """تحديث رصيد الصندوق بناءً على الحركات المسجلة"""
-    conn = get_connection()
+
+def update_cash_balance(account_id, conn=None):
+    """تحديث رصيد الصندوق بناءً على الحركات المسجلة (يدعم conn خارجي)"""
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
     try:
         deposits = conn.execute(
             "SELECT COALESCE(SUM(amount), 0) FROM cash_transactions WHERE cash_account_id=? AND type='deposit'",
@@ -94,125 +108,168 @@ def update_cash_balance(account_id):
             (account_id,)
         ).fetchone()[0]
 
-        account = get_cash_account_by_id(account_id)
+        account = get_cash_account_by_id(account_id, conn=conn)
         if not account:
             return 0.0
 
         current_balance = account['opening_balance'] + deposits - withdrawals
 
-        conn.execute("BEGIN")
         conn.execute("UPDATE cash_accounts SET current_balance=? WHERE id=?", (current_balance, account_id))
-        conn.commit()
+        if own_conn:
+            conn.commit()
         return current_balance
     except Exception as e:
-        conn.rollback()
+        if own_conn:
+            conn.rollback()
         raise e
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
+
 
 # ========== حركات الصندوق والقيود الآلية ==========
 
-def add_cash_transaction(cash_account_id, transaction_date, description, trans_type, amount, reference="", contra_account_code=None, create_journal=True, journal_line_id=None):
-    """إضافة حركة صندوق (إيداع/سحب) مع إنشاء قيد محاسبي تلقائي وتحديث الرصيد"""
+def add_cash_transaction(
+    cash_account_id,
+    transaction_date,
+    description,
+    trans_type,
+    amount,
+    reference="",
+    contra_account_code=None,
+    create_journal=True,
+    journal_line_id=None,
+    voucher_id=None,      # ✅ جديد: ربط الحركة بالسند
+    conn=None             # ✅ جديد: دعم المعاملة الخارجية
+):
+    """
+    إضافة حركة صندوق (إيداع/سحب) مع إنشاء قيد محاسبي تلقائي وتحديث الرصيد.
+    
+    Args:
+        voucher_id: إذا مررناها، تُربط الحركة بالسند مباشرة (للحذف الآمن لاحقاً)
+        conn:       إذا مررنا اتصالاً خارجياً، تُستخدم نفس المعاملة (Atomic Transaction)
+    """
     if trans_type not in ('deposit', 'withdrawal'):
         return False, "نوع الحركة غير صالح"
 
-    account = get_cash_account_by_id(cash_account_id)
-    if not account:
-        return False, "حساب الصندوق غير موجود"
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
 
-    cash_code = account.get('account_code') or get_functional_account("cash")
-    currency = account.get('currency_code', 'YER')
-    
-    # ✅ الحل الاحترافي لسعر الصرف
-    base_currency = get_base_currency()
-    if currency == base_currency['code']:
-        exchange_rate = 1.0
-    else:
-        exchange_rate = get_exchange_rate(currency, base_currency['code']) or 1.0
-    
-    journal_id = None
-
-    if create_journal:
-        target_contra_code = contra_account_code or get_functional_account("bank")
-        lines = []
-
-        if trans_type == 'deposit':
-            # إيداع: الصندوق مدين، والحساب المقابل دائن
-            lines.append({
-                "account": cash_code,
-                "debit": amount,
-                "credit": 0.0,
-                "currency_code": currency,
-                "exchange_rate": exchange_rate
-            })
-            lines.append({
-                "account": target_contra_code,
-                "debit": 0.0,
-                "credit": amount,
-                "currency_code": currency,
-                "exchange_rate": exchange_rate
-            })
-        else:
-            # سحب: الحساب المقابل مدين، والصندوق دائن
-            lines.append({
-                "account": target_contra_code,
-                "debit": amount,
-                "credit": 0.0,
-                "currency_code": currency,
-                "exchange_rate": exchange_rate
-            })
-            lines.append({
-                "account": cash_code,
-                "debit": 0.0,
-                "credit": amount,
-                "currency_code": currency,
-                "exchange_rate": exchange_rate
-            })
-
-        # 🔧 الحل الاحترافي: معالجة القيمة المرتجعة من save_journal_entry
-        _journal_result = save_journal_entry(
-            entry_date=transaction_date,
-            description=f"{description} ({reference})".strip(),
-            lines=lines
-        )
-        
-        # التأكد من أن القيمة رقم وليس tuple
-        if isinstance(_journal_result, tuple):
-            journal_id = _journal_result[0]
-        else:
-            journal_id = _journal_result
-
-    conn = get_connection()
     try:
-        conn.execute("BEGIN")
+        if own_conn:
+            conn.execute("BEGIN")
+
+        account = get_cash_account_by_id(cash_account_id, conn=conn)
+        if not account:
+            if own_conn:
+                conn.rollback()
+            return False, "حساب الصندوق غير موجود"
+
+        cash_code = account.get('account_code') or get_functional_account("cash")
+        currency = account.get('currency_code', 'YER')
+
+        # ✅ سعر الصرف
+        base_currency = get_base_currency()
+        if currency == base_currency['code']:
+            exchange_rate = 1.0
+        else:
+            exchange_rate = get_exchange_rate(currency, base_currency['code']) or 1.0
+
+        journal_id = None
+
+        if create_journal:
+            target_contra_code = contra_account_code or get_functional_account("bank")
+            lines = []
+
+            if trans_type == 'deposit':
+                lines.append({
+                    "account": cash_code,
+                    "debit": amount,
+                    "credit": 0.0,
+                    "currency_code": currency,
+                    "exchange_rate": exchange_rate
+                })
+                lines.append({
+                    "account": target_contra_code,
+                    "debit": 0.0,
+                    "credit": amount,
+                    "currency_code": currency,
+                    "exchange_rate": exchange_rate
+                })
+            else:
+                lines.append({
+                    "account": target_contra_code,
+                    "debit": amount,
+                    "credit": 0.0,
+                    "currency_code": currency,
+                    "exchange_rate": exchange_rate
+                })
+                lines.append({
+                    "account": cash_code,
+                    "debit": 0.0,
+                    "credit": amount,
+                    "currency_code": currency,
+                    "exchange_rate": exchange_rate
+                })
+
+            # ✅ نمرر conn لـ save_journal_entry (لتكون نفس المعاملة)
+            _journal_result = save_journal_entry(
+                entry_date=transaction_date,
+                description=f"{description} ({reference})".strip(),
+                lines=lines,
+                conn=conn
+            )
+
+            # save_journal_entry ترجع (entry_id, error)
+            if isinstance(_journal_result, tuple):
+                journal_id, jerr = _journal_result[0], _journal_result[1] if len(_journal_result) > 1 else None
+                if jerr:
+                    if own_conn:
+                        conn.rollback()
+                    return False, f"فشل القيد المحاسبي: {jerr}"
+            else:
+                journal_id = _journal_result
+
+        # ✅ إدراج الحركة مع voucher_id
         conn.execute(
             """INSERT INTO cash_transactions 
-               (cash_account_id, transaction_date, description, type, amount, reference, journal_id, journal_line_id) 
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (cash_account_id, transaction_date, description, trans_type, amount, reference, journal_id, journal_line_id)
+               (cash_account_id, transaction_date, description, type, amount, 
+                reference, journal_id, journal_line_id, voucher_id) 
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (cash_account_id, transaction_date, description, trans_type,
+             amount, reference, journal_id, journal_line_id, voucher_id)
         )
-        conn.commit()
 
-        # تحديث الرصيد
-        new_balance = update_cash_balance(cash_account_id)
+        # ✅ تحديث الرصيد (نمرر conn لتكون نفس المعاملة)
+        new_balance = update_cash_balance(cash_account_id, conn=conn)
+
+        if own_conn:
+            conn.commit()
 
         # تسجيل العملية في سجل التدقيق
         log_action(
             username="admin",
             action=f"{'إيداع' if trans_type == 'deposit' else 'سحب'} صندوق",
             table_name="cash_transactions",
-            new_value=f"صندوق: {account['name']}, المبلغ: {amount:,.2f} {account['currency_code']}, الرصيد الجديد: {new_balance:,.2f}"
+            new_value=f"صندوق: {account['name']}, المبلغ: {amount:,.2f} {account['currency_code']}, "
+                      f"الرصيد الجديد: {new_balance:,.2f}"
         )
 
         return True, f"تمت الحركة بنجاح. الرصيد الحالي: {new_balance:,.2f}"
+
     except Exception as e:
-        conn.rollback()
+        if own_conn:
+            conn.rollback()
         return False, str(e)
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
 
-def transfer_between_cashes(from_account_id, to_account_id, amount, transfer_date, description="تحويل بين الصناديق", reference=""):
+
+def transfer_between_cashes(from_account_id, to_account_id, amount, transfer_date,
+                             description="تحويل بين الصناديق", reference=""):
     """تحويل مالي بين صندوقين أو بين صندوق وحساب آخر"""
     from_acc = get_cash_account_by_id(from_account_id)
     to_acc = get_cash_account_by_id(to_account_id)
@@ -255,10 +312,13 @@ def transfer_between_cashes(from_account_id, to_account_id, amount, transfer_dat
         lines=lines
     )
 
-    add_cash_transaction(from_account_id, transfer_date, f"تحويل إلى {to_acc['name']}", 'withdrawal', amount, reference, create_journal=False)
-    add_cash_transaction(to_account_id, transfer_date, f"تحويل من {from_acc['name']}", 'deposit', converted_to_amount, reference, create_journal=False)
+    add_cash_transaction(from_account_id, transfer_date, f"تحويل إلى {to_acc['name']}",
+                         'withdrawal', amount, reference, create_journal=False)
+    add_cash_transaction(to_account_id, transfer_date, f"تحويل من {from_acc['name']}",
+                         'deposit', converted_to_amount, reference, create_journal=False)
 
     return True, f"تم التحويل بنجاح برقم قيد: {journal_id}"
+
 
 def get_cash_transactions(cash_account_id=None, limit=50):
     """جلب حركات الصندوق"""
@@ -283,6 +343,7 @@ def get_cash_transactions(cash_account_id=None, limit=50):
         ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
 
 # ========== التقارير ==========
 
@@ -316,6 +377,7 @@ def get_cash_balance_summary():
 
     return summary, total_balance_base
 
+
 def get_cash_statement(cash_account_id, from_date, to_date):
     """كشف حساب الصندوق لفترة محددة"""
     conn = get_connection()
@@ -325,17 +387,19 @@ def get_cash_statement(cash_account_id, from_date, to_date):
         return None, "الحساب غير موجود"
 
     balance_before = conn.execute(
-        "SELECT COALESCE(SUM(CASE WHEN type='deposit' THEN amount ELSE -amount END), 0) FROM cash_transactions WHERE cash_account_id=? AND transaction_date < ?",
+        "SELECT COALESCE(SUM(CASE WHEN type='deposit' THEN amount ELSE -amount END), 0) "
+        "FROM cash_transactions WHERE cash_account_id=? AND transaction_date < ?",
         (cash_account_id, from_date)
     ).fetchone()[0]
     opening = account['opening_balance'] + balance_before
 
     transactions = conn.execute(
-        "SELECT * FROM cash_transactions WHERE cash_account_id=? AND transaction_date BETWEEN ? AND ? ORDER BY transaction_date, id",
+        "SELECT * FROM cash_transactions WHERE cash_account_id=? AND transaction_date BETWEEN ? AND ? "
+        "ORDER BY transaction_date, id",
         (cash_account_id, from_date, to_date)
     ).fetchall()
 
-    period_movement = sum(t['amount'] if t['type']=='deposit' else -t['amount'] for t in transactions)
+    period_movement = sum(t['amount'] if t['type'] == 'deposit' else -t['amount'] for t in transactions)
     closing = opening + period_movement
 
     conn.close()
