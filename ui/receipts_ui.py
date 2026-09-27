@@ -1,5 +1,5 @@
-# ui/receipts_ui.py – واجهة سندات القبض والصرف (تصميم زجاجي فاخر)
-# v2.0 — إضافة تبويب ربط السندات اليدوية بالفواتير + إلغاء الربط
+# ui/receipts_ui.py – واجهة سندات القبض والصرف (v3.0)
+# ✅ إصلاح KeyError: توحيد أسماء المفاتيح
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -12,14 +12,13 @@ from services.receipts_service import (
     create_voucher,
     get_vouchers,
     get_voucher_details,
-    # ✅ دوال جديدة
     link_voucher_to_invoice,
     unlink_voucher_from_invoice,
     get_unlinked_vouchers,
     get_vouchers_by_party,
     get_party_invoices_with_status,
-    get_voucher_linked_amount,
 )
+
 
 # ========== ألوان ==========
 T = "#F8FAFC"
@@ -35,6 +34,17 @@ PAYMENT_STATUS_LABELS = {
     "partial": "🟡 مدفوعة جزئياً",
     "paid":    "🟢 مدفوعة بالكامل",
 }
+
+
+# ============================================================
+# ✅ مساعد: استخراج قيم بأسماء مفاتيح متعددة (آمن)
+# ============================================================
+def _get_value(d, *keys, default=0):
+    """استخراج قيمة من قاموس بأحد المفاتيح المحتملة"""
+    for k in keys:
+        if k in d and d[k] is not None:
+            return d[k]
+    return default
 
 
 def show():
@@ -68,17 +78,22 @@ def show():
         if not customers:
             st.warning("لا يوجد عملاء")
         else:
-            customer_options = {f"{c['name']} (الرصيد: {c['balance']:,.2f})": c
-                                for c in customers}
+            customer_options = {
+                f"{c['name']} (الرصيد: {c['balance']:,.2f})": c
+                for c in customers
+            }
             selected_cust_str = st.selectbox("اختر العميل",
                                               list(customer_options.keys()),
                                               key="receipt_cust")
             selected_cust = customer_options[selected_cust_str]
 
+            # ✅ الفواتير — استخدام أسماء المفاتيح الصحيحة
             invoices = get_invoices_for_party('customer', selected_cust['id'])
             invoice_options = {"بدون فاتورة (دفعة عامة)": None}
             for inv in invoices:
-                label = f"فاتورة #{inv['id']} - المتبقي: {inv['remaining']:,.2f}"
+                # ✅ _get_value يتعامل مع remaining / remaining_amount
+                remaining = _get_value(inv, 'remaining_amount', 'remaining')
+                label = f"فاتورة #{inv['id']} - المتبقي: {float(remaining):,.2f}"
                 invoice_options[label] = inv
 
             selected_inv_str = st.selectbox("ربط بفاتورة (اختياري)",
@@ -86,7 +101,7 @@ def show():
                                              key="receipt_inv")
             selected_inv = invoice_options[selected_inv_str]
 
-            default_amount = selected_inv['remaining'] if selected_inv else 0.0
+            default_amount = _get_value(selected_inv, 'remaining_amount', 'remaining') if selected_inv else 0.0
             amount = st.number_input("المبلغ", min_value=0.0,
                                       value=float(default_amount),
                                       step=0.01, key="receipt_amount")
@@ -144,8 +159,10 @@ def show():
         if not suppliers:
             st.warning("لا يوجد موردين")
         else:
-            supplier_options = {f"{s['name']} (الرصيد: {s['balance']:,.2f})": s
-                                for s in suppliers}
+            supplier_options = {
+                f"{s['name']} (الرصيد: {s['balance']:,.2f})": s
+                for s in suppliers
+            }
             selected_sup_str = st.selectbox("اختر المورد",
                                              list(supplier_options.keys()),
                                              key="payment_sup")
@@ -154,7 +171,8 @@ def show():
             invoices = get_invoices_for_party('supplier', selected_sup['id'])
             invoice_options = {"بدون فاتورة (دفعة عامة)": None}
             for inv in invoices:
-                label = f"فاتورة #{inv['id']} - المتبقي: {inv['remaining']:,.2f}"
+                remaining = _get_value(inv, 'remaining_amount', 'remaining')
+                label = f"فاتورة #{inv['id']} - المتبقي: {float(remaining):,.2f}"
                 invoice_options[label] = inv
 
             selected_inv_str = st.selectbox("ربط بفاتورة (اختياري)",
@@ -162,7 +180,7 @@ def show():
                                              key="payment_inv")
             selected_inv = invoice_options[selected_inv_str]
 
-            default_amount = selected_inv['remaining'] if selected_inv else 0.0
+            default_amount = _get_value(selected_inv, 'remaining_amount', 'remaining') if selected_inv else 0.0
             amount = st.number_input("المبلغ", min_value=0.0,
                                       value=float(default_amount),
                                       step=0.01, key="payment_amount")
@@ -210,12 +228,12 @@ def show():
     # تبويب 3: سجل السندات
     # ============================================================
     with tab3:
-        st.markdown(f"<h3 style='color:{PR};'>سجل السندات</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:{PR};'>سجل السندات</h3>",
+                    unsafe_allow_html=True)
         vouchers = get_vouchers()
         if vouchers:
             df = pd.DataFrame(vouchers)
 
-            # ✅ إضافة حالة الربط
             df['linked_amount'] = df['linked_amount'].fillna(0).astype(float)
             df['unlinked'] = df['amount'].astype(float) - df['linked_amount']
             df['ربط'] = df.apply(
@@ -245,7 +263,6 @@ def show():
             if selected_vid:
                 details = get_voucher_details(selected_vid)
                 if details:
-                    # ✅ عرض منظم بدل JSON
                     st.markdown("### 📄 تفاصيل السند")
                     c1, c2, c3, c4 = st.columns(4)
                     c1.metric("الرقم", details['id'])
@@ -258,14 +275,12 @@ def show():
                     st.markdown(f"**التاريخ:** {details.get('date', '—')}")
                     st.markdown(f"**حساب النقدية:** {details.get('account', '—')}")
 
-                    # القيد المحاسبي
                     if details.get("lines"):
                         st.markdown("### 📊 القيد المحاسبي")
                         df_lines = pd.DataFrame(details["lines"])
                         st.dataframe(df_lines, use_container_width=True,
                                      hide_index=True)
 
-                    # الدفعات المرتبطة
                     if details.get("linked_payments"):
                         st.markdown("### 🔗 الدفعات المرتبطة بفواتير")
                         df_pay = pd.DataFrame(details["linked_payments"])
@@ -280,14 +295,13 @@ def show():
             st.info("لا توجد سندات بعد")
 
     # ============================================================
-    # تبويب 4: ربط السندات بالفواتير (✅ جديد)
+    # تبويب 4: ربط السندات بالفواتير
     # ============================================================
     with tab4:
         st.markdown(f"<h3 style='color:{BL};'>🔗 ربط السندات اليدوية بالفواتير</h3>",
                     unsafe_allow_html=True)
         st.caption("استخدم هذا التبويب لربط السندات التي أُنشئت بدون فاتورة، أو لتعديل الربط وإلغائه.")
 
-        # ----- 4.1 اختيار الطرف -----
         party_kind = st.radio(
             "نوع الطرف",
             ["عميل", "مورد"],
@@ -316,7 +330,7 @@ def show():
 
         col_left, col_right = st.columns([1, 1])
 
-        # ----- 4.2 السندات غير المربوطة -----
+        # ----- السندات غير المربوطة -----
         with col_left:
             st.markdown(f"<h4 style='color:{OR};'>📄 السندات غير المربوطة</h4>",
                         unsafe_allow_html=True)
@@ -343,7 +357,7 @@ def show():
                 )
                 selected_voucher = voucher_options[selected_voucher_str]
 
-        # ----- 4.3 الفواتير المعلقة -----
+        # ----- الفواتير المعلقة -----
         with col_right:
             st.markdown(f"<h4 style='color:{GR};'>📋 الفواتير المعلقة</h4>",
                         unsafe_allow_html=True)
@@ -356,9 +370,13 @@ def show():
             else:
                 inv_options = {}
                 for inv in pending_invoices:
-                    label = (f"#{inv['id']} | {inv['invoice_date']} | "
-                             f"إجمالي: {float(inv['total']):,.2f} | "
-                             f"متبقي: {float(inv['remaining_amount']):,.2f}")
+                    # ✅ _get_value يدعم remaining_amount / remaining
+                    remaining = _get_value(inv, 'remaining_amount', 'remaining')
+                    inv_date = _get_value(inv, 'invoice_date', 'date')
+                    total = _get_value(inv, 'total')
+                    label = (f"#{inv['id']} | {inv_date} | "
+                             f"إجمالي: {float(total):,.2f} | "
+                             f"متبقي: {float(remaining):,.2f}")
                     inv_options[label] = inv
 
                 selected_inv_str2 = st.selectbox(
@@ -368,7 +386,7 @@ def show():
                 )
                 selected_invoice = inv_options[selected_inv_str2]
 
-        # ----- 4.4 نموذج الربط -----
+        # ----- نموذج الربط -----
         st.markdown("---")
         if selected_voucher and selected_invoice:
             st.markdown(f"<h4 style='color:{BL};'>🔗 عملية الربط</h4>",
@@ -377,7 +395,7 @@ def show():
             v_remaining = float(selected_voucher['amount']) - float(
                 selected_voucher.get('linked_amount', 0)
             )
-            i_remaining = float(selected_invoice['remaining_amount'])
+            i_remaining = float(_get_value(selected_invoice, 'remaining_amount', 'remaining'))
             max_linkable = min(v_remaining, i_remaining)
 
             c1, c2, c3 = st.columns(3)
@@ -385,46 +403,48 @@ def show():
             c2.metric("المتبقي على الفاتورة", f"{i_remaining:,.2f}")
             c3.metric("أقصى مبلغ للربط", f"{max_linkable:,.2f}")
 
-            link_amount = st.number_input(
-                "المبلغ المراد ربطه",
-                min_value=0.01,
-                max_value=float(max_linkable),
-                value=float(max_linkable),
-                step=0.01,
-                key="link_amount_input"
-            )
-
-            if st.button("🔗 ربط السند بالفاتورة", type="primary", key="do_link_btn"):
-                ok, err = link_voucher_to_invoice(
-                    voucher_id=selected_voucher['id'],
-                    invoice_id=selected_invoice['id'],
-                    amount=link_amount
+            if max_linkable > 0:
+                link_amount = st.number_input(
+                    "المبلغ المراد ربطه",
+                    min_value=0.01,
+                    max_value=float(max_linkable),
+                    value=float(max_linkable),
+                    step=0.01,
+                    key="link_amount_input"
                 )
-                if ok:
-                    st.success(
-                        f"✅ تم ربط {link_amount:,.2f} من السند "
-                        f"#{selected_voucher['id']} بالفاتورة "
-                        f"#{selected_invoice['id']}"
+
+                if st.button("🔗 ربط السند بالفاتورة", type="primary", key="do_link_btn"):
+                    ok, err = link_voucher_to_invoice(
+                        voucher_id=selected_voucher['id'],
+                        invoice_id=selected_invoice['id'],
+                        amount=link_amount
                     )
-                    st.rerun()
-                else:
-                    st.error(f"❌ {err}")
+                    if ok:
+                        st.success(
+                            f"✅ تم ربط {link_amount:,.2f} من السند "
+                            f"#{selected_voucher['id']} بالفاتورة "
+                            f"#{selected_invoice['id']}"
+                        )
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {err}")
+            else:
+                st.warning("⚠️ لا يمكن الربط — أحد الطرفين بلا رصيد متبقٍ.")
         else:
             st.info("اختر سنداً وفاتورة لعرض خيارات الربط")
 
-        # ----- 4.5 إلغاء الربط -----
+        # ----- إلغاء الربط -----
         st.markdown("---")
         st.markdown(f"<h4 style='color:{RD};'>🗑️ إلغاء ربط سابق</h4>",
                     unsafe_allow_html=True)
         st.caption("لتصحيح الأخطاء: اختر سنداً لعرض دفعاته المرتبطة وحذف أي منها.")
 
-        # عرض سندات الطرف (جميعها) لإلغاء الربط
         party_vouchers = get_vouchers_by_party(party_type, selected_party['id'])
         if party_vouchers:
             voucher_opts2 = {}
             for v in party_vouchers:
                 linked_amt = float(v.get('linked_amount', 0))
-                if linked_amt > 0.01:  # فقط السندات المربوطة
+                if linked_amt > 0.01:
                     label = (f"#{v['id']} | {v['date']} | "
                              f"مبلغ: {float(v['amount']):,.2f} | "
                              f"مربوط: {linked_amt:,.2f}")
@@ -452,7 +472,6 @@ def show():
                     st.dataframe(df_linked[display_cols],
                                  use_container_width=True, hide_index=True)
 
-                    # اختيار الدفعة للإلغاء
                     payment_opts = {
                         f"دفعة #{p['id']} - فاتورة #{p['invoice_id']} - "
                         f"{float(p['amount']):,.2f}": p
