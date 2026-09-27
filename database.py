@@ -1,5 +1,5 @@
 # database.py - قاعدة بيانات نظام حوكمة ERP (SQLite)
-# v4.0 — Connection Registry احترافي (لا إغلاق، لا تعارض)
+# v5.0 — Connection Registry احترافي + rollback تلقائي عند الخطأ
 import sqlite3
 import bcrypt
 import os
@@ -13,7 +13,7 @@ DB_PATH = os.path.join("data", "erp.db")
 # ============================================================
 _local = threading.local()
 _registry_lock = threading.Lock()
-_all_connections = []   # ← قائمة بكل الاتصالات (للإغلاق عند الخروج)
+_all_connections = []
 
 
 def _create_connection():
@@ -24,10 +24,10 @@ def _create_connection():
         DB_PATH,
         check_same_thread=False,
         timeout=30,
-        isolation_level=None
+        isolation_level=None   # ← Autocommit mode (نتحكم يدوياً)
     )
 
-    # === إعدادات PRAGMA المحسّنة ===
+    # === إعدادات PRAGMA ===
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 30000")
@@ -44,27 +44,29 @@ def _create_connection():
 def get_connection():
     """
     إعادة نفس الاتصال داخل نفس Thread.
-    
-    ✅ لا يُغلق أبداً — يُعاد استخدامه.
-    ✅ آمن تماماً في Streamlit (لكل جلسة Thread خاص).
+    ✅ يتعافى تلقائياً من Transactions المعلّقة.
     """
     existing = getattr(_local, "conn", None)
     if existing is not None:
-        # فحص سريع: هل الاتصال ما زال صالحاً؟
         try:
             existing.execute("SELECT 1")
+            # ✅ فحص: هل هناك Transaction معلّقة؟
+            if existing.in_transaction:
+                # ⚠️ يوجد BEGIN بلا COMMIT — نعمل rollback للحماية
+                try:
+                    existing.execute("ROLLBACK")
+                    print("⚠️ تم إلغاء Transaction معلّقة تلقائياً")
+                except Exception:
+                    pass
             return existing
         except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-            # اتصال مغلق أو مشكلة — نتجاهله
             _local.conn = None
         except Exception:
             _local.conn = None
 
-    # إنشاء اتصال جديد
     conn = _create_connection()
     _local.conn = conn
 
-    # تسجيله في القائمة العامة (للإغلاق عند الخروج)
     with _registry_lock:
         _all_connections.append(conn)
 
@@ -73,23 +75,35 @@ def get_connection():
 
 def close_connection(conn=None):
     """
-    ⚠️ دالة بديلة لـ `conn.close()`.
-    لا تُغلق الاتصال — فقط لا تفعل شيئاً.
-    
-    هذا مقصود: في تطبيق Streamlit، إغلاق الاتصال يدوياً
-    يسبب مشاكل. نترك SQLite يدير الموارد.
+    ✅ نسخة ذكية: 
+       - إن كان هناك Transaction معلّقة → rollback (حماية)
+       - لا يُغلق الاتصال الفعلي (يبقى في Registry)
     """
-    # ✅ لا تفعل شيئاً — الاتصال يبقى في Registry
+    target = conn if conn is not None else getattr(_local, "conn", None)
+    if target is None:
+        return None
+
+    try:
+        if target.in_transaction:
+            # ⚠️ Transaction مفتوحة بلا COMMIT → نُلغيها
+            try:
+                target.execute("ROLLBACK")
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # ✅ لا نُغلق — الاتصال يبقى في Registry
     return None
 
 
 def release_connection(conn=None):
-    """
-    إغلاق نهائي حقيقي — يُستخدم نادراً (عند تسجيل خروج أو إعادة تشغيل).
-    """
+    """إغلاق نهائي حقيقي — يُستخدم نادراً"""
     target = conn if conn is not None else getattr(_local, "conn", None)
     if target is not None:
         try:
+            if target.in_transaction:
+                target.execute("ROLLBACK")
             target.close()
         except Exception:
             pass
@@ -97,17 +111,18 @@ def release_connection(conn=None):
 
 
 def _close_all_on_exit():
-    """يُستدعى عند إغلاق التطبيق — لإغلاق كل الاتصالات بأمان"""
+    """إغلاق كل الاتصالات بأمان عند خروج التطبيق"""
     with _registry_lock:
         for conn in _all_connections:
             try:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
                 conn.close()
             except Exception:
                 pass
         _all_connections.clear()
 
 
-# تسجيل دالة الإغلاق عند خروج التطبيق
 atexit.register(_close_all_on_exit)
 
 
@@ -756,8 +771,7 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_cash_transactions_voucher ON cash_transactions(voucher_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_bank_transactions_voucher ON bank_transactions(voucher_id)")
 
-    # ⚠️ لا نُغلق الاتصال — يبقى في Registry
-    # (استبدلنا conn.close() بـ close_connection())
+    # ✅ لا نُغلق الاتصال — يبقى في Registry
     close_connection()
 
 
@@ -776,7 +790,6 @@ def create_default_admin():
                 "INSERT INTO users (username, password, full_name, role_id) VALUES (?, ?, ?, ?)",
                 ("admin", hashed, "مدير النظام", 1)
             )
-            conn.commit()
         except sqlite3.IntegrityError:
             pass
     close_connection()
