@@ -1,15 +1,20 @@
-# services/opening_balances_service.py – الأرصدة الافتتاحية (ديناميكية ومتكاملة محاسبياً)
+# services/opening_balances_service.py – الأرصدة الافتتاحية (v2.0)
+# ✅ Registry + conn=None + إصلاح bug في حفظ الأرصدة
 import sqlite3
 from datetime import date
-from database import get_connection
+from database import get_connection, close_connection
 from services.audit_service import log_action
 from services.fifo_service import add_batch
 from services.chart_service import get_functional_account
 from services.accounting_service import save_journal_entry
 
-def create_opening_tables():
+
+def create_opening_tables(conn=None):
     """إنشاء جداول الأرصدة الافتتاحية إذا لم تكن موجودة"""
-    conn = get_connection()
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
     try:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS opening_balances (
@@ -39,19 +44,20 @@ def create_opening_tables():
                 FOREIGN KEY (product_id) REFERENCES products(id)
             )
         """)
-        conn.commit()
+        if own_conn:
+            conn.commit()
     finally:
-        conn.close()
+        if own_conn:
+            close_connection(conn)
 
-def get_accounts_for_opening():
-    """
-    جلب الحسابات المناسبة لإدخال الأرصدة الافتتاحية (أصول، خصوم، حقوق ملكية).
-    يتم تجاهل حسابات الإيرادات والمصروفات لأنها تبدأ من الصفر مالياً.
-    """
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
+
+def get_accounts_for_opening(conn=None):
+    """جلب الحسابات المناسبة للأرصدة الافتتاحية"""
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
     try:
-        # استعلام محسن: نستخدم جدول accounts الصحيح، ونستبعد الحسابات التجميعية
         accounts = conn.execute("""
             SELECT id, code, name, account_type as type, level
             FROM accounts
@@ -61,12 +67,16 @@ def get_accounts_for_opening():
         """).fetchall()
         return [dict(a) for a in accounts]
     finally:
-        conn.close()
+        if own_conn:
+            close_connection(conn)
 
-def get_products_for_opening():
-    """جلب المنتجات مع كمياتها الحالية (قبل الافتتاح) لإدخال الأرصدة"""
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
+
+def get_products_for_opening(conn=None):
+    """جلب المنتجات"""
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
     try:
         products = conn.execute("""
             SELECT id, name, quantity, purchase_price
@@ -75,73 +85,88 @@ def get_products_for_opening():
         """).fetchall()
         return [dict(p) for p in products]
     finally:
-        conn.close()
+        if own_conn:
+            close_connection(conn)
+
 
 def _resolve_account_id(conn, account_identifier):
     """
-    ✨ دالة ذكية جداً لتحويل أي معرف حساب إلى الـ ID الرقمي الأساسي.
-    تدعم:
-    - رقم صحيح (int) مباشر.
-    - كود نصي (مثل '1.1' أو '1100').
-    - اسم الحساب بالعربي (مثل 'صندوق النقدية' أو 'العملاء').
+    تحويل معرف الحساب إلى ID الرقمي.
+    يدعم: int، كود، اسم.
     """
     if not account_identifier:
         return None
-    
-    # 1. إذا كان المعرف رقمياً صحيحاً
+
     if isinstance(account_identifier, int):
         return account_identifier
-    
-    # 2. تحويله إلى نص للفحص
+
     identifier = str(account_identifier).strip()
-    
-    # 3. محاولة البحث بالتتابع حسب نوع البيانات المرسلة
-    
-    # (أ) البحث كـ ID مباشر
-    row = conn.execute("SELECT id FROM accounts WHERE id = ?", (identifier,)).fetchone()
+
+    # ID مباشر
+    row = conn.execute(
+        "SELECT id FROM accounts WHERE id = ?", (identifier,)
+    ).fetchone()
     if row:
         return row["id"]
-    
-    # (ب) البحث كـ Code (مثل 1.1 أو 1100)
-    row = conn.execute("SELECT id FROM accounts WHERE code = ?", (identifier,)).fetchone()
+
+    # كود
+    row = conn.execute(
+        "SELECT id FROM accounts WHERE code = ?", (identifier,)
+    ).fetchone()
     if row:
         return row["id"]
-    
-    # (ج) البحث كـ Name بالضبط
-    row = conn.execute("SELECT id FROM accounts WHERE name = ?", (identifier,)).fetchone()
+
+    # اسم بالضبط
+    row = conn.execute(
+        "SELECT id FROM accounts WHERE name = ?", (identifier,)
+    ).fetchone()
     if row:
         return row["id"]
-    
-    # (د) البحث كـ Name باستخدام (جزئي) مثل "صندوق" بدلاً من "صندوق النقدية"
-    row = conn.execute("SELECT id FROM accounts WHERE name LIKE ?", (f"%{identifier}%",)).fetchone()
+
+    # اسم جزئي
+    row = conn.execute(
+        "SELECT id FROM accounts WHERE name LIKE ?", (f"%{identifier}%",)
+    ).fetchone()
     if row:
         return row["id"]
-    
-    # 4. إذا لم يتم العثور بأي طريقة
+
     return None
 
-def create_opening_balances(account_balances, inventory_items, entry_date, created_by="admin"):
+
+def create_opening_balances(account_balances, inventory_items, entry_date,
+                             created_by="admin", conn=None):
     """
-    إنشاء الأرصدة الافتتاحية مرة واحدة باستخدام الحسابات الوظيفية والمباشرة.
-    account_balances: [{'account_id':..., 'code':..., 'debit':..., 'credit':...}, ...]
-    inventory_items: [{'product_id':..., 'quantity':..., 'unit_cost':...}, ...]
-    """
-    create_opening_tables()
+    إنشاء الأرصدة الافتتاحية.
     
-    # جلب الحسابات الوظيفية المطلوبة للمخزون والتسوية
+    account_balances: [{'account_id':..., 'code':..., 'name':..., 'debit':..., 'credit':...}, ...]
+    inventory_items:  [{'product_id':..., 'quantity':..., 'unit_cost':...}, ...]
+    
+    ⚠️ لا يمسّ الصندوق/البنك — لا يحتاج فحص رصيد.
+    
+    Returns:
+        (entry_id, None) أو (None, "رسالة")
+    """
+    create_opening_tables(conn=conn)
+
     inventory_acc_id = get_functional_account("inventory")
     opening_diff_acc_id = get_functional_account("retained_earnings")
 
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
+
     try:
-        # فحص إذا كان هناك أرصدة سابقة
-        existing = conn.execute("SELECT COUNT(*) as cnt FROM opening_balances").fetchone()
+        # فحص وجود أرصدة سابقة
+        existing = conn.execute(
+            "SELECT COUNT(*) as cnt FROM opening_balances"
+        ).fetchone()
         if existing and existing["cnt"] > 0:
             return None, "الأرصدة الافتتاحية سبق تسجيلها. لا يمكن تكرار العملية."
-        
-        conn.execute("BEGIN")
-        
+
+        if own_conn:
+            conn.execute("BEGIN")
+
         # 1. معالجة المخزون الافتتاحي
         total_inventory_cost = 0.0
         for item in inventory_items:
@@ -149,70 +174,81 @@ def create_opening_balances(account_balances, inventory_items, entry_date, creat
             cost = float(item.get('unit_cost', 0))
             if qty <= 0:
                 continue
-            
-            # تحديث الكمية في products
-            conn.execute("UPDATE products SET quantity = quantity + ? WHERE id = ?",
-                        (qty, item['product_id']))
-            # إضافة دفعة FIFO
-            add_batch(item['product_id'], qty, cost,
-                     entry_date, reference="رصيد افتتاحي", conn=conn)
+
+            conn.execute(
+                "UPDATE products SET quantity = quantity + ? WHERE id = ?",
+                (qty, item['product_id'])
+            )
+            add_batch(
+                item['product_id'], qty, cost,
+                entry_date, reference="رصيد افتتاحي", conn=conn
+            )
             total_inventory_cost += qty * cost
-            
-            # تخزين في opening_inventory
+
             conn.execute("""
-                INSERT INTO opening_inventory (entry_date, product_id, quantity, unit_cost, created_by) 
+                INSERT INTO opening_inventory 
+                    (entry_date, product_id, quantity, unit_cost, created_by) 
                 VALUES (?, ?, ?, ?, ?)
             """, (entry_date, item['product_id'], qty, cost, created_by))
-        
+
         # 2. بناء سطور القيد
         lines = []
         total_debit = 0.0
         total_credit = 0.0
-        
+
         for bal in account_balances:
             debit_val = round(float(bal.get('debit', 0.0)), 2)
             credit_val = round(float(bal.get('credit', 0.0)), 2)
-            
+
             if debit_val == 0 and credit_val == 0:
                 continue
-            
-            # استخراج معرف الحساب باستخدام الدالة المساعدة الذكية جداً
-            identifier = bal.get('account_id') or bal.get('code') or bal.get('account_code')
+
+            identifier = (
+                bal.get('account_id')
+                or bal.get('code')
+                or bal.get('account_code')
+            )
             acc_id = _resolve_account_id(conn, identifier)
-            
+
             if not acc_id:
-                # رسالة خطأ توضيحية
-                raise Exception(f"لم يتم العثور على حساب بالمعرف: {identifier}. تأكد من إضافة الحساب في شجرة الحسابات.")
+                raise Exception(
+                    f"لم يتم العثور على حساب بالمعرف: {identifier}. "
+                    f"تأكد من إضافة الحساب في شجرة الحسابات."
+                )
 
             lines.append({
                 "account_id": acc_id,
                 "debit": debit_val,
                 "credit": credit_val,
                 "currency_code": "YER",
-                "exchange_rate": 1.0
+                "exchange_rate": 1.0,
             })
             total_debit += debit_val
             total_credit += credit_val
-        
-        # إضافة المخزون (مدين) إذا كان هناك منتجات
+
+        # 3. إضافة المخزون (مدين)
         if total_inventory_cost > 0:
             if not inventory_acc_id:
-                raise Exception("حساب المخزون الوظيفي (inventory) غير معرف في شجرة الحسابات")
-            
+                raise Exception(
+                    "حساب المخزون الوظيفي (inventory) غير معرف"
+                )
+
             lines.append({
                 "account_id": inventory_acc_id,
                 "debit": round(total_inventory_cost, 2),
                 "credit": 0.0,
                 "currency_code": "YER",
-                "exchange_rate": 1.0
+                "exchange_rate": 1.0,
             })
             total_debit += round(total_inventory_cost, 2)
-        
-        # موازنة القيد: إذا كان هناك فرق، نضعه في حساب الأرباح المبقاة
+
+        # 4. موازنة القيد عبر الأرباح المبقاة
         diff = round(total_debit - total_credit, 2)
         if abs(diff) > 0.01:
             if not opening_diff_acc_id:
-                raise Exception("حساب الأرباح المبقاة الوظيفي (retained_earnings) غير معرف في الشجرة")
+                raise Exception(
+                    "حساب الأرباح المبقاة (retained_earnings) غير معرف"
+                )
 
             if diff > 0:
                 lines.append({
@@ -220,7 +256,7 @@ def create_opening_balances(account_balances, inventory_items, entry_date, creat
                     "debit": 0.0,
                     "credit": diff,
                     "currency_code": "YER",
-                    "exchange_rate": 1.0
+                    "exchange_rate": 1.0,
                 })
             else:
                 lines.append({
@@ -228,47 +264,79 @@ def create_opening_balances(account_balances, inventory_items, entry_date, creat
                     "debit": abs(diff),
                     "credit": 0.0,
                     "currency_code": "YER",
-                    "exchange_rate": 1.0
+                    "exchange_rate": 1.0,
                 })
-        
-        # 3. إنشاء قيد الافتتاح
+
+        # 5. إنشاء القيد
         entry_id, error = save_journal_entry(
             description=f"قيد الأرصدة الافتتاحية - {entry_date}",
             lines=lines,
             entry_date=entry_date,
-            conn=conn
+            conn=conn,
         )
         if error:
             raise Exception(f"فشل إنشاء القيد المحاسبي: {error}")
-        
-        # 4. تخزين تفاصيل الأرصدة الافتتاحية
+
+        # ============================================================
+        # ✅ إصلاح Bug: حفظ كل رصيد بـ acc_id الصحيح (كان يحفظ آخر acc_id فقط)
+        # ============================================================
         for bal in account_balances:
             debit_val = round(float(bal.get('debit', 0.0)), 2)
             credit_val = round(float(bal.get('credit', 0.0)), 2)
             if debit_val == 0 and credit_val == 0:
                 continue
-            
-            # نستخدم الرمز للحفظ
-            account_code = bal.get('code') or bal.get('account_code') or str(bal.get('account_id'))
-            
+
+            identifier = (
+                bal.get('account_id')
+                or bal.get('code')
+                or bal.get('account_code')
+            )
+            bal_acc_id = _resolve_account_id(conn, identifier)  # ← حل لكل سطر
+            if not bal_acc_id:
+                continue
+
+            account_code = (
+                bal.get('code')
+                or bal.get('account_code')
+                or str(bal_acc_id)
+            )
+            account_name = bal.get('name', '')
+
             conn.execute("""
-                INSERT INTO opening_balances (entry_date, account_id, account_code, account_name, debit, credit, journal_entry_id, created_by)
+                INSERT INTO opening_balances 
+                    (entry_date, account_id, account_code, account_name,
+                     debit, credit, journal_entry_id, created_by)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (entry_date, acc_id, account_code, bal.get('name', ''), debit_val, credit_val, entry_id, created_by))
-        
+            """, (entry_date, bal_acc_id, account_code, account_name,
+                  debit_val, credit_val, entry_id, created_by))
+
         # تحديث opening_inventory برقم القيد
-        conn.execute("UPDATE opening_inventory SET journal_entry_id=? WHERE entry_date=? AND journal_entry_id IS NULL",
-                    (entry_id, entry_date))
-        
-        conn.commit()
-        
-        log_action(username=created_by, action="تسجيل الأرصدة الافتتاحية",
-                  table_name="opening_balances", record_id=entry_id,
-                  new_value=f"رقم القيد الافتتاحي: {entry_id}")
-        
+        conn.execute(
+            "UPDATE opening_inventory SET journal_entry_id=? "
+            "WHERE entry_date=? AND journal_entry_id IS NULL",
+            (entry_id, entry_date)
+        )
+
+        if own_conn:
+            conn.commit()
+
+        log_action(
+            username=created_by,
+            action="تسجيل الأرصدة الافتتاحية",
+            table_name="opening_balances",
+            record_id=entry_id,
+            new_value=f"رقم القيد الافتتاحي: {entry_id}"
+        )
+
         return entry_id, None
+
     except Exception as e:
-        conn.rollback()
+        if own_conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         return None, str(e)
     finally:
-        conn.close()
+        if own_conn:
+            close_connection(conn)
