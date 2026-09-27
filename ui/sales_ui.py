@@ -1,5 +1,5 @@
-# ui/sales_ui.py – واجهة المبيعات (v7.0)
-# ✅ دعم البنك والصندوق في القبض
+# ui/sales_ui.py – واجهة المبيعات (v8.0)
+# ✅ دعم البنك والصندوق + السند اليدوي باختيار الحساب
 import streamlit as st
 import pandas as pd
 from services.sales_service import (
@@ -302,7 +302,6 @@ def show():
                     st.session_state.saving_sale = False
                     st.rerun()
 
-            # ✅ زر مسح
             if st.button("🗑️ مسح جميع البنود"):
                 st.session_state.invoice_items = []
                 st.session_state.paid_amount_final = 0.0
@@ -367,25 +366,60 @@ def show():
                         f"| **طريقة الدفع:** {PAYMENT_METHOD_LABELS.get(inv_sel.get('payment_method'), '—')}"
                     )
 
+                    # ============================================================
+                    # ✅ إنشاء السند يدوياً — مع اختيار الحساب
+                    # ============================================================
                     if inv_sel.get('has_warning'):
                         st.warning(f"⚠️ **تنبيه:** {inv_sel.get('reference', '')}")
 
-                        if float(inv_sel.get('paid_amount', 0)) > 0:
-                            if st.button(
-                                f"🔧 إنشاء سند القبض يدوياً للفاتورة #{selected_id}",
-                                type="primary",
-                                key=f"create_receipt_btn_{selected_id}"
-                            ):
-                                with st.spinner("جاري إنشاء سند القبض..."):
-                                    vid, verr = create_receipt_voucher_for_invoice(
-                                        invoice_id=selected_id,
-                                        username=st.session_state.user.get('username', 'admin')
-                                    )
-                                    if verr:
-                                        st.error(f"❌ فشل: {verr}")
-                                    else:
-                                        st.success(f"✅ تم إنشاء سند القبض رقم {vid}")
-                                        st.rerun()
+                        paid_amt = float(inv_sel.get('paid_amount', 0))
+                        if paid_amt > 0:
+                            st.markdown("---")
+                            st.markdown("#### 🔧 إنشاء سند القبض يدوياً")
+
+                            manual_accounts = get_payment_accounts()
+
+                            if not manual_accounts:
+                                st.error("⚠️ لا يوجد صندوق أو بنك نشط.")
+                            else:
+                                manual_labels = [
+                                    _format_account_label(a)
+                                    for a in manual_accounts
+                                ]
+                                manual_selected_label = st.selectbox(
+                                    "💵 إلى أي صندوق/بنك سيُقبض المبلغ؟",
+                                    manual_labels,
+                                    key=f"manual_receipt_acc_{selected_id}"
+                                )
+                                manual_idx = manual_labels.index(manual_selected_label)
+                                manual_acc = manual_accounts[manual_idx]
+
+                                # ✅ لا حاجة لفحص رصيد (القبض يزيد)
+                                st.info(
+                                    f"✅ سيُقبض **{paid_amt:,.2f}** في "
+                                    f"**{manual_acc['name']}**"
+                                )
+
+                                if st.button(
+                                    f"🔧 إنشاء سند القبض يدوياً للفاتورة #{selected_id}",
+                                    type="primary",
+                                    key=f"create_receipt_btn_{selected_id}"
+                                ):
+                                    with st.spinner("جاري إنشاء سند القبض..."):
+                                        vid, verr = create_receipt_voucher_for_invoice(
+                                            invoice_id=selected_id,
+                                            username=st.session_state.user.get(
+                                                'username', 'admin'
+                                            ),
+                                            payment_account_code=manual_acc['code']
+                                        )
+                                        if verr:
+                                            st.error(f"❌ فشل: {verr}")
+                                        else:
+                                            st.success(
+                                                f"✅ تم إنشاء سند القبض رقم {vid}"
+                                            )
+                                            st.rerun()
         else:
             st.info("لا توجد فواتير مبيعات بعد")
 
