@@ -1,6 +1,6 @@
-# services/sales_service.py – منطق أعمال المبيعات (v5.0)
-# ✅ القيد في المرحلة 1 متوازن بذاته (العميل بالإجمالي)
-# ✅ المرحلة 2 (السند) تُسجّل القبض بقيد منفصل
+# services/sales_service.py – منطق أعمال المبيعات (v6.0)
+# ✅ المرحلة 1: الفاتورة بدون paid_amount (يُحدَّث لاحقاً)
+# ✅ المرحلة 2: create_voucher → link_voucher_to_invoice يُحدّث paid_amount
 import sqlite3
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
@@ -87,7 +87,7 @@ def get_products_for_sale():
 
 
 # ============================================================
-# 🎯 المرحلة 1: حفظ الفاتورة + القيد + FIFO (متوازن بذاته)
+# 🎯 المرحلة 1: حفظ الفاتورة + القيد + FIFO (بدون paid_amount)
 # ============================================================
 def _save_sale_core(customer_id, items, qty_by_product, product_prices,
                     fifo_details, total_cogs, currency_code, exchange_rate,
@@ -97,7 +97,10 @@ def _save_sale_core(customer_id, items, qty_by_product, product_prices,
     """
     حفظ الفاتورة + القيد المحاسبي.
     
-    ✅ القيد متوازن بذاته:
+    ✅ الفاتورة تُحفظ بحالة 'unpaid' (paid_amount=0، remaining=total)
+    ✅ المرحلة 2 ستُحدّث paid_amount عبر link_voucher_to_invoice
+    
+    القيد متوازن بذاته:
        مدين: العميل (بالإجمالي) + COGS
        دائن: المبيعات + الضريبة + المخزون
     """
@@ -105,18 +108,19 @@ def _save_sale_core(customer_id, items, qty_by_product, product_prices,
     try:
         conn.execute("BEGIN")
 
-        # إدراج الفاتورة
+        # ✅ إدراج الفاتورة — بدون paid_amount
+        #    paid_amount=0، remaining=total، status='unpaid'
+        #    المرحلة 2 ستُحدّثها تلقائياً
         cur = conn.execute(
             """INSERT INTO invoices 
                (type, customer_id, invoice_date, total, total_base, status, 
                 vat_rate, vat_amount, currency_code, exchange_rate,
                 paid_amount, remaining_amount, payment_status, payment_method)
                VALUES (?, ?, date('now'), ?, ?, 'completed', ?, ?, ?, ?,
-                       ?, ?, ?, ?)""",
+                       0, ?, 'unpaid', NULL)""",
             ("sale", customer_id, float(total_local), float(total_base),
              float(vat_rate), float(vat_amount_local), currency_code,
-             float(exchange_rate), float(paid_amount_dec),
-             float(remaining_dec), payment_status, payment_method)
+             float(exchange_rate), float(total_local))
         )
         invoice_id = cur.lastrowid
 
@@ -165,16 +169,16 @@ def _save_sale_core(customer_id, items, qty_by_product, product_prices,
 
         lines = []
 
-        # ✅ مدين: العميل بالإجمالي (بغض النظر عن المدفوع)
+        # مدين: العميل بالإجمالي
         lines.append({
             "account": customers_account,
-            "debit": float(total_local),   # ← الإجمالي، وليس remaining
+            "debit": float(total_local),
             "credit": 0,
             "currency_code": currency_code,
             "exchange_rate": float(exchange_rate)
         })
 
-        # ✅ دائن: المبيعات (قبل الضريبة)
+        # دائن: المبيعات
         lines.append({
             "account": sales_account,
             "debit": 0,
@@ -183,7 +187,7 @@ def _save_sale_core(customer_id, items, qty_by_product, product_prices,
             "exchange_rate": float(exchange_rate)
         })
 
-        # ✅ دائن: ضريبة المخرجات
+        # دائن: ضريبة المخرجات
         if float(vat_amount_local) > 0:
             lines.append({
                 "account": vat_account,
@@ -193,7 +197,7 @@ def _save_sale_core(customer_id, items, qty_by_product, product_prices,
                 "exchange_rate": float(exchange_rate)
             })
 
-        # ✅ COGS مدين + المخزون دائن
+        # COGS مدين + المخزون دائن
         if float(total_cogs) > 0:
             lines.extend([
                 {
@@ -235,13 +239,11 @@ def _save_sale_core(customer_id, items, qty_by_product, product_prices,
 
 
 # ============================================================
-# 🎯 المرحلة 2: سند القبض (معاملة قصيرة منفصلة)
+# 🎯 المرحلة 2: سند القبض (يُحدّث paid_amount تلقائياً)
 # ============================================================
 def _save_receipt_side(invoice_id, customer_id, customer_name,
                        paid_amount_dec, cash_account, currency_code, exchange_rate):
-    """
-    إنشاء سند قبض + قيد القبض (مدين الصندوق / دائن العميل).
-    """
+    """إنشاء سند قبض + تحديث الفاتورة تلقائياً عبر link_voucher_to_invoice."""
     if paid_amount_dec <= 0 or not cash_account:
         return None, None
 
