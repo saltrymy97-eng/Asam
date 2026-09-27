@@ -1,5 +1,6 @@
-# ui/sales_ui.py – واجهة المبيعات (v5.0)
-# ✅ استخدام on_change لتطبيق القيمة فوراً (يعمل على الهاتف)
+# ui/sales_ui.py – واجهة المبيعات (v6.0)
+# ✅ إصلاح StreamlitWidgetAlreadyInstantiatedError
+# ✅ لا نُعدّل key الـ widget مباشرة
 import streamlit as st
 import pandas as pd
 from services.sales_service import (
@@ -41,7 +42,7 @@ PAYMENT_METHOD_LABELS = {
 
 
 # ============================================================
-# ✅ مساعد: قراءة مبلغ رقمي من حقل نصي (يعمل على الهاتف)
+# ✅ مساعد: قراءة مبلغ رقمي من حقل نصي
 # ============================================================
 def _read_amount_from_text(text_value, default=0.0, max_value=None):
     """تحويل نص إلى رقم بأمان."""
@@ -203,7 +204,6 @@ def show():
 
                     st.text_input(
                         "اكتب المبلغ",
-                        value=st.session_state.get("paid_amount_text", ""),
                         placeholder="0.00",
                         key="paid_amount_text",
                         label_visibility="collapsed",
@@ -238,7 +238,7 @@ def show():
                     final_paid = total_invoice
                 elif payment_choice == 'credit':
                     final_paid = 0.0
-                else:  # partial — نقرأ من final (يُحدّثه on_change)
+                else:  # partial — نقرأ من final
                     final_paid = st.session_state.get("paid_amount_final", 0.0)
 
                 st.session_state.final_paid_to_save = final_paid
@@ -281,7 +281,6 @@ def show():
                             f"— المدفوع: {actual_paid:,.2f} {currency_code}"
                         )
                         st.session_state.invoice_items = []
-                        st.session_state.paid_amount_text = ""
                         st.session_state.paid_amount_final = 0.0
 
                 except Exception as e:
@@ -290,9 +289,9 @@ def show():
                     st.session_state.saving_sale = False
                     st.rerun()
 
+            # ✅ زر مسح — بدون لمس key الـ widget
             if st.button("🗑️ مسح جميع البنود"):
                 st.session_state.invoice_items = []
-                st.session_state.paid_amount_text = ""
                 st.session_state.paid_amount_final = 0.0
                 st.rerun()
 
