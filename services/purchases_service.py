@@ -1,6 +1,5 @@
-# services/purchases_service.py – منطق أعمال المشتريات (v6.0)
-# ✅ المرحلة 1: الفاتورة بدون paid_amount (يُحدَّث لاحقاً)
-# ✅ المرحلة 2: create_voucher → link_voucher_to_invoice يُحدّث paid_amount
+# services/purchases_service.py – منطق أعمال المشتريات (v7.0)
+# ✅ فحص الرصيد قبل الدفع للمورد
 import sqlite3
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
@@ -93,19 +92,12 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
                        subtotal_local, vat_amount_local, vat_rate):
     """
     حفظ الفاتورة + القيد المحاسبي.
-    
     ✅ الفاتورة تُحفظ بحالة 'unpaid' (paid_amount=0، remaining=total)
-    ✅ المرحلة 2 ستُحدّث paid_amount عبر link_voucher_to_invoice
-    
-    القيد في المرحلة 1 متوازن بذاته:
-       مدين: المخزون + ضريبة المدخلات
-       دائن: الموردون (بالإجمالي)
     """
     conn = get_connection()
     try:
         conn.execute("BEGIN")
 
-        # التحقق من المورد
         supplier_row = conn.execute(
             "SELECT id, name FROM suppliers WHERE id = ?", (supplier_id,)
         ).fetchone()
@@ -113,7 +105,6 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
             raise Exception("المورد غير موجود")
         supplier_name = supplier_row["name"]
 
-        # التحقق من المنتجات
         product_prices = {}
         for item in items:
             row = conn.execute(
@@ -131,8 +122,6 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
             product_prices[item["product_id"]] = base_price
 
         # ✅ إدراج الفاتورة — بدون paid_amount
-        #    paid_amount=0، remaining=total، status='unpaid'
-        #    المرحلة 2 ستُحدّثها تلقائياً
         cur = conn.execute(
             """INSERT INTO invoices 
                (type, supplier_id, invoice_date, total, total_base, status, 
@@ -146,7 +135,6 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
         )
         invoice_id = cur.lastrowid
 
-        # إدراج البنود + FIFO + المخزون
         for item in items:
             base_price = product_prices[item["product_id"]]
             qty = item["quantity"]
@@ -178,7 +166,6 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
             if not success:
                 raise Exception(f"فشل إضافة دفعة FIFO للمنتج {item['product_id']}: {error}")
 
-        # ✅ القيد المحاسبي
         from services.accounting_service import save_journal_entry
 
         inventory_account = _read_functional_account(conn, "inventory")
@@ -187,7 +174,6 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
 
         lines = []
 
-        # مدين: المخزون
         lines.append({
             "account": inventory_account,
             "debit": float(subtotal_local),
@@ -196,7 +182,6 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
             "exchange_rate": float(exchange_rate)
         })
 
-        # مدين: ضريبة المدخلات
         if float(vat_amount_local) > 0:
             lines.append({
                 "account": vat_account,
@@ -206,7 +191,6 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
                 "exchange_rate": float(exchange_rate)
             })
 
-        # دائن: الموردون بالإجمالي
         lines.append({
             "account": suppliers_account,
             "debit": 0,
@@ -238,15 +222,29 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
 
 
 # ============================================================
-# 🎯 المرحلة 2: سند الصرف (يُحدّث paid_amount تلقائياً)
+# 🎯 المرحلة 2: سند الصرف — مع فحص الرصيد
 # ============================================================
 def _save_payment_side(invoice_id, supplier_id, supplier_name,
                        paid_amount_dec, cash_account, username):
     """
-    إنشاء السند + تحديث الفاتورة تلقائياً عبر link_voucher_to_invoice.
+    إنشاء السند + تحديث الفاتورة تلقائياً.
+    ✅ فحص الرصيد قبل محاولة الدفع.
     """
     if paid_amount_dec <= 0 or not cash_account:
         return None, None
+
+    # ============================================================
+    # ✅ جديد: فحص الرصيد قبل استدعاء create_voucher
+    # ============================================================
+    try:
+        from services.cash_service import check_sufficient_balance
+        ok, balance_err = check_sufficient_balance(
+            cash_account, float(paid_amount_dec)
+        )
+        if not ok:
+            return None, f"الرصيد غير كافٍ — {balance_err}"
+    except ImportError:
+        pass  # إذا لم تكن الدالة موجودة، نتجاهل (الفحص داخل create_voucher)
 
     try:
         from services.receipts_service import create_voucher
@@ -279,7 +277,7 @@ def create_purchase_invoice(supplier_id, items, username="admin",
                              currency_code="YER", exchange_rate=None,
                              paid_amount=None, payment_method="credit",
                              cash_account=None):
-    """إنشاء فاتورة مشتريات كاملة — معاملتان قصيرتان"""
+    """إنشاء فاتورة مشتريات كاملة"""
     # ============ التحقق الأولي ============
     if not items:
         return None, Decimal("0"), "يجب إضافة منتج واحد على الأقل"
@@ -400,7 +398,7 @@ def create_purchase_invoice(supplier_id, items, username="admin",
             username=username,
         )
         if perr:
-            payment_note = f"⚠️ السند لم يُنشأ تلقائياً — راجعه. السبب: {perr}"
+            payment_note = f"⚠️ السند لم يُنشأ — {perr}"
             _add_note_to_invoice(invoice_id, payment_note)
 
     # ============ تسجيل التدقيق ============
