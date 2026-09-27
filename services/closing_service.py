@@ -1,140 +1,265 @@
-# services/closing_service.py – منطق قيد إغلاق الحسابات (مع دعم إقفال مراكز التكلفة)
-import sqlite3
-from database import get_connection
+# services/closing_service.py – منطق قيد إغلاق الحسابات (v2.0)
+# ✅ conn=None + Registry + إصلاح N+1 Query + Deadlock
+# ✅ تسجيل closing_logs + get_functional_account + username
+from datetime import date
+from database import get_connection, close_connection
 from services import cost_center_service as ccs
 from services.audit_service import log_action
+from services.chart_service import get_functional_account
 
-def create_closing_table():
-    """إنشاء جدول لإدارة عمليات الإغلاق إذا لم يكن موجوداً"""
-    conn = get_connection()
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS closing_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            year TEXT NOT NULL,
-            cost_center_id INTEGER,
-            entry_id INTEGER NOT NULL,
-            net_income REAL NOT NULL,
-            closed_at TEXT NOT NULL,
-            closed_by TEXT NOT NULL,
-            UNIQUE(year, cost_center_id)
-        )
-    """)
-    conn.commit()
-    conn.close()
+
+# ============================================================
+# مساعدات
+# ============================================================
+def _resolve_conn(conn):
+    if conn is None:
+        return get_connection(), True
+    return conn, False
+
+
+def _release_conn(conn, owns):
+    if owns:
+        close_connection(conn)
+
+
+def _validate_year(year) -> tuple[bool, str]:
+    """تحقق أن السنة صالحة"""
+    try:
+        y = int(year)
+        if y < 1900 or y > 2200:
+            return False, f"السنة {y} خارج النطاق المعقول"
+        return True, str(y)
+    except (TypeError, ValueError):
+        return False, f"السنة غير صالحة: {year}"
+
+
+# ============================================================
+# الجداول
+# ============================================================
+def create_closing_table(conn=None):
+    """إنشاء جدول closing_logs إذا لم يكن موجوداً"""
+    c, owns = _resolve_conn(conn)
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS closing_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                year TEXT NOT NULL,
+                cost_center_id INTEGER,
+                entry_id INTEGER NOT NULL,
+                net_income REAL NOT NULL,
+                closed_at TEXT NOT NULL,
+                closed_by TEXT NOT NULL,
+                UNIQUE(year, cost_center_id)
+            )
+        """)
+        if owns:
+            c.commit()
+    finally:
+        _release_conn(c, owns)
+
 
 def ensure_closing_table():
-    """ضمان وجود الجدول (يُستدعى عند بدء التطبيق)"""
+    """ضمان وجود الجدول عند بدء التطبيق"""
     create_closing_table()
 
-def get_account_balance(account_code):
-    """جلب رصيد حساب محدد (عام)"""
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    query = """
-        SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) AS balance
-        FROM journal_lines
-        WHERE account_name = ?
-    """
-    result = conn.execute(query, (account_code,)).fetchone()
-    conn.close()
-    return result["balance"] if result else 0
 
-def get_all_accounts_by_prefix(prefix):
-    """جلب الحسابات حسب البادئة"""
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    accounts = conn.execute(
-        "SELECT code, name, is_debit FROM accounts WHERE code LIKE ? ORDER BY code",
-        (prefix + "%",)
-    ).fetchall()
-    conn.close()
-    return accounts
-
-def create_closing_entry(year, retained_earnings_code="32"):
-    """
-    إنشاء قيد إغلاق السنة المالية العامة (للشركة بالكامل) مع حماية العمليات.
-    تُرجع (success, net_income, error_message)
-    """
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    
+def _is_year_closed(year, cost_center_id=None, conn=None) -> bool:
+    """فحص: هل السنة (أو مركز التكلفة) مُغلقة مسبقاً؟"""
+    c, owns = _resolve_conn(conn)
     try:
-        conn.execute("BEGIN")
-        
-        # التأكد من عدم وجود قيد إغلاق مسبق لنفس السنة
-        existing = conn.execute(
-            "SELECT id FROM journal_entries WHERE description = ? AND date LIKE ?",
-            (f"قيد إغلاق السنة المالية {year}", f"{year}%")
+        if cost_center_id is None:
+            row = c.execute(
+                "SELECT id FROM closing_logs WHERE year = ? AND cost_center_id IS NULL",
+                (str(year),)
+            ).fetchone()
+        else:
+            row = c.execute(
+                "SELECT id FROM closing_logs WHERE year = ? AND cost_center_id = ?",
+                (str(year), cost_center_id)
+            ).fetchone()
+        return row is not None
+    finally:
+        _release_conn(c, owns)
+
+
+def _log_closing(year, cost_center_id, entry_id, net_income, username, conn):
+    """تسجيل الإغلاق في closing_logs (باستخدام نفس الاتصال)"""
+    conn.execute("""
+        INSERT INTO closing_logs
+            (year, cost_center_id, entry_id, net_income, closed_at, closed_by)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (
+        str(year),
+        cost_center_id,
+        entry_id,
+        float(net_income),
+        date.today().strftime("%Y-%m-%d %H:%M:%S"),
+        username
+    ))
+
+
+# ============================================================
+# قراءة الأرصدة — ✅ كل شيء بنفس الاتصال
+# ============================================================
+def get_account_balance(account_code, conn=None):
+    """
+    جلب رصيد حساب محدد.
+    ✅ يقبل conn=None لتجنب N+1 داخل Transaction.
+    """
+    c, owns = _resolve_conn(conn)
+    try:
+        row = c.execute("""
+            SELECT COALESCE(SUM(debit), 0) - COALESCE(SUM(credit), 0) AS balance
+            FROM journal_lines
+            WHERE account_name = ?
+        """, (account_code,)).fetchone()
+        return float(row["balance"]) if row else 0.0
+    finally:
+        _release_conn(c, owns)
+
+
+def get_all_accounts_by_prefix(prefix, conn=None):
+    """جلب الحسابات حسب البادئة (dict list)"""
+    c, owns = _resolve_conn(conn)
+    try:
+        rows = c.execute(
+            "SELECT code, name, is_debit FROM accounts WHERE code LIKE ? ORDER BY code",
+            (prefix + "%",)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        _release_conn(c, owns)
+
+
+def _get_balances_for_prefix(prefix, conn):
+    """
+    ✅ حساب أرصدة كل حسابات بادئة معينة باستعلام واحد (بدل N+1).
+    يُرجع {code: balance}
+    """
+    rows = conn.execute("""
+        SELECT jl.account_name AS code,
+               COALESCE(SUM(jl.debit), 0) - COALESCE(SUM(jl.credit), 0) AS balance
+        FROM journal_lines jl
+        WHERE jl.account_name LIKE ?
+        GROUP BY jl.account_name
+    """, (prefix + "%",)).fetchall()
+    return {r["code"]: float(r["balance"] or 0) for r in rows}
+
+
+# ============================================================
+# إغلاق السنة المالية (عام)
+# ============================================================
+def create_closing_entry(year, retained_earnings_code=None,
+                          username="admin", conn=None):
+    """
+    إنشاء قيد إغلاق السنة المالية العامة (للشركة).
+    تُرجع (success, net_income, error_message)
+    ✅ يستخدم استعلام واحد للأرصدة (لا N+1).
+    ✅ يسجّل في closing_logs.
+    """
+    ok, year_str = _validate_year(year)
+    if not ok:
+        return False, 0, year_str
+    year = year_str
+
+    # ✅ الأرباح المحتجزة من الحسابات الوظيفية إن لم تُمرَّر
+    if not retained_earnings_code:
+        retained_earnings_code = get_functional_account("retained_earnings") or "32"
+
+    c, owns = _resolve_conn(conn)
+    try:
+        c.execute("BEGIN IMMEDIATE")
+
+        # ✅ فحص الإغلاق المسبق من closing_logs
+        if _is_year_closed(year, cost_center_id=None, conn=c):
+            c.rollback()
+            return False, 0, f"السنة {year} مُغلقة مسبقاً"
+
+        # فحص احتياطي: قيد بنفس الوصف
+        desc = f"قيد إغلاق السنة المالية {year}"
+        existing = c.execute(
+            "SELECT id FROM journal_entries WHERE description = ?",
+            (desc,)
         ).fetchone()
         if existing:
-            conn.rollback()
-            conn.close()
-            return False, 0, f"يوجد بالفعل قيد إغلاق للسنة {year}."
-        
-        # جمع أرصدة الإيرادات (4)
-        revenue_accounts = get_all_accounts_by_prefix("4")
-        total_revenue = 0
+            c.rollback()
+            return False, 0, f"يوجد بالفعل قيد إغلاق للسنة {year}"
+
+        # ✅ أرصدة الإيرادات — استعلام واحد
+        revenue_balances = _get_balances_for_prefix("4", c)
+        revenue_accounts = get_all_accounts_by_prefix("4", conn=c)
+
+        total_revenue = 0.0
         revenue_details = []
         for acc in revenue_accounts:
-            balance = get_account_balance(acc["code"])
+            balance = revenue_balances.get(acc["code"], 0.0)
+            # طبيعة الإيراد دائنة: الرصيد سالب عادة
             amount = -balance if acc["is_debit"] == "credit" else balance
-            if amount != 0:
+            if abs(amount) > 0.001:
                 total_revenue += amount
                 revenue_details.append((acc["code"], acc["name"], amount))
-        
-        # جمع أرصدة المصروفات (5)
-        expense_accounts = get_all_accounts_by_prefix("5")
-        total_expense = 0
+
+        # ✅ أرصدة المصروفات — استعلام واحد
+        expense_balances = _get_balances_for_prefix("5", c)
+        expense_accounts = get_all_accounts_by_prefix("5", conn=c)
+
+        total_expense = 0.0
         expense_details = []
         for acc in expense_accounts:
-            balance = get_account_balance(acc["code"])
+            balance = expense_balances.get(acc["code"], 0.0)
             amount = balance if acc["is_debit"] == "debit" else -balance
-            if amount != 0:
+            if abs(amount) > 0.001:
                 total_expense += amount
                 expense_details.append((acc["code"], acc["name"], amount))
-        
+
         net_income = total_revenue - total_expense
-        
+
         # إنشاء قيد اليومية
-        desc = f"قيد إغلاق السنة المالية {year}"
         date_str = f"{year}-12-31"
-        cur = conn.execute(
+        cur = c.execute(
             "INSERT INTO journal_entries (date, description, reference) VALUES (?, ?, ?)",
             (date_str, desc, f"إغلاق {year}")
         )
         entry_id = cur.lastrowid
-        
-        # إقفال الإيرادات (مدين) – مع exchange_rate و currency_code
-        for code, name, amt in revenue_details:
-            conn.execute(
-                "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, ?, 0, 'YER', 1.0)",
-                (entry_id, code, abs(amt))
-            )
-        
-        # إقفال المصروفات (دائن) – مع exchange_rate و currency_code
-        for code, name, amt in expense_details:
-            conn.execute(
-                "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, 0, ?, 'YER', 1.0)",
-                (entry_id, code, abs(amt))
-            )
-        
-        # توجيه صافي الدخل إلى الأرباح المحتجزة (32) – مع exchange_rate و currency_code
-        if net_income > 0:
-            conn.execute(
-                "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, 0, ?, 'YER', 1.0)",
-                (entry_id, retained_earnings_code, net_income)
-            )
-        elif net_income < 0:
-            conn.execute(
-                "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, ?, 0, 'YER', 1.0)",
-                (entry_id, retained_earnings_code, -net_income)
-            )
-        
-        conn.commit()
 
-        # تسجيل العملية في سجل التدقيق
+        # إقفال الإيرادات (مدين)
+        for code, name, amt in revenue_details:
+            c.execute("""
+                INSERT INTO journal_lines
+                (entry_id, account_name, debit, credit, currency_code, exchange_rate)
+                VALUES (?, ?, ?, 0, 'YER', 1.0)
+            """, (entry_id, code, abs(amt)))
+
+        # إقفال المصروفات (دائن)
+        for code, name, amt in expense_details:
+            c.execute("""
+                INSERT INTO journal_lines
+                (entry_id, account_name, debit, credit, currency_code, exchange_rate)
+                VALUES (?, ?, 0, ?, 'YER', 1.0)
+            """, (entry_id, code, abs(amt)))
+
+        # توجيه صافي الدخل إلى الأرباح المحتجزة
+        if net_income > 0:
+            c.execute("""
+                INSERT INTO journal_lines
+                (entry_id, account_name, debit, credit, currency_code, exchange_rate)
+                VALUES (?, ?, 0, ?, 'YER', 1.0)
+            """, (entry_id, retained_earnings_code, net_income))
+        elif net_income < 0:
+            c.execute("""
+                INSERT INTO journal_lines
+                (entry_id, account_name, debit, credit, currency_code, exchange_rate)
+                VALUES (?, ?, ?, 0, 'YER', 1.0)
+            """, (entry_id, retained_earnings_code, -net_income))
+
+        # ✅ تسجيل في closing_logs
+        _log_closing(year, None, entry_id, net_income, username, c)
+
+        if owns:
+            c.commit()
+
         log_action(
-            username="admin",
+            username=username,
             action="إغلاق سنة مالية",
             table_name="journal_entries",
             record_id=entry_id,
@@ -142,135 +267,224 @@ def create_closing_entry(year, retained_earnings_code="32"):
         )
 
         return True, net_income, None
-        
+
     except Exception as e:
-        conn.rollback()
+        if owns:
+            try: c.rollback()
+            except Exception: pass
         return False, 0, str(e)
     finally:
-        conn.close()
+        _release_conn(c, owns)
 
-def create_cost_center_closing_entry(year, cost_center_id, retained_earnings_code="32"):
+
+# ============================================================
+# إغلاق مركز تكلفة
+# ============================================================
+def create_cost_center_closing_entry(year, cost_center_id,
+                                       retained_earnings_code=None,
+                                       username="admin", conn=None):
     """
-    إنشاء قيد إغلاق لمركز تكلفة محدد (لتصفير إيراداته ومصروفاته المخصصة).
-    يعتمد على توزيعات مراكز التكلفة الفعلية لتحديد المبالغ، ويتم توزيع كل سطر
-    على نفس المركز بنسبة 100%.
+    إنشاء قيد إغلاق لمركز تكلفة محدد.
     تُرجع (success, net_income, error_message)
     """
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    
-    # التحقق من وجود المركز
+    ok, year_str = _validate_year(year)
+    if not ok:
+        return False, 0, year_str
+    year = year_str
+
+    if not retained_earnings_code:
+        retained_earnings_code = get_functional_account("retained_earnings") or "32"
+
+    # التحقق من وجود المركز (خارج Transaction للقراءة فقط)
     center = ccs.get_cost_center_by_id(cost_center_id)
     if not center:
         return False, 0, "مركز التكلفة غير موجود"
-    
+
+    c, owns = _resolve_conn(conn)
     try:
-        conn.execute("BEGIN")
-        
+        c.execute("BEGIN IMMEDIATE")
+
+        # ✅ فحص الإغلاق المسبق
+        if _is_year_closed(year, cost_center_id=cost_center_id, conn=c):
+            c.rollback()
+            return False, 0, (
+                f"مركز التكلفة {center['code']} مُغلق مسبقاً للسنة {year}"
+            )
+
         desc = f"قيد إغلاق مركز تكلفة {center['code']} - {center['name']} للسنة {year}"
-        # التأكد من عدم وجود قيد إغلاق سابق لنفس المركز والسنة
-        existing = conn.execute(
+        existing = c.execute(
             "SELECT id FROM journal_entries WHERE description = ?",
             (desc,)
         ).fetchone()
         if existing:
-            conn.rollback()
-            conn.close()
-            return False, 0, f"يوجد بالفعل قيد إغلاق للمركز {center['code']} للسنة {year}."
-        
-        # استخدام دالة قائمة الدخل المخصصة للمركز للحصول على صافي الدخل والتفاصيل
-        income_stmt = ccs.get_cost_center_income_statement(cost_center_id, f"{year}-01-01", f"{year}-12-31")
-        net_income = income_stmt['net_profit']
-        details = income_stmt['details']  # تحتوي على account_code, account_type, net, debit, credit
-        
-        # إنشاء قيد الإغلاق
+            c.rollback()
+            return False, 0, f"يوجد بالفعل قيد إغلاق للمركز {center['code']} للسنة {year}"
+
+        # قائمة الدخل المخصصة للمركز
+        income_stmt = ccs.get_cost_center_income_statement(
+            cost_center_id, f"{year}-01-01", f"{year}-12-31"
+        )
+        net_income = float(income_stmt['net_profit'])
+        details = income_stmt['details']
+
         date_str = f"{year}-12-31"
-        cur = conn.execute(
+        cur = c.execute(
             "INSERT INTO journal_entries (date, description, reference) VALUES (?, ?, ?)",
             (date_str, desc, f"إغلاق مركز {center['code']} - {year}")
         )
         entry_id = cur.lastrowid
-        
-        # سننشئ أسطر الإغلاق لكل حساب إيراد/مصروف له صافي غير صفري
-        # وكل سطر نوزعه على نفس المركز بنسبة 100%
-        line_ids = []
+
+        # أسطر الإغلاق
         for item in details:
-            if item['net'] == 0:
+            if abs(float(item['net'])) < 0.001:
                 continue
-            
             account_code = item['account_code']
             account_type = item['account_type']
-            abs_net = abs(item['net'])
-            
-            # إيرادات: مدين لإغلاقها (طبيعتها دائنة) – مع exchange_rate و currency_code
+            abs_net = abs(float(item['net']))
+
             if account_type in ('revenue', 'income'):
-                cur_line = conn.execute(
-                    "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, ?, 0, 'YER', 1.0)",
-                    (entry_id, account_code, abs_net)
-                )
-            # مصروفات: دائن لإغلاقها (طبيعتها مدينة) – مع exchange_rate و currency_code
+                cur_line = c.execute("""
+                    INSERT INTO journal_lines
+                    (entry_id, account_name, debit, credit, currency_code, exchange_rate)
+                    VALUES (?, ?, ?, 0, 'YER', 1.0)
+                """, (entry_id, account_code, abs_net))
             elif account_type in ('expense', 'cost_of_sales'):
-                cur_line = conn.execute(
-                    "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, 0, ?, 'YER', 1.0)",
-                    (entry_id, account_code, abs_net)
-                )
+                cur_line = c.execute("""
+                    INSERT INTO journal_lines
+                    (entry_id, account_name, debit, credit, currency_code, exchange_rate)
+                    VALUES (?, ?, 0, ?, 'YER', 1.0)
+                """, (entry_id, account_code, abs_net))
             else:
-                # حسابات أخرى لا نغلقها عادةً، لكن إذا وُجدت نضبطها بنفس المنطق مع exchange_rate
                 if item['net'] > 0:
-                    cur_line = conn.execute(
-                        "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, ?, 0, 'YER', 1.0)",
-                        (entry_id, account_code, abs_net)
-                    )
+                    cur_line = c.execute("""
+                        INSERT INTO journal_lines
+                        (entry_id, account_name, debit, credit, currency_code, exchange_rate)
+                        VALUES (?, ?, ?, 0, 'YER', 1.0)
+                    """, (entry_id, account_code, abs_net))
                 else:
-                    cur_line = conn.execute(
-                        "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, 0, ?, 'YER', 1.0)",
-                        (entry_id, account_code, abs_net)
-                    )
-            
+                    cur_line = c.execute("""
+                        INSERT INTO journal_lines
+                        (entry_id, account_name, debit, credit, currency_code, exchange_rate)
+                        VALUES (?, ?, 0, ?, 'YER', 1.0)
+                    """, (entry_id, account_code, abs_net))
+
             line_id = cur_line.lastrowid
-            line_ids.append(line_id)
-            
-            # توزيع هذا السطر على المركز الحالي بنسبة 100%
             ccs.allocate_journal_line(line_id, [{
                 'cost_center_id': cost_center_id,
                 'amount': abs_net,
                 'percentage': 100.0
             }])
-        
-        # إضافة سطر صافي الدخل إلى الأرباح المحتجزة وتوزيعه على المركز – مع exchange_rate و currency_code
+
+        # سطر صافي الدخل
         if net_income > 0:
-            cur_line = conn.execute(
-                "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, 0, ?, 'YER', 1.0)",
-                (entry_id, retained_earnings_code, net_income)
-            )
+            cur_line = c.execute("""
+                INSERT INTO journal_lines
+                (entry_id, account_name, debit, credit, currency_code, exchange_rate)
+                VALUES (?, ?, 0, ?, 'YER', 1.0)
+            """, (entry_id, retained_earnings_code, net_income))
         elif net_income < 0:
-            cur_line = conn.execute(
-                "INSERT INTO journal_lines (entry_id, account_name, debit, credit, currency_code, exchange_rate) VALUES (?, ?, ?, 0, 'YER', 1.0)",
-                (entry_id, retained_earnings_code, -net_income)
-            )
-        if net_income != 0:
+            cur_line = c.execute("""
+                INSERT INTO journal_lines
+                (entry_id, account_name, debit, credit, currency_code, exchange_rate)
+                VALUES (?, ?, ?, 0, 'YER', 1.0)
+            """, (entry_id, retained_earnings_code, -net_income))
+
+        if abs(net_income) > 0.001:
             line_id = cur_line.lastrowid
             ccs.allocate_journal_line(line_id, [{
                 'cost_center_id': cost_center_id,
                 'amount': abs(net_income),
                 'percentage': 100.0
             }])
-        
-        conn.commit()
 
-        # تسجيل العملية في سجل التدقيق
+        # ✅ تسجيل في closing_logs
+        _log_closing(year, cost_center_id, entry_id, net_income, username, c)
+
+        if owns:
+            c.commit()
+
         log_action(
-            username="admin",
+            username=username,
             action="إغلاق سنة مالية (مركز تكلفة)",
             table_name="journal_entries",
             record_id=entry_id,
-            new_value=f"إغلاق مركز {center['code']} - {center['name']} للسنة {year}, صافي الدخل: {net_income:,.2f}"
+            new_value=(
+                f"إغلاق مركز {center['code']} - {center['name']} "
+                f"للسنة {year}, صافي الدخل: {net_income:,.2f}"
+            )
         )
 
         return True, net_income, None
-        
+
     except Exception as e:
-        conn.rollback()
+        if owns:
+            try: c.rollback()
+            except Exception: pass
         return False, 0, str(e)
     finally:
-        conn.close()
+        _release_conn(c, owns)
+
+
+# ============================================================
+# تقرير: أرصدة الإغلاق
+# ============================================================
+def get_closing_summary(year, conn=None):
+    """
+    ملخص الإغلاق لسنة معينة.
+    ✅ يعرض أرصدة الصناديق والبنوك (لم تُغلق لكن مفيدة للسياق).
+    """
+    ok, year_str = _validate_year(year)
+    if not ok:
+        return {"error": year_str}
+
+    c, owns = _resolve_conn(conn)
+    try:
+        result = {"year": year_str}
+
+        # حالة الإغلاق
+        row = c.execute(
+            "SELECT entry_id, net_income, closed_at, closed_by "
+            "FROM closing_logs WHERE year = ? AND cost_center_id IS NULL",
+            (year_str,)
+        ).fetchone()
+        if row:
+            result["closed"] = True
+            result["entry_id"] = row["entry_id"]
+            result["net_income"] = float(row["net_income"] or 0)
+            result["closed_at"] = row["closed_at"]
+            result["closed_by"] = row["closed_by"]
+        else:
+            result["closed"] = False
+
+        # أرصدة الصندوق
+        try:
+            rows = c.execute("""
+                SELECT name, currency_code, current_balance
+                FROM cash_accounts WHERE is_active = 1 ORDER BY name
+            """).fetchall()
+            result["cash_accounts"] = [dict(r) for r in rows]
+            result["cash_total"] = sum(
+                float(r["current_balance"] or 0) for r in rows
+            )
+        except Exception:
+            result["cash_accounts"] = []
+            result["cash_total"] = 0.0
+
+        # أرصدة البنك
+        try:
+            rows = c.execute("""
+                SELECT bank_name, account_number, currency_code, current_balance
+                FROM bank_accounts WHERE is_active = 1 ORDER BY bank_name
+            """).fetchall()
+            result["bank_accounts"] = [dict(r) for r in rows]
+            result["bank_total"] = sum(
+                float(r["current_balance"] or 0) for r in rows
+            )
+        except Exception:
+            result["bank_accounts"] = []
+            result["bank_total"] = 0.0
+
+        result["liquidity_total"] = result["cash_total"] + result["bank_total"]
+        return result
+    finally:
+        _release_conn(c, owns)
