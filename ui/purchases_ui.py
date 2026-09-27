@@ -1,5 +1,6 @@
-# ui/purchases_ui.py – واجهة المشتريات (v5.0)
-# ✅ استخدام on_change لتطبيق القيمة فوراً (يعمل على الهاتف)
+# ui/purchases_ui.py – واجهة المشتريات (v6.0)
+# ✅ إصلاح StreamlitWidgetAlreadyInstantiatedError
+# ✅ لا نُعدّل key الـ widget مباشرة
 import streamlit as st
 import pandas as pd
 from services.purchases_service import (
@@ -41,7 +42,7 @@ PAYMENT_METHOD_LABELS = {
 
 
 # ============================================================
-# ✅ مساعد: قراءة مبلغ رقمي من حقل نصي (يعمل على الهاتف)
+# ✅ مساعد: قراءة مبلغ رقمي من حقل نصي
 # ============================================================
 def _read_amount_from_text(text_value, default=0.0, max_value=None):
     """تحويل نص إلى رقم بأمان."""
@@ -195,7 +196,6 @@ def show():
                 else:  # partial
                     st.markdown(f"**💵 المبلغ المدفوع الآن (من إجمالي {total_purchase:,.2f} {currency_code})**")
 
-                    # ✅ on_change callback — يُنفّذ مع كل ضغطة
                     def _on_paid_change():
                         txt = st.session_state.get("purchase_paid_amount_text", "")
                         val = _read_amount_from_text(txt, 0.0, total_purchase)
@@ -203,14 +203,12 @@ def show():
 
                     st.text_input(
                         "اكتب المبلغ",
-                        value=st.session_state.get("purchase_paid_amount_text", ""),
                         placeholder="0.00",
                         key="purchase_paid_amount_text",
                         label_visibility="collapsed",
                         on_change=_on_paid_change
                     )
 
-                    # ✅ قراءة من القيمة المخزّنة (يُحدّثها on_change)
                     paid_amount = st.session_state.get("purchase_paid_final", 0.0)
 
                     remaining = total_purchase - paid_amount
@@ -235,12 +233,11 @@ def show():
 
             if st.button("💾 حفظ فاتورة المشتريات", type="primary",
                         disabled=save_disabled, key="save_purchase_btn"):
-                # ✅ قراءة القيمة النهائية من session_state
                 if payment_choice == 'cash':
                     final_paid = total_purchase
                 elif payment_choice == 'credit':
                     final_paid = 0.0
-                else:  # partial — نقرأ من final (يُحدّثه on_change)
+                else:
                     final_paid = st.session_state.get("purchase_paid_final", 0.0)
 
                 st.session_state.final_paid_to_save = final_paid
@@ -283,7 +280,6 @@ def show():
                             f"— المدفوع: {actual_paid:,.2f} {currency_code}"
                         )
                         st.session_state.purchase_items = []
-                        st.session_state.purchase_paid_amount_text = ""
                         st.session_state.purchase_paid_final = 0.0
 
                 except Exception as e:
@@ -292,9 +288,9 @@ def show():
                     st.session_state.saving_purchase = False
                     st.rerun()
 
+            # ✅ زر مسح — بدون لمس key الـ widget
             if st.button("🗑️ مسح بنود المشتريات"):
                 st.session_state.purchase_items = []
-                st.session_state.purchase_paid_amount_text = ""
                 st.session_state.purchase_paid_final = 0.0
                 st.rerun()
 
