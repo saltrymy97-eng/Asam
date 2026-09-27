@@ -1,5 +1,5 @@
-# ui/purchases_ui.py – واجهة المشتريات (v3.0)
-# ✅ يدعم: شراء نقدي/آجل/جزئي + عرض تحذيرات السند + إنشاء يدوي
+# ui/purchases_ui.py – واجهة المشتريات (v4.0)
+# ✅ قراءة مباشرة من الحقل بدون Enter أو زر تأكيد
 import streamlit as st
 import pandas as pd
 from services.purchases_service import (
@@ -10,16 +10,13 @@ from services.purchases_service import (
     get_invoice_details,
     add_supplier,
     get_all_suppliers,
-    create_payment_voucher_for_invoice,   # ✅ جديد
+    create_payment_voucher_for_invoice,
 )
 from services.currency_service import get_all_currencies, get_base_currency
 from services.cash_service import get_all_cash_accounts
 
 
 # ========== ألوان التصميم ==========
-GLASS_BG = "rgba(255, 255, 255, 0.12)"
-GLASS_BORDER = "rgba(255, 255, 255, 0.25)"
-GLASS_SHADOW = "0 8px 32px 0 rgba(0,0,0,0.37)"
 TEXT_PRIMARY = "#F8FAFC"
 TEXT_SECONDARY = "#CBD5E1"
 ACCENT_BLUE = "#3B82F6"
@@ -41,6 +38,32 @@ PAYMENT_METHOD_LABELS = {
     "credit": "آجل",
     "mixed":  "مختلط"
 }
+
+
+# ============================================================
+# ✅ مساعد: قراءة مبلغ رقمي من حقل نصي (يعمل على الهاتف)
+# ============================================================
+def _read_amount_from_text(text_value, default=0.0, max_value=None):
+    """
+    تحويل نص إلى رقم بأمان.
+    - يقبل الأرقام والفاصلات.
+    - إذا كان النص فارغاً → default.
+    - إذا تجاوز max_value → يُقيّد.
+    """
+    if text_value is None:
+        return default
+    text = str(text_value).strip().replace(",", "").replace(" ", "")
+    if text == "":
+        return default
+    try:
+        value = float(text)
+    except (ValueError, TypeError):
+        return default
+    if value < 0:
+        return default
+    if max_value is not None and value > max_value:
+        return max_value
+    return value
 
 
 def show():
@@ -173,15 +196,25 @@ def show():
                 if payment_choice == 'cash':
                     paid_amount = total_purchase
                     st.info(f"💵 سيتم دفع {total_purchase:,.2f} {currency_code} للمورد فوراً")
-                else:
-                    paid_amount = st.number_input(
-                        f"💵 المبلغ المدفوع الآن (من إجمالي {total_purchase:,.2f})",
-                        min_value=0.0,
-                        max_value=total_purchase,
-                        value=round(total_purchase / 2, 2),
-                        step=10.0,
-                        key="purchase_paid_amount_input"
+
+                else:  # partial
+                    # ✅ حقل نصي — لا قيمة افتراضية
+                    st.markdown(f"**💵 المبلغ المدفوع الآن (من إجمالي {total_purchase:,.2f} {currency_code})**")
+                    paid_text = st.text_input(
+                        "اكتب المبلغ",
+                        value="",
+                        placeholder="0.00",
+                        key="purchase_paid_amount_text",
+                        label_visibility="collapsed"
                     )
+
+                    # قراءة فورية للعرض
+                    paid_amount = _read_amount_from_text(
+                        paid_text,
+                        default=0.0,
+                        max_value=total_purchase
+                    )
+
                     remaining = total_purchase - paid_amount
                     st.markdown(
                         f"<div style='padding:0.75rem; background:rgba(245,158,11,0.15); "
@@ -195,7 +228,7 @@ def show():
                 st.info(f"📌 سيتم تسجيل المبلغ كاملاً ({total_purchase:,.2f} {currency_code}) على حساب المورد")
 
             # ============================================================
-            # 5) زر الحفظ
+            # 5) زر الحفظ — قراءة مباشرة من الحقل
             # ============================================================
             if "saving_purchase" not in st.session_state:
                 st.session_state.saving_purchase = False
@@ -204,17 +237,34 @@ def show():
 
             if st.button("💾 حفظ فاتورة المشتريات", type="primary",
                         disabled=save_disabled, key="save_purchase_btn"):
+                # ✅ قراءة القيمة النهائية من session_state مباشرة
+                if payment_choice == 'cash':
+                    final_paid = total_purchase
+                elif payment_choice == 'credit':
+                    final_paid = 0.0
+                else:  # partial
+                    text_val = st.session_state.get("purchase_paid_amount_text", "")
+                    final_paid = _read_amount_from_text(
+                        text_val,
+                        default=0.0,
+                        max_value=total_purchase
+                    )
+
+                st.session_state.final_paid_to_save = final_paid
                 st.session_state.saving_purchase = True
                 st.rerun()
 
             if st.session_state.saving_purchase:
                 try:
+                    # ✅ القيمة النهائية
+                    actual_paid = st.session_state.get("final_paid_to_save", 0.0)
+
                     invoice_id, total, error = create_purchase_invoice(
                         supplier_id=supplier_id,
                         items=st.session_state.purchase_items,
                         username=st.session_state.user.get('username', 'admin'),
                         currency_code=currency_code,
-                        paid_amount=paid_amount,
+                        paid_amount=actual_paid,
                         payment_method=(
                             'cash' if payment_choice == 'cash'
                             else 'credit' if payment_choice == 'credit'
@@ -224,11 +274,9 @@ def show():
                     )
 
                     if error and invoice_id is None:
-                        # ✅ فشل كامل — الفاتورة لم تُحفظ
                         st.error(f"❌ فشل في حفظ الفاتورة: {error}")
 
                     elif error and invoice_id is not None:
-                        # ⚠️ فشل جزئي — الفاتورة محفوظة، لكن السند لم يُنشأ
                         st.warning(
                             f"⚠️ **تم حفظ الفاتورة رقم {invoice_id} بنجاح** "
                             f"لكن **لم يُنشأ سند الصرف التلقائي**.\n\n"
@@ -238,9 +286,12 @@ def show():
                         st.session_state.purchase_items = []
 
                     else:
-                        # ✅ نجاح كامل
-                        st.success(f"✅ تم حفظ فاتورة المشتريات رقم {invoice_id} بنجاح")
+                        st.success(
+                            f"✅ تم حفظ فاتورة المشتريات رقم {invoice_id} بنجاح "
+                            f"— المدفوع: {actual_paid:,.2f} {currency_code}"
+                        )
                         st.session_state.purchase_items = []
+                        st.session_state.purchase_paid_amount_text = ""
 
                 except Exception as e:
                     st.error(f"❌ خطأ غير متوقع: {e}")
@@ -250,6 +301,7 @@ def show():
 
             if st.button("🗑️ مسح بنود المشتريات"):
                 st.session_state.purchase_items = []
+                st.session_state.purchase_paid_amount_text = ""
                 st.rerun()
 
     # ============================================================
@@ -259,10 +311,8 @@ def show():
         st.markdown(f"<h3 style='color:{ACCENT_GREEN};'>فواتير المشتريات المسجلة</h3>",
                     unsafe_allow_html=True)
 
-        # ⚠️ عرض الفواتير التي تحتاج سنداً
         all_invoices = get_purchase_invoices()
 
-        # عرض تحذير إذا كانت هناك فواتير بملاحظات
         invoices_with_warnings = [inv for inv in all_invoices if inv.get('has_warning')]
         if invoices_with_warnings:
             st.error(
@@ -282,7 +332,6 @@ def show():
                     PAYMENT_STATUS_LABELS
                 ).fillna(df_display["payment_status"])
 
-            # ✅ عمود التنبيه
             if "has_warning" in df_invoices.columns:
                 df_display["⚠️"] = df_invoices["has_warning"].apply(
                     lambda x: "⚠️" if x else "✅"
@@ -314,13 +363,11 @@ def show():
                         f"| **طريقة الدفع:** {PAYMENT_METHOD_LABELS.get(inv_sel.get('payment_method'), '—')}"
                     )
 
-                    # ✅ إذا كانت هناك ملاحظة، عرضها + زر الإنشاء اليدوي
                     if inv_sel.get('has_warning'):
                         st.warning(
                             f"⚠️ **تنبيه:** {inv_sel.get('reference', '')}"
                         )
 
-                        # فقط إذا كان هناك مبلغ مدفوع
                         if float(inv_sel.get('paid_amount', 0)) > 0:
                             if st.button(
                                 f"🔧 إنشاء سند الصرف يدوياً للفاتورة #{selected_id}",
