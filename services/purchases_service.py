@@ -1,5 +1,5 @@
-# services/purchases_service.py – منطق أعمال المشتريات (v7.0)
-# ✅ فحص الرصيد قبل الدفع للمورد
+# services/purchases_service.py – منطق أعمال المشتريات (v8.0)
+# ✅ دعم البنك والصندوق + فحص الرصيد + إنشاء سند يدوي بمرونة
 import sqlite3
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
@@ -84,7 +84,7 @@ def get_products_for_purchase():
 
 
 # ============================================================
-# 🎯 المرحلة 1: حفظ الفاتورة + القيد (بدون paid_amount)
+# 🎯 المرحلة 1: حفظ الفاتورة + القيد
 # ============================================================
 def _save_invoice_core(supplier_id, items, username, currency_code,
                        exchange_rate, paid_amount_dec, remaining_dec,
@@ -233,9 +233,7 @@ def _save_payment_side(invoice_id, supplier_id, supplier_name,
     if paid_amount_dec <= 0 or not cash_account:
         return None, None
 
-    # ============================================================
-    # ✅ جديد: فحص الرصيد قبل استدعاء create_voucher
-    # ============================================================
+    # ✅ فحص الرصيد قبل استدعاء create_voucher
     try:
         from services.cash_service import check_sufficient_balance
         ok, balance_err = check_sufficient_balance(
@@ -244,7 +242,7 @@ def _save_payment_side(invoice_id, supplier_id, supplier_name,
         if not ok:
             return None, f"الرصيد غير كافٍ — {balance_err}"
     except ImportError:
-        pass  # إذا لم تكن الدالة موجودة، نتجاهل (الفحص داخل create_voucher)
+        pass
 
     try:
         from services.receipts_service import create_voucher
@@ -495,13 +493,31 @@ def get_invoice_details(invoice_id):
 
 
 # ============================================================
-# مساعد: إنشاء السند يدوياً
+# ✅ مساعد: إنشاء السند يدوياً (مع دعم الصندوق والبنك)
 # ============================================================
-def create_payment_voucher_for_invoice(invoice_id, username="admin"):
-    conn = get_connection()
+def create_payment_voucher_for_invoice(invoice_id, username="admin",
+                                        payment_account_code=None, conn=None):
+    """
+    إنشاء سند صرف لفاتورة مشتريات موجودة (يدوياً).
+    
+    Args:
+        invoice_id:              معرف الفاتورة
+        username:                اسم المستخدم
+        payment_account_code:    كود الصندوق/البنك (اختياري)
+                                 إذا لم يُمرر → يُستخدم أول صندوق نشط
+        conn:                    اتصال خارجي (اختياري)
+    
+    Returns:
+        (voucher_id, None) أو (None, "رسالة")
+    """
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
+
     try:
         inv = conn.execute("""
-            SELECT id, supplier_id, total, paid_amount, remaining_amount, 
+            SELECT id, supplier_id, total, paid_amount, remaining_amount,
                    payment_status, currency_code
             FROM invoices
             WHERE id = ? AND type = 'purchase'
@@ -516,42 +532,52 @@ def create_payment_voucher_for_invoice(invoice_id, username="admin"):
 
         supplier_id = inv["supplier_id"]
 
-        row = conn.execute("""
-            SELECT account_code FROM cash_accounts 
-            WHERE is_active = 1 LIMIT 1
-        """).fetchone()
-        if not row or not row["account_code"]:
-            return None, "لا يوجد صندوق نشط"
-
-        cash_account = row["account_code"]
+        # ✅ تحديد الحساب: من المعامل، أو أول صندوق نشط
+        if not payment_account_code:
+            row = conn.execute("""
+                SELECT account_code FROM cash_accounts
+                WHERE is_active = 1
+                ORDER BY id
+                LIMIT 1
+            """).fetchone()
+            if not row or not row["account_code"]:
+                return None, "لا يوجد صندوق أو بنك نشط"
+            payment_account_code = row["account_code"]
     finally:
-        close_connection(conn)
+        if own_conn:
+            close_connection(conn)
 
+    # ✅ استدعاء _save_payment_side مع الحساب المحدد
     voucher_id, perr = _save_payment_side(
         invoice_id=invoice_id,
         supplier_id=supplier_id,
         supplier_name="",
         paid_amount_dec=Decimal(str(paid)),
-        cash_account=cash_account,
+        cash_account=payment_account_code,
         username=username,
     )
 
     if perr:
         return None, perr
 
-    try:
+    # ✅ إزالة الملاحظة إن كانت موجودة
+    own_conn2 = False
+    if conn is None:
         conn = get_connection()
-        try:
-            conn.execute("""
-                UPDATE invoices
-                SET reference = REPLACE(COALESCE(reference, ''), 
-                    (SELECT ' | ' || reference FROM invoices WHERE id=?), '')
-                WHERE id = ?
-            """, (invoice_id, invoice_id))
+        own_conn2 = True
+    try:
+        conn.execute("""
+            UPDATE invoices
+            SET reference = REPLACE(COALESCE(reference, ''),
+                (SELECT ' | ' || reference FROM invoices WHERE id=?), '')
+            WHERE id = ?
+        """, (invoice_id, invoice_id))
+        if own_conn2:
             conn.commit()
-        finally:
-            close_connection(conn)
     except Exception:
         pass
+    finally:
+        if own_conn2:
+            close_connection(conn)
 
     return voucher_id, None
