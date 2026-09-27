@@ -1,6 +1,6 @@
-# services/purchases_service.py – منطق أعمال المشتريات (v5.1)
-# ✅ القيد في المرحلة 1 متوازن بذاته (الموردون بالإجمالي)
-# ✅ المرحلة 2 (السند) تُسجّل الدفع بقيد منفصل
+# services/purchases_service.py – منطق أعمال المشتريات (v6.0)
+# ✅ المرحلة 1: الفاتورة بدون paid_amount (يُحدَّث لاحقاً)
+# ✅ المرحلة 2: create_voucher → link_voucher_to_invoice يُحدّث paid_amount
 import sqlite3
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
@@ -85,7 +85,7 @@ def get_products_for_purchase():
 
 
 # ============================================================
-# 🎯 المرحلة 1: حفظ الفاتورة + القيد (متوازن بذاته)
+# 🎯 المرحلة 1: حفظ الفاتورة + القيد (بدون paid_amount)
 # ============================================================
 def _save_invoice_core(supplier_id, items, username, currency_code,
                        exchange_rate, paid_amount_dec, remaining_dec,
@@ -94,11 +94,12 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
     """
     حفظ الفاتورة + القيد المحاسبي.
     
-    ✅ القيد متوازن بذاته:
+    ✅ الفاتورة تُحفظ بحالة 'unpaid' (paid_amount=0، remaining=total)
+    ✅ المرحلة 2 ستُحدّث paid_amount عبر link_voucher_to_invoice
+    
+    القيد في المرحلة 1 متوازن بذاته:
        مدين: المخزون + ضريبة المدخلات
        دائن: الموردون (بالإجمالي)
-    
-    الدفع (سند صرف) يُسجَّل في المرحلة 2 بقيد منفصل.
     """
     conn = get_connection()
     try:
@@ -129,18 +130,19 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
                 base_price = _to_decimal(row["purchase_price"])
             product_prices[item["product_id"]] = base_price
 
-        # إدراج الفاتورة
+        # ✅ إدراج الفاتورة — بدون paid_amount
+        #    paid_amount=0، remaining=total، status='unpaid'
+        #    المرحلة 2 ستُحدّثها تلقائياً
         cur = conn.execute(
             """INSERT INTO invoices 
                (type, supplier_id, invoice_date, total, total_base, status, 
                 vat_rate, vat_amount, currency_code, exchange_rate,
                 paid_amount, remaining_amount, payment_status, payment_method)
                VALUES (?, ?, date('now'), ?, ?, 'completed', ?, ?, ?, ?,
-                       ?, ?, ?, ?)""",
+                       0, ?, 'unpaid', NULL)""",
             ("purchase", supplier_id, float(total_local), float(total_base),
              float(vat_rate), float(vat_amount_local), currency_code,
-             float(exchange_rate), float(paid_amount_dec),
-             float(remaining_dec), payment_status, payment_method)
+             float(exchange_rate), float(total_local))
         )
         invoice_id = cur.lastrowid
 
@@ -176,7 +178,7 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
             if not success:
                 raise Exception(f"فشل إضافة دفعة FIFO للمنتج {item['product_id']}: {error}")
 
-        # ✅ القيد المحاسبي — متوازن بذاته
+        # ✅ القيد المحاسبي
         from services.accounting_service import save_journal_entry
 
         inventory_account = _read_functional_account(conn, "inventory")
@@ -185,7 +187,7 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
 
         lines = []
 
-        # ✅ مدين: المخزون (بالمبلغ قبل الضريبة)
+        # مدين: المخزون
         lines.append({
             "account": inventory_account,
             "debit": float(subtotal_local),
@@ -194,7 +196,7 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
             "exchange_rate": float(exchange_rate)
         })
 
-        # ✅ مدين: ضريبة المدخلات (إن وُجدت)
+        # مدين: ضريبة المدخلات
         if float(vat_amount_local) > 0:
             lines.append({
                 "account": vat_account,
@@ -204,11 +206,11 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
                 "exchange_rate": float(exchange_rate)
             })
 
-        # ✅ دائن: الموردون بالإجمالي الكامل (بغض النظر عن المدفوع)
+        # دائن: الموردون بالإجمالي
         lines.append({
             "account": suppliers_account,
             "debit": 0,
-            "credit": float(total_local),   # ← الإجمالي، وليس remaining
+            "credit": float(total_local),
             "currency_code": currency_code,
             "exchange_rate": float(exchange_rate)
         })
@@ -236,13 +238,12 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
 
 
 # ============================================================
-# 🎯 المرحلة 2: سند الصرف (معاملة قصيرة منفصلة)
+# 🎯 المرحلة 2: سند الصرف (يُحدّث paid_amount تلقائياً)
 # ============================================================
 def _save_payment_side(invoice_id, supplier_id, supplier_name,
                        paid_amount_dec, cash_account, username):
     """
-    إنشاء السند + القيد (مدين الموردون / دائن الصندوق).
-    معاملة قصيرة منفصلة.
+    إنشاء السند + تحديث الفاتورة تلقائياً عبر link_voucher_to_invoice.
     """
     if paid_amount_dec <= 0 or not cash_account:
         return None, None
