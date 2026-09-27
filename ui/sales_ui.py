@@ -1,5 +1,5 @@
-# ui/sales_ui.py – واجهة المبيعات (v4.0)
-# ✅ قراءة مباشرة من الحقل بدون Enter أو زر تأكيد
+# ui/sales_ui.py – واجهة المبيعات (v5.0)
+# ✅ استخدام on_change لتطبيق القيمة فوراً (يعمل على الهاتف)
 import streamlit as st
 import pandas as pd
 from services.sales_service import (
@@ -44,12 +44,7 @@ PAYMENT_METHOD_LABELS = {
 # ✅ مساعد: قراءة مبلغ رقمي من حقل نصي (يعمل على الهاتف)
 # ============================================================
 def _read_amount_from_text(text_value, default=0.0, max_value=None):
-    """
-    تحويل نص إلى رقم بأمان.
-    - يقبل الأرقام والفاصلات.
-    - إذا كان النص فارغاً → default.
-    - إذا تجاوز max_value → يُقيّد.
-    """
+    """تحويل نص إلى رقم بأمان."""
     if text_value is None:
         return default
     text = str(text_value).strip().replace(",", "").replace(" ", "")
@@ -198,22 +193,25 @@ def show():
                     st.info(f"💵 سيتم استلام {total_invoice:,.2f} {currency_code} نقداً")
 
                 else:  # partial
-                    # ✅ حقل نصي — لا قيمة افتراضية
                     st.markdown(f"**💵 المبلغ المدفوع الآن (من إجمالي {total_invoice:,.2f} {currency_code})**")
-                    paid_text = st.text_input(
+
+                    # ✅ on_change callback — يُنفّذ مع كل ضغطة
+                    def _on_paid_change():
+                        txt = st.session_state.get("paid_amount_text", "")
+                        val = _read_amount_from_text(txt, 0.0, total_invoice)
+                        st.session_state["paid_amount_final"] = val
+
+                    st.text_input(
                         "اكتب المبلغ",
-                        value="",
+                        value=st.session_state.get("paid_amount_text", ""),
                         placeholder="0.00",
                         key="paid_amount_text",
-                        label_visibility="collapsed"
+                        label_visibility="collapsed",
+                        on_change=_on_paid_change
                     )
 
-                    # قراءة فورية للعرض
-                    paid_amount = _read_amount_from_text(
-                        paid_text,
-                        default=0.0,
-                        max_value=total_invoice
-                    )
+                    # ✅ قراءة من القيمة المخزّنة
+                    paid_amount = st.session_state.get("paid_amount_final", 0.0)
 
                     remaining = total_invoice - paid_amount
                     st.markdown(
@@ -227,7 +225,7 @@ def show():
             else:
                 st.info(f"📌 سيتم تسجيل المبلغ كاملاً ({total_invoice:,.2f} {currency_code}) على حساب العميل")
 
-            # 5) زر الحفظ — قراءة مباشرة من الحقل
+            # 5) زر الحفظ
             if "saving_sale" not in st.session_state:
                 st.session_state.saving_sale = False
 
@@ -235,18 +233,13 @@ def show():
 
             if st.button("💾 حفظ الفاتورة", type="primary",
                         disabled=save_disabled, key="save_sales_btn"):
-                # ✅ قراءة القيمة النهائية من session_state مباشرة
+                # ✅ قراءة القيمة النهائية من session_state
                 if payment_choice == 'cash':
                     final_paid = total_invoice
                 elif payment_choice == 'credit':
                     final_paid = 0.0
-                else:  # partial
-                    text_val = st.session_state.get("paid_amount_text", "")
-                    final_paid = _read_amount_from_text(
-                        text_val,
-                        default=0.0,
-                        max_value=total_invoice
-                    )
+                else:  # partial — نقرأ من final (يُحدّثه on_change)
+                    final_paid = st.session_state.get("paid_amount_final", 0.0)
 
                 st.session_state.final_paid_to_save = final_paid
                 st.session_state.saving_sale = True
@@ -289,6 +282,7 @@ def show():
                         )
                         st.session_state.invoice_items = []
                         st.session_state.paid_amount_text = ""
+                        st.session_state.paid_amount_final = 0.0
 
                 except Exception as e:
                     st.error(f"❌ خطأ غير متوقع: {e}")
@@ -299,6 +293,7 @@ def show():
             if st.button("🗑️ مسح جميع البنود"):
                 st.session_state.invoice_items = []
                 st.session_state.paid_amount_text = ""
+                st.session_state.paid_amount_final = 0.0
                 st.rerun()
 
     # ============================================================
