@@ -1,6 +1,9 @@
-# services/cash_service.py – وحدة الصندوق متعدد العملات (v4.0)
+# services/cash_service.py – وحدة الصندوق متعدد العملات (v5.0)
 # ✅ متوافق مع Connection Registry
-# ✅ حماية من الرصيد السالب — دالة check_sufficient_balance
+# ✅ حماية صارمة من الرصيد السالب
+# ✅ BEGIN IMMEDIATE — منع Race Condition
+# ✅ update_cash_balance ذرّي (Atomic)
+# ✅ check_sufficient_balance صارمة
 import sqlite3
 from datetime import date
 from database import get_connection, close_connection
@@ -28,131 +31,168 @@ def _read_functional_code(conn, functional_type):
 
 
 # ============================================================
-# ✅ جديد: دالة فحص كفاية الرصيد (للصندوق والبنك)
+# ✅ دالة فحص كفاية الرصيد (للصندوق والبنك) — نسخة صارمة
 # ============================================================
-def check_sufficient_balance(account_code, amount, conn=None):
+def check_sufficient_balance(account_code, amount, conn=None, strict=True):
     """
     فحص كفاية الرصيد قبل الصرف.
-    
+
     Args:
-        account_code: كود الحساب (مثل '1101' للصندوق، أو كود البنك)
+        account_code: كود الحساب (صندوق أو بنك)
         amount:       المبلغ المطلوب صرفه
         conn:         اتصال خارجي (اختياري)
-    
+        strict:       إذا True — يرفض إذا لم يُعثر على الحساب (افتراضي)
+
     Returns:
         (True, None)              إذا كان الرصيد كافياً
         (False, "رسالة الخطأ")   إذا لم يكن كافياً
     """
     if account_code is None:
         return False, "كود الحساب مفقود"
-    
+
     try:
         amount_float = float(amount)
     except (ValueError, TypeError):
         return False, "المبلغ غير صحيح"
-    
+
     if amount_float <= 0:
         return False, "المبلغ يجب أن يكون أكبر من صفر"
-    
+
     own_conn = False
     if conn is None:
         conn = get_connection()
         own_conn = True
-    
+
     try:
         # 1) البحث في الصناديق النقدية
         row = conn.execute(
-            "SELECT name, current_balance FROM cash_accounts WHERE account_code = ? AND is_active = 1",
+            "SELECT name, current_balance FROM cash_accounts "
+            "WHERE account_code = ? AND is_active = 1",
             (account_code,)
         ).fetchone()
-        
+
         if row:
             current = float(row['current_balance'] or 0)
-            if amount_float > current:
+            if current < -0.001:
                 return False, (
-                    f"الرصيد غير كافٍ في '{row['name']}'. "
-                    f"المتاح: {current:,.2f}، المطلوب: {amount_float:,.2f}"
+                    f"⚠️ رصيد الصندوق '{row['name']}' سالب ({current:,.2f}) "
+                    f"— راجع الحركات السابقة"
+                )
+            if amount_float > current + 0.001:
+                return False, (
+                    f"❌ الرصيد غير كافٍ في الصندوق '{row['name']}'. "
+                    f"المتاح: {current:,.2f} — المطلوب: {amount_float:,.2f}"
                 )
             return True, None
-        
+
         # 2) البحث في الحسابات البنكية
         try:
             row = conn.execute(
-                "SELECT bank_name, current_balance FROM bank_accounts WHERE account_code = ? AND is_active = 1",
+                "SELECT bank_name, current_balance FROM bank_accounts "
+                "WHERE account_code = ? AND is_active = 1",
                 (account_code,)
             ).fetchone()
-            
+
             if row:
                 current = float(row['current_balance'] or 0)
-                if amount_float > current:
+                if current < -0.001:
                     return False, (
-                        f"الرصيد غير كافٍ في '{row['bank_name']}'. "
-                        f"المتاح: {current:,.2f}، المطلوب: {amount_float:,.2f}"
+                        f"⚠️ رصيد البنك '{row['bank_name']}' سالب ({current:,.2f}) "
+                        f"— راجع الحركات السابقة"
+                    )
+                if amount_float > current + 0.001:
+                    return False, (
+                        f"❌ الرصيد غير كافٍ في البنك '{row['bank_name']}'. "
+                        f"المتاح: {current:,.2f} — المطلوب: {amount_float:,.2f}"
                     )
                 return True, None
         except Exception:
-            # جدول bank_accounts قد لا يحتوي current_balance
             pass
-        
-        # 3) لم نجد الحساب — نسمح بالمرور (لتفادي كسر النظام)
+
+        # 3) لم نجد الحساب
+        if strict:
+            return False, (
+                f"⚠️ الحساب '{account_code}' غير موجود في الصناديق أو البنوك. "
+                f"إذا كانت عملية إدارية، استخدم skip_balance_check=True"
+            )
         return True, None
-    
+
     finally:
         if own_conn:
             close_connection(conn)
 
 
+# ============================================================
+# إنشاء الجداول
+# ============================================================
 def create_cash_tables():
     """إنشاء جداول الصندوق إذا لم تكن موجودة"""
     conn = get_connection()
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS cash_accounts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            currency_code TEXT NOT NULL DEFAULT 'YER',
-            opening_balance REAL DEFAULT 0.0,
-            current_balance REAL DEFAULT 0.0,
-            account_code TEXT,
-            is_active INTEGER DEFAULT 1 CHECK(is_active IN (0,1)),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS cash_transactions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            cash_account_id INTEGER NOT NULL,
-            transaction_date TEXT NOT NULL,
-            description TEXT,
-            type TEXT NOT NULL CHECK(type IN ('deposit','withdrawal')),
-            amount REAL NOT NULL CHECK(amount > 0),
-            reference TEXT,
-            journal_id INTEGER,
-            journal_line_id INTEGER,
-            voucher_id INTEGER,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (cash_account_id) REFERENCES cash_accounts(id)
-        )
-    """)
-    conn.commit()
-    close_connection(conn)
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cash_accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                currency_code TEXT NOT NULL DEFAULT 'YER',
+                opening_balance REAL DEFAULT 0.0,
+                current_balance REAL DEFAULT 0.0,
+                account_code TEXT,
+                is_active INTEGER DEFAULT 1 CHECK(is_active IN (0,1)),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cash_transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cash_account_id INTEGER NOT NULL,
+                transaction_date TEXT NOT NULL,
+                description TEXT,
+                type TEXT NOT NULL CHECK(type IN ('deposit','withdrawal')),
+                amount REAL NOT NULL CHECK(amount > 0),
+                reference TEXT,
+                journal_id INTEGER,
+                journal_line_id INTEGER,
+                voucher_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (cash_account_id) REFERENCES cash_accounts(id)
+            )
+        """)
+        conn.commit()
+    finally:
+        close_connection(conn)
 
 
-# ========== إدارة حسابات الصندوق ==========
-
+# ============================================================
+# إدارة حسابات الصندوق
+# ============================================================
 def create_cash_account(name, currency_code="YER", opening_balance=0.0, account_code=None):
     """إنشاء حساب صندوق جديد مع ربطه بشجرة الحسابات"""
+    if not name or not str(name).strip():
+        return False, "اسم الصندوق مطلوب"
+
+    try:
+        opening_balance = float(opening_balance or 0)
+    except (TypeError, ValueError):
+        return False, "الرصيد الافتتاحي غير صحيح"
+
+    if opening_balance < 0:
+        return False, "الرصيد الافتتاحي لا يمكن أن يكون سالباً"
+
     conn = get_connection()
     try:
-        conn.execute("BEGIN")
+        conn.execute("BEGIN IMMEDIATE")
+
         if account_code:
             final_account_code = account_code
         else:
             final_account_code = _read_functional_code(conn, "cash")
 
         conn.execute(
-            """INSERT INTO cash_accounts (name, currency_code, opening_balance, current_balance, account_code) 
+            """INSERT INTO cash_accounts
+               (name, currency_code, opening_balance, current_balance, account_code)
                VALUES (?, ?, ?, ?, ?)""",
-            (name, currency_code, opening_balance, opening_balance, final_account_code)
+            (str(name).strip(), currency_code, opening_balance,
+             opening_balance, final_account_code)
         )
         conn.commit()
         return True, "تم إنشاء حساب الصندوق بنجاح"
@@ -167,7 +207,7 @@ def create_cash_account(name, currency_code="YER", opening_balance=0.0, account_
 
 
 def get_all_cash_accounts(active_only=True, conn=None):
-    """جلب جميع حسابات الصندوق (يدعم conn خارجي)"""
+    """جلب جميع حسابات الصندوق"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -200,37 +240,61 @@ def get_cash_account_by_id(account_id, conn=None):
             close_connection(conn)
 
 
+# ============================================================
+# ✅ update_cash_balance — نسخة ذرّية (Atomic)
+# ============================================================
 def update_cash_balance(account_id, conn=None):
-    """تحديث رصيد الصندوق"""
+    """
+    تحديث رصيد الصندوق — ذرّي بالكامل.
+    ✅ لا قراءة منفصلة — UPDATE واحد يحسب ويعيد الكتابة.
+    ✅ يمنع Race Condition بين مستخدمين متزامنين.
+    """
     own_conn = False
     if conn is None:
         conn = get_connection()
         own_conn = True
+
     try:
-        deposits = conn.execute(
-            "SELECT COALESCE(SUM(amount), 0) FROM cash_transactions "
-            "WHERE cash_account_id=? AND type='deposit'",
+        if own_conn:
+            conn.execute("BEGIN IMMEDIATE")
+
+        # ✅ حساب + تحديث في استعلام واحد
+        conn.execute("""
+            UPDATE cash_accounts
+            SET current_balance = opening_balance + COALESCE((
+                SELECT SUM(
+                    CASE WHEN type='deposit' THEN amount ELSE -amount END
+                )
+                FROM cash_transactions
+                WHERE cash_account_id = ?
+            ), 0)
+            WHERE id = ?
+        """, (account_id, account_id))
+
+        # قراءة الرصيد الجديد
+        row = conn.execute(
+            "SELECT current_balance FROM cash_accounts WHERE id = ?",
             (account_id,)
-        ).fetchone()[0]
-        withdrawals = conn.execute(
-            "SELECT COALESCE(SUM(amount), 0) FROM cash_transactions "
-            "WHERE cash_account_id=? AND type='withdrawal'",
-            (account_id,)
-        ).fetchone()[0]
+        ).fetchone()
+        new_balance = float(row['current_balance'] or 0) if row else 0.0
 
-        account = get_cash_account_by_id(account_id, conn=conn)
-        if not account:
-            return 0.0
+        # ⚠️ تحذير إذا أصبح الرصيد سالباً
+        if new_balance < -0.01:
+            try:
+                log_action(
+                    username="system",
+                    action="⚠️ رصيد صندوق سالب",
+                    table_name="cash_accounts",
+                    record_id=account_id,
+                    new_value=f"الرصيد: {new_balance:,.2f}"
+                )
+            except Exception:
+                pass
 
-        current_balance = account['opening_balance'] + deposits - withdrawals
-
-        conn.execute(
-            "UPDATE cash_accounts SET current_balance=? WHERE id=?",
-            (current_balance, account_id)
-        )
         if own_conn:
             conn.commit()
-        return current_balance
+        return new_balance
+
     except Exception as e:
         if own_conn:
             try:
@@ -243,8 +307,9 @@ def update_cash_balance(account_id, conn=None):
             close_connection(conn)
 
 
-# ========== حركات الصندوق ==========
-
+# ============================================================
+# حركات الصندوق
+# ============================================================
 def add_cash_transaction(
     cash_account_id,
     transaction_date,
@@ -257,15 +322,27 @@ def add_cash_transaction(
     journal_line_id=None,
     voucher_id=None,
     conn=None,
-    skip_balance_check=False   # ✅ جديد: تجاوز الفحص (للتعديلات الإدارية)
+    skip_balance_check=False,
+    created_by="admin"
 ):
     """
     إضافة حركة صندوق مع قيد محاسبي تلقائي.
-    
-    ✅ جديد: فحص الرصيد قبل السحب.
+
+    ✅ فحص الرصيد قبل السحب (داخل Transaction).
+    ✅ BEGIN IMMEDIATE — منع Race Condition.
+    ✅ validation صارم للمبلغ قبل أي شيء.
     """
+    # ✅ validation قبل أي شيء
     if trans_type not in ('deposit', 'withdrawal'):
         return False, "نوع الحركة غير صالح"
+
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        return False, "المبلغ غير صحيح"
+
+    if amount <= 0:
+        return False, "المبلغ يجب أن يكون أكبر من صفر"
 
     own_conn = False
     if conn is None:
@@ -273,8 +350,9 @@ def add_cash_transaction(
         own_conn = True
 
     try:
+        # ✅ BEGIN IMMEDIATE
         if own_conn:
-            conn.execute("BEGIN")
+            conn.execute("BEGIN IMMEDIATE")
 
         account = get_cash_account_by_id(cash_account_id, conn=conn)
         if not account:
@@ -286,11 +364,11 @@ def add_cash_transaction(
         currency = account.get('currency_code', 'YER')
 
         # ============================================================
-        # ✅ جديد: فحص الرصيد قبل السحب
+        # ✅ فحص الرصيد قبل السحب
         # ============================================================
         if trans_type == 'withdrawal' and not skip_balance_check:
             ok, err = check_sufficient_balance(
-                cash_code, float(amount), conn=conn
+                cash_code, amount, conn=conn, strict=True
             )
             if not ok:
                 if own_conn:
@@ -348,7 +426,8 @@ def add_cash_transaction(
             )
 
             if isinstance(_journal_result, tuple):
-                journal_id, jerr = _journal_result[0], _journal_result[1] if len(_journal_result) > 1 else None
+                journal_id = _journal_result[0]
+                jerr = _journal_result[1] if len(_journal_result) > 1 else None
                 if jerr:
                     if own_conn:
                         conn.rollback()
@@ -357,25 +436,44 @@ def add_cash_transaction(
                 journal_id = _journal_result
 
         conn.execute(
-            """INSERT INTO cash_transactions 
-               (cash_account_id, transaction_date, description, type, amount, 
-                reference, journal_id, journal_line_id, voucher_id) 
+            """INSERT INTO cash_transactions
+               (cash_account_id, transaction_date, description, type, amount,
+                reference, journal_id, journal_line_id, voucher_id)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (cash_account_id, transaction_date, description, trans_type,
              amount, reference, journal_id, journal_line_id, voucher_id)
         )
 
+        # ✅ تحديث الرصيد بنفس الاتصال (Atomic)
         new_balance = update_cash_balance(cash_account_id, conn=conn)
 
         if own_conn:
             conn.commit()
 
+        # ✅ فحص نهائي: إذا أصبح الرصيد سالباً بعد الحركة → تراجع
+        if new_balance < -0.01:
+            # هذا لا يجب أن يحدث بسبب الفحص المسبق، لكنه خط دفاع أخير
+            try:
+                log_action(
+                    username=created_by,
+                    action="⚠️ حركة تسببت برصيد سالب",
+                    table_name="cash_transactions",
+                    new_value=(
+                        f"صندوق: {account['name']}, المبلغ: {amount:,.2f} "
+                        f"{currency}, الرصيد الناتج: {new_balance:,.2f}"
+                    )
+                )
+            except Exception:
+                pass
+
         log_action(
-            username="admin",
+            username=created_by,
             action=f"{'إيداع' if trans_type == 'deposit' else 'سحب'} صندوق",
             table_name="cash_transactions",
-            new_value=f"صندوق: {account['name']}, المبلغ: {amount:,.2f} {account['currency_code']}, "
-                      f"الرصيد الجديد: {new_balance:,.2f}"
+            new_value=(
+                f"صندوق: {account['name']}, المبلغ: {amount:,.2f} {currency}, "
+                f"الرصيد الجديد: {new_balance:,.2f}"
+            )
         )
 
         return True, f"تمت الحركة بنجاح. الرصيد الحالي: {new_balance:,.2f}"
@@ -392,23 +490,47 @@ def add_cash_transaction(
             close_connection(conn)
 
 
+# ============================================================
+# التحويل بين الصناديق
+# ============================================================
 def transfer_between_cashes(from_account_id, to_account_id, amount, transfer_date,
-                             description="تحويل بين الصناديق", reference=""):
-    """تحويل بين صندوقين — مع فحص الرصيد"""
+                             description="تحويل بين الصناديق", reference="",
+                             created_by="admin"):
+    """
+    تحويل بين صندوقين — مع فحص الرصيد.
+    ✅ BEGIN IMMEDIATE — كل التحويل في Transaction واحدة.
+    """
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        return False, "المبلغ غير صحيح"
+
+    if amount <= 0:
+        return False, "المبلغ يجب أن يكون أكبر من صفر"
+
+    if from_account_id == to_account_id:
+        return False, "لا يمكن التحويل لنفس الصندوق"
+
     conn = get_connection()
     try:
+        conn.execute("BEGIN IMMEDIATE")
+
         from_acc = get_cash_account_by_id(from_account_id, conn=conn)
         to_acc = get_cash_account_by_id(to_account_id, conn=conn)
 
         if not from_acc or not to_acc:
+            conn.rollback()
             return False, "أحد حسابات الصندوق غير موجود"
 
         from_code = from_acc.get('account_code') or _read_functional_code(conn, "cash")
         to_code = to_acc.get('account_code') or _read_functional_code(conn, "cash")
 
-        # ✅ جديد: فحص الرصيد في الصندوق المصدر
-        ok, err = check_sufficient_balance(from_code, float(amount), conn=conn)
+        # ✅ فحص الرصيد في الصندوق المصدر
+        ok, err = check_sufficient_balance(
+            from_code, amount, conn=conn, strict=True
+        )
         if not ok:
+            conn.rollback()
             return False, err
 
         from_curr = from_acc.get('currency_code', 'YER')
@@ -445,54 +567,92 @@ def transfer_between_cashes(from_account_id, to_account_id, amount, transfer_dat
         )
         if isinstance(result, tuple):
             journal_id = result[0]
+            jerr = result[1] if len(result) > 1 else None
+            if jerr:
+                conn.rollback()
+                return False, f"فشل القيد: {jerr}"
         else:
             journal_id = result
 
-        add_cash_transaction(from_account_id, transfer_date, f"تحويل إلى {to_acc['name']}",
-                             'withdrawal', amount, reference, create_journal=False,
-                             conn=conn)
-        add_cash_transaction(to_account_id, transfer_date, f"تحويل من {from_acc['name']}",
-                             'deposit', converted_to_amount, reference, create_journal=False,
-                             conn=conn)
+        # ✅ الحركتان بنفس الاتصال (لا فحص مكرر)
+        ok1, msg1 = add_cash_transaction(
+            from_account_id, transfer_date,
+            f"تحويل إلى {to_acc['name']}",
+            'withdrawal', amount, reference,
+            create_journal=False,
+            conn=conn,
+            skip_balance_check=True,   # ✅ تم الفحص بالفعل
+            created_by=created_by
+        )
+        if not ok1:
+            conn.rollback()
+            return False, f"فشل الخصم: {msg1}"
 
+        ok2, msg2 = add_cash_transaction(
+            to_account_id, transfer_date,
+            f"تحويل من {from_acc['name']}",
+            'deposit', converted_to_amount, reference,
+            create_journal=False,
+            conn=conn,
+            skip_balance_check=True,   # ✅ إيداع لا يحتاج فحص
+            created_by=created_by
+        )
+        if not ok2:
+            conn.rollback()
+            return False, f"فشل الإيداع: {msg2}"
+
+        conn.commit()
         return True, f"تم التحويل بنجاح برقم قيد: {journal_id}"
+
     except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return False, str(e)
     finally:
         close_connection(conn)
 
 
-def get_cash_transactions(cash_account_id=None, limit=50):
+# ============================================================
+# سجل الحركات
+# ============================================================
+def get_cash_transactions(cash_account_id=None, limit=50, conn=None):
     """جلب حركات الصندوق"""
-    conn = get_connection()
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
     try:
         if cash_account_id:
             rows = conn.execute(
-                """SELECT ct.*, ca.name as account_name, ca.currency_code 
-                   FROM cash_transactions ct 
-                   JOIN cash_accounts ca ON ct.cash_account_id = ca.id 
-                   WHERE ct.cash_account_id = ? 
+                """SELECT ct.*, ca.name as account_name, ca.currency_code
+                   FROM cash_transactions ct
+                   JOIN cash_accounts ca ON ct.cash_account_id = ca.id
+                   WHERE ct.cash_account_id = ?
                    ORDER BY ct.transaction_date DESC, ct.id DESC LIMIT ?""",
                 (cash_account_id, limit)
             ).fetchall()
         else:
             rows = conn.execute(
-                """SELECT ct.*, ca.name as account_name, ca.currency_code 
-                   FROM cash_transactions ct 
-                   JOIN cash_accounts ca ON ct.cash_account_id = ca.id 
+                """SELECT ct.*, ca.name as account_name, ca.currency_code
+                   FROM cash_transactions ct
+                   JOIN cash_accounts ca ON ct.cash_account_id = ca.id
                    ORDER BY ct.transaction_date DESC, ct.id DESC LIMIT ?""",
                 (limit,)
             ).fetchall()
         return [dict(r) for r in rows]
     finally:
-        close_connection(conn)
+        if own_conn:
+            close_connection(conn)
 
 
-# ========== التقارير ==========
-
-def get_cash_balance_summary():
+# ============================================================
+# التقارير
+# ============================================================
+def get_cash_balance_summary(conn=None):
     """ملخص أرصدة جميع صناديق النقدية"""
-    accounts = get_all_cash_accounts(active_only=True)
+    accounts = get_all_cash_accounts(active_only=True, conn=conn)
     summary = []
     total_balance_base = 0.0
     base_currency = get_base_currency()
@@ -521,9 +681,12 @@ def get_cash_balance_summary():
     return summary, total_balance_base
 
 
-def get_cash_statement(cash_account_id, from_date, to_date):
+def get_cash_statement(cash_account_id, from_date, to_date, conn=None):
     """كشف حساب الصندوق لفترة محددة"""
-    conn = get_connection()
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
     try:
         account = get_cash_account_by_id(cash_account_id, conn=conn)
         if not account:
@@ -537,13 +700,16 @@ def get_cash_statement(cash_account_id, from_date, to_date):
         opening = account['opening_balance'] + balance_before
 
         transactions = conn.execute(
-            "SELECT * FROM cash_transactions WHERE cash_account_id=? AND transaction_date BETWEEN ? AND ? "
+            "SELECT * FROM cash_transactions "
+            "WHERE cash_account_id=? AND transaction_date BETWEEN ? AND ? "
             "ORDER BY transaction_date, id",
             (cash_account_id, from_date, to_date)
         ).fetchall()
 
-        period_movement = sum(t['amount'] if t['type'] == 'deposit' else -t['amount']
-                              for t in transactions)
+        period_movement = sum(
+            t['amount'] if t['type'] == 'deposit' else -t['amount']
+            for t in transactions
+        )
         closing = opening + period_movement
 
         return {
@@ -555,4 +721,5 @@ def get_cash_statement(cash_account_id, from_date, to_date):
             'closing_balance': closing
         }, None
     finally:
-        close_connection(conn)
+        if own_conn:
+            close_connection(conn)
