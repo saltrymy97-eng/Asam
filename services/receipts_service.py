@@ -1,6 +1,5 @@
-# services/receipts_service.py – سندات القبض والصرف الاحترافية (v5.0)
-# ✅ فحص الرصيد قبل سند الصرف
-# ✅ متوافق مع Connection Registry
+# services/receipts_service.py – سندات القبض والصرف الاحترافية (v6.0)
+# ✅ دعم البنك والصندوق + فحص الرصيد
 import sqlite3
 from datetime import date
 from database import get_connection, close_connection
@@ -43,24 +42,86 @@ def create_vouchers_table(conn=None):
             close_connection(conn)
 
 
+# ============================================================
+# ✅ دالة محدّثة: تدعم الصناديق والبنوك
+# ============================================================
 def get_cash_accounts(conn=None):
-    """جلب حسابات النقدية (المستوى الثاني تحت الأصول)"""
+    """
+    جلب كل الحسابات القابلة للقبض/الصرف (صناديق + بنوك).
+    
+    Returns:
+        list of {id, code, name, type, balance, currency}
+    """
     own_conn = False
     if conn is None:
         conn = get_connection()
         own_conn = True
     try:
-        accounts = conn.execute("""
-            SELECT code, name FROM accounts
-            WHERE parent_id = (SELECT id FROM accounts WHERE code = '1')
-            ORDER BY code
-        """).fetchall()
-        if not accounts:
-            return [{"code": "صندوق", "name": "صندوق"}, {"code": "بنك", "name": "بنك"}]
-        return [{"code": a["code"], "name": a["name"]} for a in accounts]
+        result = []
+
+        # 1) الصناديق
+        try:
+            cash_rows = conn.execute("""
+                SELECT id, name, currency_code, current_balance, account_code
+                FROM cash_accounts
+                WHERE is_active = 1
+                ORDER BY name
+            """).fetchall()
+
+            for r in cash_rows:
+                result.append({
+                    "id": r["id"],
+                    "code": r["account_code"],
+                    "name": r["name"],
+                    "type": "cash",
+                    "balance": float(r["current_balance"] or 0),
+                    "currency": r["currency_code"] or "YER",
+                })
+        except Exception:
+            pass
+
+        # 2) البنوك
+        try:
+            bank_rows = conn.execute("""
+                SELECT id, bank_name, account_number, currency_code,
+                       current_balance, account_code
+                FROM bank_accounts
+                WHERE is_active = 1
+                ORDER BY bank_name
+            """).fetchall()
+
+            for r in bank_rows:
+                display_name = f"{r['bank_name']} ({r['account_number']})"
+                result.append({
+                    "id": r["id"],
+                    "code": r["account_code"],
+                    "name": display_name,
+                    "type": "bank",
+                    "balance": float(r["current_balance"] or 0),
+                    "currency": r["currency_code"] or "YER",
+                })
+        except Exception:
+            pass
+
+        return result
     finally:
         if own_conn:
             close_connection(conn)
+
+
+def get_payment_accounts(conn=None):
+    """Alias للتوافق مع الواجهات الأخرى"""
+    return get_cash_accounts(conn=conn)
+
+
+def get_bank_accounts_for_receipts(conn=None):
+    """جلب البنوك فقط (للاستخدام في الواجهات)"""
+    return [a for a in get_cash_accounts(conn=conn) if a["type"] == "bank"]
+
+
+def get_cash_only_accounts(conn=None):
+    """جلب الصناديق فقط"""
+    return [a for a in get_cash_accounts(conn=conn) if a["type"] == "cash"]
 
 
 # ============================================================
@@ -179,7 +240,10 @@ def get_party_invoices_with_status(party_type, party_id, only_pending=True, conn
 
 
 def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
-    """ربط سند بفاتورة (يدوياً أو تلقائياً)"""
+    """
+    ربط سند بفاتورة.
+    ✅ يكتشف نوع الدفع بدقة (بنكي/نقدي) من حساب السند.
+    """
     if amount is None or float(amount) <= 0:
         return False, "المبلغ يجب أن يكون أكبر من صفر"
 
@@ -237,14 +301,18 @@ def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
                     f"({voucher_remaining:,.2f})"
                 )
 
+        # ============================================================
+        # ✅ تحديد نوع الدفع: من نوع الحساب (بنك أم صندوق)
+        # ============================================================
         payment_method = 'cash'
         if voucher_id and v_row:
             acc_code = v_row["account"]
-            acc_row = conn.execute(
-                "SELECT name FROM accounts WHERE code=?", (acc_code,)
+            # فحص الحساب في bank_accounts
+            bank_row = conn.execute(
+                "SELECT id FROM bank_accounts WHERE account_code = ? AND is_active = 1 LIMIT 1",
+                (acc_code,)
             ).fetchone()
-            acc_name = (acc_row["name"] if acc_row else "") or ""
-            if "بنك" in acc_name:
+            if bank_row:
                 payment_method = 'bank'
 
         conn.execute("""
@@ -407,15 +475,21 @@ def get_invoices_for_party(party_type, party_id):
 
 
 # ============================================================
-# ✅ إنشاء السندات — مع حماية الرصيد
+# ✅ إنشاء السندات — مع دعم البنك والصندوق
 # ============================================================
 def create_voucher(voucher_type, party_type, party_id, amount, account,
                    invoice_id=None, reference="", notes="", created_by="admin",
                    voucher_date=None, auto_link=True, conn=None):
     """
-    إنشاء سند قبض أو صرف — كل العمليات من نفس الاتصال.
+    إنشاء سند قبض أو صرف.
     
-    ✅ جديد: فحص الرصيد قبل سند الصرف (payment).
+    Args:
+        voucher_type: 'receipt' (قبض) أو 'payment' (صرف)
+        account:      كود الصندوق/البنك (يُحدَّد من الواجهة)
+        conn:         اتصال خارجي (اختياري)
+    
+    ✅ فحص الرصيد قبل سند الصرف.
+    ✅ دعم الصندوق والبنك.
     """
     if voucher_date is None:
         voucher_date = date.today().strftime("%Y-%m-%d")
@@ -432,9 +506,7 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
         if own_conn:
             conn.execute("BEGIN")
 
-        # ============================================================
-        # ✅ جديد: فحص الرصيد قبل سند الصرف
-        # ============================================================
+        # ✅ فحص الرصيد قبل سند الصرف
         if voucher_type == 'payment':
             from services.cash_service import check_sufficient_balance
             ok, err = check_sufficient_balance(account, float(amount), conn=conn)
@@ -481,7 +553,7 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
             row = conn.execute("SELECT name FROM suppliers WHERE id=?", (party_id,)).fetchone()
         party_name = row["name"] if row else "غير معروف"
 
-        # 3. قراءة الحسابات الوظيفية من نفس الاتصال
+        # 3. قراءة الحسابات الوظيفية
         def _read_functional_account(functional_type):
             r = conn.execute(
                 "SELECT code FROM accounts WHERE functional_type = ? AND is_active = 1 LIMIT 1",
@@ -521,57 +593,66 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
         conn.execute("UPDATE vouchers SET journal_entry_id=? WHERE id=?",
                     (entry_id, voucher_id))
 
-        # 4. ربط السند بالصندوق — من نفس الاتصال
+        # ============================================================
+        # 4. ✅ ربط السند بالصندوق أو البنك — من نفس الاتصال
+        # ============================================================
         try:
-            from services.cash_service import add_cash_transaction
-
-            _rows = conn.execute(
-                "SELECT * FROM cash_accounts WHERE is_active = 1 ORDER BY name"
-            ).fetchall()
-            cash_accounts = [dict(r) for r in _rows]
-
-            row_acc = conn.execute("SELECT name FROM accounts WHERE code=?", (account,)).fetchone()
-            acc_name = row_acc["name"] if row_acc else ""
-
-            cash_row = conn.execute(
-                "SELECT code FROM accounts WHERE functional_type = 'cash' AND is_active = 1 LIMIT 1"
+            # فحص: هل الحساب بنكي؟
+            bank_row = conn.execute(
+                "SELECT id FROM bank_accounts WHERE account_code = ? AND is_active = 1 LIMIT 1",
+                (account,)
             ).fetchone()
-            cash_account_code = cash_row["code"] if cash_row else None
 
-            is_cash = ("صندوق" in acc_name) or (account == cash_account_code)
+            if bank_row:
+                # ✅ بنكي
+                from services.bank_service import add_bank_transaction
+                trans_type = "deposit" if voucher_type == "receipt" else "withdrawal"
+                try:
+                    add_bank_transaction(
+                        bank_row['id'],
+                        voucher_date,
+                        f"سند {'قبض' if voucher_type == 'receipt' else 'صرف'} #{voucher_id} - {party_name}",
+                        trans_type,
+                        float(amount),
+                        reference=f"voucher#{voucher_id}",
+                        conn=conn,
+                        skip_balance_check=True,
+                    )
+                except Exception as e:
+                    print(f"⚠️ فشل ربط السند بالبنك: {e}")
+            else:
+                # ✅ نقدي
+                from services.cash_service import add_cash_transaction
 
-            cash_acc = None
-            if is_cash and cash_accounts:
+                _rows = conn.execute(
+                    "SELECT * FROM cash_accounts WHERE is_active = 1 ORDER BY name"
+                ).fetchall()
+                cash_accounts = [dict(r) for r in _rows]
+
+                cash_acc = None
                 for ca in cash_accounts:
                     if ca.get('account_code') == account:
                         cash_acc = ca
                         break
-                if cash_acc is None and cash_account_code:
-                    for ca in cash_accounts:
-                        if ca.get('account_code') == cash_account_code:
-                            cash_acc = ca
-                            break
-                if cash_acc is None:
-                    cash_acc = cash_accounts[0]
 
-            if cash_acc and float(amount) > 0:
-                trans_type = "deposit" if voucher_type == "receipt" else "withdrawal"
-                ok, msg = add_cash_transaction(
-                    cash_acc['id'],
-                    voucher_date,
-                    f"سند {'قبض' if voucher_type == 'receipt' else 'صرف'} #{voucher_id} - {party_name}",
-                    trans_type,
-                    float(amount),
-                    reference=f"voucher#{voucher_id}",
-                    create_journal=False,
-                    voucher_id=voucher_id,
-                    conn=conn,
-                    skip_balance_check=True  # ✅ تخطي الفحص (تم قبل الإدراج)
-                )
-                if not ok:
-                    print(f"⚠️ فشل ربط السند بالصندوق: {msg}")
+                if cash_acc and float(amount) > 0:
+                    trans_type = "deposit" if voucher_type == "receipt" else "withdrawal"
+                    ok, msg = add_cash_transaction(
+                        cash_acc['id'],
+                        voucher_date,
+                        f"سند {'قبض' if voucher_type == 'receipt' else 'صرف'} #{voucher_id} - {party_name}",
+                        trans_type,
+                        float(amount),
+                        reference=f"voucher#{voucher_id}",
+                        create_journal=False,
+                        voucher_id=voucher_id,
+                        conn=conn,
+                        skip_balance_check=True
+                    )
+                    if not ok:
+                        print(f"⚠️ فشل ربط السند بالصندوق: {msg}")
         except Exception as e:
-            print(f"⚠️ خطأ ربط السند بالصندوق: {e}")
+            print(f"⚠️ خطأ ربط السند: {e}")
 
         # 5. الربط التلقائي بالفاتورة
         if invoice_id and auto_link:
