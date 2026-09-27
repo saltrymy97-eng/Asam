@@ -1,0 +1,73 @@
+name: Build Hokama ERP EXE
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller pywebview
+      
+      - name: Build EXE (Optimized)
+        run: |
+          pyinstaller --noconfirm --onedir --windowed ^
+            --icon=icon.ico ^
+            --name=HokamaERP ^
+            --collect-submodules streamlit ^
+            --collect-submodules webview ^
+            --collect-submodules groq ^
+            --collect-data streamlit ^
+            --hidden-import streamlit.web.cli ^
+            --hidden-import cryptography.fernet ^
+            --hidden-import groq ^
+            --hidden-import database ^
+            --add-data "app.py;." ^
+            --add-data "ui;ui" ^
+            --add-data "services;services" ^
+            --add-data "icon.ico;." ^
+            --exclude-module tkinter ^
+            --exclude-module matplotlib ^
+            --exclude-module scipy ^
+            --exclude-module IPython ^
+            --exclude-module jupyter ^
+            --exclude-module notebook ^
+            --exclude-module pytest ^
+            --exclude-module sphinx ^
+            app_desktop.py
+      
+      - name: Cleanup tests and pycache
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path dist/HokamaERP -Recurse -Directory |
+            Where-Object { $_.Name -eq '__pycache__' -or $_.Name -eq 'tests' } |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          
+          Get-ChildItem -Path dist/HokamaERP -Recurse -Include *.pyc,*.pyo |
+            Where-Object { $_.FullName -match 'tests|test_' } |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+      
+      - name: Zip output
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/HokamaERP/* -DestinationPath HokamaERP-Windows.zip -CompressionLevel Optimal
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HokamaERP-Windows
+          path: HokamaERP-Windows.zip
+          compression-level: 9
