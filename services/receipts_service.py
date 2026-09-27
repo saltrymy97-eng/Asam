@@ -1,5 +1,6 @@
-# services/receipts_service.py – سندات القبض والصرف الاحترافية
-# v4.0 — متوافق مع Connection Registry (لا يُغلق الاتصالات)
+# services/receipts_service.py – سندات القبض والصرف الاحترافية (v5.0)
+# ✅ فحص الرصيد قبل سند الصرف
+# ✅ متوافق مع Connection Registry
 import sqlite3
 from datetime import date
 from database import get_connection, close_connection
@@ -406,13 +407,15 @@ def get_invoices_for_party(party_type, party_id):
 
 
 # ============================================================
-# ✅ إنشاء السندات — الحل الاحترافي
+# ✅ إنشاء السندات — مع حماية الرصيد
 # ============================================================
 def create_voucher(voucher_type, party_type, party_id, amount, account,
                    invoice_id=None, reference="", notes="", created_by="admin",
                    voucher_date=None, auto_link=True, conn=None):
     """
-    إنشاء سند قبض أو صرف — كل العمليات من نفس الاتصال (لا فتح اتصال جديد).
+    إنشاء سند قبض أو صرف — كل العمليات من نفس الاتصال.
+    
+    ✅ جديد: فحص الرصيد قبل سند الصرف (payment).
     """
     if voucher_date is None:
         voucher_date = date.today().strftime("%Y-%m-%d")
@@ -428,6 +431,17 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
     try:
         if own_conn:
             conn.execute("BEGIN")
+
+        # ============================================================
+        # ✅ جديد: فحص الرصيد قبل سند الصرف
+        # ============================================================
+        if voucher_type == 'payment':
+            from services.cash_service import check_sufficient_balance
+            ok, err = check_sufficient_balance(account, float(amount), conn=conn)
+            if not ok:
+                if own_conn:
+                    conn.rollback()
+                return None, f"لا يمكن إنشاء سند الصرف: {err}"
 
         # إنشاء الجدول من نفس الاتصال
         try:
@@ -551,7 +565,8 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
                     reference=f"voucher#{voucher_id}",
                     create_journal=False,
                     voucher_id=voucher_id,
-                    conn=conn
+                    conn=conn,
+                    skip_balance_check=True  # ✅ تخطي الفحص (تم قبل الإدراج)
                 )
                 if not ok:
                     print(f"⚠️ فشل ربط السند بالصندوق: {msg}")
