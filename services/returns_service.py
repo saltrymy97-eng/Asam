@@ -1,5 +1,5 @@
-# services/returns_service.py – منطق أعمال المرتجعات (v2.0)
-# ✅ Connection Registry + refund_method (cash/account) + حماية الرصيد
+# services/returns_service.py – منطق أعمال المرتجعات (v3.0)
+# ✅ Connection Registry + 3 طرق استرداد (account/cash/bank) + حماية الرصيد
 import sqlite3
 from collections import defaultdict
 from datetime import date
@@ -76,11 +76,9 @@ def get_purchase_invoices(conn=None):
 
 
 def get_invoice_items(invoice_id, conn=None):
-    """
-    جلب بنود فاتورة مع الكميات المباعة والمرجعة والمتبقية.
-    """
+    """جلب بنود فاتورة مع الكميات المباعة والمرجعة والمتبقية"""
     _add_invoice_columns(conn)
-    
+
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -127,32 +125,37 @@ def get_invoice_items(invoice_id, conn=None):
 # ✅ العملية الرئيسية — process_return
 # ============================================================
 def process_return(invoice_type, invoice_id, items_to_return, return_date,
-                   reason="", refund_method="account", cash_account_code=None):
+                   reason="", refund_method="account",
+                   cash_account_code=None, bank_account_code=None):
     """
     تنفيذ عملية المرتجع كاملة.
     
     Args:
-        invoice_type:    'sale' | 'purchase'
-        invoice_id:      معرف الفاتورة الأصلية
-        items_to_return: قائمة [(اسم_المنتج, الكمية), ...]
-        return_date:     تاريخ المرتجع
-        reason:          سبب المرتجع
-        refund_method:   'account' (خصم من الحساب) | 'cash' (استرداد نقدي)
-        cash_account_code: كود الصندوق (مطلوب عند refund_method='cash')
+        invoice_type:        'sale' | 'purchase'
+        invoice_id:          معرف الفاتورة الأصلية
+        items_to_return:     قائمة [(اسم_المنتج, الكمية), ...]
+        return_date:         تاريخ المرتجع
+        reason:              سبب المرتجع
+        refund_method:       'account' | 'cash' | 'bank'
+        cash_account_code:   كود الصندوق (للاسترداد النقدي)
+        bank_account_code:   كود البنك (للاسترداد البنكي)
     
     Returns:
-        (True, return_invoice_id, total, None)           عند النجاح الكامل
-        (False, "رسالة الخطأ", 0, None)                  عند الفشل
-        (True, return_invoice_id, total, "ملاحظة")       نجاح مع تحذير
+        (True, return_invoice_id, total, None)      نجاح
+        (False, "رسالة الخطأ", 0, None)            فشل
+        (True, return_invoice_id, total, "ملاحظة")  نجاح + تحذير
     """
     _add_invoice_columns()
-    
+
     # ============ التحقق من المدخلات ============
     if not items_to_return:
         return False, "يجب اختيار منتج واحد على الأقل", 0, None
 
     if refund_method == 'cash' and not cash_account_code:
         return False, "يجب اختيار الصندوق للاسترداد النقدي", 0, None
+
+    if refund_method == 'bank' and not bank_account_code:
+        return False, "يجب اختيار الحساب البنكي للاسترداد البنكي", 0, None
 
     conn = get_connection()
     try:
@@ -255,15 +258,27 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date,
         vat_amount = subtotal_return * vat_rate
         total_return = subtotal_return + vat_amount
 
-        # ============ 6. إنشاء سند الصرف (إذا استرداد نقدي) ============
-        voucher_id = None
+        # ============ 6. فحص الرصيد قبل السند ============
         if refund_method == 'cash' and cash_account_code:
             from services.cash_service import check_sufficient_balance
             ok, err = check_sufficient_balance(cash_account_code, total_return, conn=conn)
             if not ok:
                 conn.rollback()
                 return False, f"لا يمكن الاسترداد النقدي: {err}", 0, None
-            # سيُنشأ السند بعد إدراج فاتورة المرتجع
+
+        if refund_method == 'bank' and bank_account_code:
+            from services.bank_service import get_bank_account_by_code
+            bank_acc = get_bank_account_by_code(bank_account_code, conn=conn)
+            if not bank_acc:
+                conn.rollback()
+                return False, "الحساب البنكي غير موجود", 0, None
+            if float(bank_acc['current_balance'] or 0) < total_return:
+                conn.rollback()
+                return False, (
+                    f"الرصيد غير كافٍ في '{bank_acc['bank_name']}'. "
+                    f"المتاح: {bank_acc['current_balance']:,.2f}، "
+                    f"المطلوب: {total_return:,.2f}"
+                ), 0, None
 
         # ============ 7. إدراج فاتورة المرتجع ============
         if invoice_type == "sale":
@@ -295,7 +310,6 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date,
             """, (return_invoice_id, item["product_id"], item["quantity"], item["unit_price"]))
 
             if invoice_type == "sale":
-                # إرجاع للمخزون
                 conn.execute(
                     "UPDATE products SET quantity = quantity + ? WHERE id = ?",
                     (item["quantity"], item["product_id"])
@@ -317,7 +331,6 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date,
                     raise Exception(f"فشل إرجاع FIFO: {err}")
                 total_fifo_cost += cost
             else:
-                # خصم من المخزون (إرجاع للمورد)
                 conn.execute(
                     "UPDATE products SET quantity = quantity - ? WHERE id = ?",
                     (item["quantity"], item["product_id"])
@@ -347,20 +360,48 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date,
             acc_inventory = get_functional_account("inventory")
             acc_cogs = get_functional_account("cogs")
 
-            # القيد الأساسي (بدون الجزء النقدي)
-            lines = [
-                {"account": acc_sales, "debit": subtotal_return, "credit": 0,
-                 "currency_code": currency_code, "exchange_rate": exchange_rate},
-                {"account": acc_vat, "debit": vat_amount, "credit": 0,
-                 "currency_code": currency_code, "exchange_rate": exchange_rate},
-                {"account": acc_receivables, "debit": 0, "credit": total_return,
-                 "currency_code": currency_code, "exchange_rate": exchange_rate},
-                {"account": acc_inventory, "debit": total_fifo_cost, "credit": 0,
-                 "currency_code": currency_code, "exchange_rate": exchange_rate},
-                {"account": acc_cogs, "debit": 0, "credit": total_fifo_cost,
-                 "currency_code": currency_code, "exchange_rate": exchange_rate},
-            ]
-        else:
+            if refund_method == 'account':
+                # خصم من العميل
+                lines = [
+                    {"account": acc_sales, "debit": subtotal_return, "credit": 0,
+                     "currency_code": currency_code, "exchange_rate": exchange_rate},
+                    {"account": acc_vat, "debit": vat_amount, "credit": 0,
+                     "currency_code": currency_code, "exchange_rate": exchange_rate},
+                    {"account": acc_receivables, "debit": 0, "credit": total_return,
+                     "currency_code": currency_code, "exchange_rate": exchange_rate},
+                    {"account": acc_inventory, "debit": total_fifo_cost, "credit": 0,
+                     "currency_code": currency_code, "exchange_rate": exchange_rate},
+                    {"account": acc_cogs, "debit": 0, "credit": total_fifo_cost,
+                     "currency_code": currency_code, "exchange_rate": exchange_rate},
+                ]
+            elif refund_method == 'cash':
+                # استرداد نقدي من الصندوق
+                lines = [
+                    {"account": acc_sales, "debit": subtotal_return, "credit": 0,
+                     "currency_code": currency_code, "exchange_rate": exchange_rate},
+                    {"account": acc_vat, "debit": vat_amount, "credit": 0,
+                     "currency_code": currency_code, "exchange_rate": exchange_rate},
+                    {"account": cash_account_code, "debit": 0, "credit": total_return,
+                     "currency_code": currency_code, "exchange_rate": exchange_rate},
+                    {"account": acc_inventory, "debit": total_fifo_cost, "credit": 0,
+                     "currency_code": currency_code, "exchange_rate": exchange_rate},
+                    {"account": acc_cogs, "debit": 0, "credit": total_fifo_cost,
+                     "currency_code": currency_code, "exchange_rate": exchange_rate},
+                ]
+            else:  # bank
+                lines = [
+                    {"account": acc_sales, "debit": subtotal_return, "credit": 0,
+                     "currency_code": currency_code, "exchange_rate": exchange_rate},
+                    {"account": acc_vat, "debit": vat_amount, "credit": 0,
+                     "currency_code": currency_code, "exchange_rate": exchange_rate},
+                    {"account": bank_account_code, "debit": 0, "credit": total_return,
+                     "currency_code": currency_code, "exchange_rate": exchange_rate},
+                    {"account": acc_inventory, "debit": total_fifo_cost, "credit": 0,
+                     "currency_code": currency_code, "exchange_rate": exchange_rate},
+                    {"account": acc_cogs, "debit": 0, "credit": total_fifo_cost,
+                     "currency_code": currency_code, "exchange_rate": exchange_rate},
+                ]
+        else:  # purchase
             acc_payables = get_functional_account("accounts_payable")
             acc_purchase_tax = get_functional_account("purchase_tax")
             acc_vat = get_functional_account("sales_tax")
@@ -394,22 +435,26 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date,
     finally:
         close_connection(conn)
 
-    # ============ 10. إنشاء سند الصرف (بعد COMMIT الفاتورة) ============
+    # ============ 10. إنشاء سند الصرف (نقدي أو بنكي) ============
     payment_note = None
-    if refund_method == 'cash' and cash_account_code and invoice_type == 'sale':
+    if invoice_type == 'sale' and refund_method in ('cash', 'bank'):
         try:
             from services.receipts_service import create_voucher
+            target_account = cash_account_code if refund_method == 'cash' else bank_account_code
+            voucher_type = 'payment'  # سند صرف
+            ref_text = 'استرداد نقدي' if refund_method == 'cash' else 'تحويل بنكي'
+
             voucher_id, verr = create_voucher(
-                voucher_type='payment',   # سند صرف (نُعيد للعميل نقداً)
+                voucher_type='payment',
                 party_type='customer',
                 party_id=original_inv["party_id"],
                 amount=total_return,
-                account=cash_account_code,
+                account=target_account,
                 invoice_id=return_invoice_id,
-                reference=f"استرداد نقدي لمرتجع #{return_invoice_id}",
-                notes=f"استرداد نقدي - {reason}",
+                reference=f"{ref_text} لمرتجع #{return_invoice_id}",
+                notes=f"{ref_text} - {reason}",
                 created_by="system",
-                auto_link=False,   # لا نُربطه بحقل paid_amount
+                auto_link=False,
                 conn=None,
             )
             if verr:
@@ -419,6 +464,12 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date,
 
     # ============ 11. تسجيل التدقيق ============
     try:
+        refund_label = {
+            'account': 'حساب',
+            'cash': 'نقدي',
+            'bank': 'بنكي'
+        }.get(refund_method, refund_method)
+
         log_action(
             username="admin",
             action=f"مرتجع {'مبيعات' if invoice_type == 'sale' else 'مشتريات'}",
@@ -426,7 +477,7 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date,
             record_id=return_invoice_id,
             new_value=(
                 f"الإجمالي: {total_return:,.2f}, السبب: {reason}, "
-                f"طريقة الاسترداد: {'نقدي' if refund_method == 'cash' else 'حساب'}, "
+                f"طريقة الاسترداد: {refund_label}, "
                 f"تكلفة FIFO: {total_fifo_cost:,.2f}"
             )
         )
