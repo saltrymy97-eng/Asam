@@ -1,6 +1,5 @@
-# services/sales_service.py – منطق أعمال المبيعات (v6.0)
-# ✅ المرحلة 1: الفاتورة بدون paid_amount (يُحدَّث لاحقاً)
-# ✅ المرحلة 2: create_voucher → link_voucher_to_invoice يُحدّث paid_amount
+# services/sales_service.py – منطق أعمال المبيعات (v7.0)
+# ✅ دعم البنك والصندوق + سند يدوي باختيار الحساب
 import sqlite3
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
@@ -94,23 +93,12 @@ def _save_sale_core(customer_id, items, qty_by_product, product_prices,
                     subtotal_local, vat_amount_local, total_local, total_base,
                     subtotal_base, vat_rate, paid_amount_dec, remaining_dec,
                     payment_method, payment_status, cash_account):
-    """
-    حفظ الفاتورة + القيد المحاسبي.
-    
-    ✅ الفاتورة تُحفظ بحالة 'unpaid' (paid_amount=0، remaining=total)
-    ✅ المرحلة 2 ستُحدّث paid_amount عبر link_voucher_to_invoice
-    
-    القيد متوازن بذاته:
-       مدين: العميل (بالإجمالي) + COGS
-       دائن: المبيعات + الضريبة + المخزون
-    """
+    """حفظ الفاتورة + القيد المحاسبي."""
     conn = get_connection()
     try:
         conn.execute("BEGIN")
 
         # ✅ إدراج الفاتورة — بدون paid_amount
-        #    paid_amount=0، remaining=total، status='unpaid'
-        #    المرحلة 2 ستُحدّثها تلقائياً
         cur = conn.execute(
             """INSERT INTO invoices 
                (type, customer_id, invoice_date, total, total_base, status, 
@@ -158,7 +146,7 @@ def _save_sale_core(customer_id, items, qty_by_product, product_prices,
         row = conn.execute("SELECT name FROM customers WHERE id = ?", (customer_id,)).fetchone()
         customer_name = row["name"] if row else "غير معروف"
 
-        # ✅ القيد المحاسبي — متوازن بذاته
+        # ✅ القيد المحاسبي
         from services.accounting_service import save_journal_entry
 
         customers_account = _read_functional_account(conn, "accounts_receivable")
@@ -239,11 +227,11 @@ def _save_sale_core(customer_id, items, qty_by_product, product_prices,
 
 
 # ============================================================
-# 🎯 المرحلة 2: سند القبض (يُحدّث paid_amount تلقائياً)
+# 🎯 المرحلة 2: سند القبض
 # ============================================================
 def _save_receipt_side(invoice_id, customer_id, customer_name,
                        paid_amount_dec, cash_account, currency_code, exchange_rate):
-    """إنشاء سند قبض + تحديث الفاتورة تلقائياً عبر link_voucher_to_invoice."""
+    """إنشاء سند قبض + تحديث الفاتورة تلقائياً."""
     if paid_amount_dec <= 0 or not cash_account:
         return None, None
 
@@ -272,7 +260,7 @@ def _save_receipt_side(invoice_id, customer_id, customer_name,
 
 
 # ============================================================
-# 🎯 الدالة الرئيسية — create_sale_invoice
+# 🎯 الدالة الرئيسية
 # ============================================================
 def create_sale_invoice(customer_id, items, username="admin",
                         currency_code="YER", exchange_rate=None,
@@ -537,10 +525,28 @@ def get_invoice_details(invoice_id):
 
 
 # ============================================================
-# مساعد: إنشاء سند القبض يدوياً
+# ✅ مساعد: إنشاء سند القبض يدوياً (مع دعم الصندوق والبنك)
 # ============================================================
-def create_receipt_voucher_for_invoice(invoice_id, username="admin"):
-    conn = get_connection()
+def create_receipt_voucher_for_invoice(invoice_id, username="admin",
+                                        payment_account_code=None, conn=None):
+    """
+    إنشاء سند قبض لفاتورة مبيعات موجودة (يدوياً).
+    
+    Args:
+        invoice_id:              معرف الفاتورة
+        username:                اسم المستخدم
+        payment_account_code:    كود الصندوق/البنك (اختياري)
+                                 إذا لم يُمرر → يُستخدم أول صندوق نشط
+        conn:                    اتصال خارجي (اختياري)
+    
+    Returns:
+        (voucher_id, None) أو (None, "رسالة")
+    """
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
+
     try:
         inv = conn.execute("""
             SELECT id, customer_id, total, paid_amount, remaining_amount,
@@ -558,22 +564,28 @@ def create_receipt_voucher_for_invoice(invoice_id, username="admin"):
 
         customer_id = inv["customer_id"]
 
-        row = conn.execute("""
-            SELECT account_code FROM cash_accounts 
-            WHERE is_active = 1 LIMIT 1
-        """).fetchone()
-        if not row or not row["account_code"]:
-            return None, "لا يوجد صندوق نشط"
-        cash_account = row["account_code"]
+        # ✅ تحديد الحساب: من المعامل، أو أول صندوق نشط
+        if not payment_account_code:
+            row = conn.execute("""
+                SELECT account_code FROM cash_accounts
+                WHERE is_active = 1
+                ORDER BY id
+                LIMIT 1
+            """).fetchone()
+            if not row or not row["account_code"]:
+                return None, "لا يوجد صندوق أو بنك نشط"
+            payment_account_code = row["account_code"]
     finally:
-        close_connection(conn)
+        if own_conn:
+            close_connection(conn)
 
+    # ✅ استدعاء _save_receipt_side مع الحساب المحدد
     voucher_id, perr = _save_receipt_side(
         invoice_id=invoice_id,
         customer_id=customer_id,
         customer_name="",
         paid_amount_dec=Decimal(str(paid)),
-        cash_account=cash_account,
+        cash_account=payment_account_code,
         currency_code="YER",
         exchange_rate=Decimal("1"),
     )
@@ -581,19 +593,24 @@ def create_receipt_voucher_for_invoice(invoice_id, username="admin"):
     if perr:
         return None, perr
 
-    try:
+    # ✅ إزالة الملاحظة إن كانت موجودة
+    own_conn2 = False
+    if conn is None:
         conn = get_connection()
-        try:
-            conn.execute("""
-                UPDATE invoices
-                SET reference = REPLACE(COALESCE(reference, ''), 
-                    (SELECT ' | ' || reference FROM invoices WHERE id=?), '')
-                WHERE id = ?
-            """, (invoice_id, invoice_id))
+        own_conn2 = True
+    try:
+        conn.execute("""
+            UPDATE invoices
+            SET reference = REPLACE(COALESCE(reference, ''),
+                (SELECT ' | ' || reference FROM invoices WHERE id=?), '')
+            WHERE id = ?
+        """, (invoice_id, invoice_id))
+        if own_conn2:
             conn.commit()
-        finally:
-            close_connection(conn)
     except Exception:
         pass
+    finally:
+        if own_conn2:
+            close_connection(conn)
 
     return voucher_id, None
