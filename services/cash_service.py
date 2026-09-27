@@ -1,5 +1,6 @@
-# services/cash_service.py – وحدة الصندوق متعدد العملات (v3.0)
-# ✅ متوافق مع Connection Registry — لا يُغلق الاتصال
+# services/cash_service.py – وحدة الصندوق متعدد العملات (v4.0)
+# ✅ متوافق مع Connection Registry
+# ✅ حماية من الرصيد السالب — دالة check_sufficient_balance
 import sqlite3
 from datetime import date
 from database import get_connection, close_connection
@@ -10,7 +11,7 @@ from services.accounting_service import save_journal_entry
 
 
 # ============================================================
-# ✅ مساعد: قراءة الحساب الوظيفي من نفس الاتصال (بدون اتصال جديد)
+# ✅ مساعد: قراءة الحساب الوظيفي من نفس الاتصال
 # ============================================================
 def _read_functional_code(conn, functional_type):
     """قراءة كود الحساب الوظيفي من نفس الاتصال"""
@@ -24,6 +25,81 @@ def _read_functional_code(conn, functional_type):
     except Exception:
         pass
     return get_functional_account(functional_type)
+
+
+# ============================================================
+# ✅ جديد: دالة فحص كفاية الرصيد (للصندوق والبنك)
+# ============================================================
+def check_sufficient_balance(account_code, amount, conn=None):
+    """
+    فحص كفاية الرصيد قبل الصرف.
+    
+    Args:
+        account_code: كود الحساب (مثل '1101' للصندوق، أو كود البنك)
+        amount:       المبلغ المطلوب صرفه
+        conn:         اتصال خارجي (اختياري)
+    
+    Returns:
+        (True, None)              إذا كان الرصيد كافياً
+        (False, "رسالة الخطأ")   إذا لم يكن كافياً
+    """
+    if account_code is None:
+        return False, "كود الحساب مفقود"
+    
+    try:
+        amount_float = float(amount)
+    except (ValueError, TypeError):
+        return False, "المبلغ غير صحيح"
+    
+    if amount_float <= 0:
+        return False, "المبلغ يجب أن يكون أكبر من صفر"
+    
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
+    
+    try:
+        # 1) البحث في الصناديق النقدية
+        row = conn.execute(
+            "SELECT name, current_balance FROM cash_accounts WHERE account_code = ? AND is_active = 1",
+            (account_code,)
+        ).fetchone()
+        
+        if row:
+            current = float(row['current_balance'] or 0)
+            if amount_float > current:
+                return False, (
+                    f"الرصيد غير كافٍ في '{row['name']}'. "
+                    f"المتاح: {current:,.2f}، المطلوب: {amount_float:,.2f}"
+                )
+            return True, None
+        
+        # 2) البحث في الحسابات البنكية
+        try:
+            row = conn.execute(
+                "SELECT bank_name, current_balance FROM bank_accounts WHERE account_code = ? AND is_active = 1",
+                (account_code,)
+            ).fetchone()
+            
+            if row:
+                current = float(row['current_balance'] or 0)
+                if amount_float > current:
+                    return False, (
+                        f"الرصيد غير كافٍ في '{row['bank_name']}'. "
+                        f"المتاح: {current:,.2f}، المطلوب: {amount_float:,.2f}"
+                    )
+                return True, None
+        except Exception:
+            # جدول bank_accounts قد لا يحتوي current_balance
+            pass
+        
+        # 3) لم نجد الحساب — نسمح بالمرور (لتفادي كسر النظام)
+        return True, None
+    
+    finally:
+        if own_conn:
+            close_connection(conn)
 
 
 def create_cash_tables():
@@ -68,7 +144,6 @@ def create_cash_account(name, currency_code="YER", opening_balance=0.0, account_
     conn = get_connection()
     try:
         conn.execute("BEGIN")
-        # ✅ قراءة الحساب الوظيفي من نفس الاتصال
         if account_code:
             final_account_code = account_code
         else:
@@ -110,7 +185,7 @@ def get_all_cash_accounts(active_only=True, conn=None):
 
 
 def get_cash_account_by_id(account_id, conn=None):
-    """جلب حساب صندوق محدد (يدعم conn خارجي)"""
+    """جلب حساب صندوق محدد"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -126,7 +201,7 @@ def get_cash_account_by_id(account_id, conn=None):
 
 
 def update_cash_balance(account_id, conn=None):
-    """تحديث رصيد الصندوق (يدعم conn خارجي)"""
+    """تحديث رصيد الصندوق"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -181,9 +256,14 @@ def add_cash_transaction(
     create_journal=True,
     journal_line_id=None,
     voucher_id=None,
-    conn=None
+    conn=None,
+    skip_balance_check=False   # ✅ جديد: تجاوز الفحص (للتعديلات الإدارية)
 ):
-    """إضافة حركة صندوق مع قيد محاسبي تلقائي"""
+    """
+    إضافة حركة صندوق مع قيد محاسبي تلقائي.
+    
+    ✅ جديد: فحص الرصيد قبل السحب.
+    """
     if trans_type not in ('deposit', 'withdrawal'):
         return False, "نوع الحركة غير صالح"
 
@@ -204,6 +284,18 @@ def add_cash_transaction(
 
         cash_code = account.get('account_code') or _read_functional_code(conn, "cash")
         currency = account.get('currency_code', 'YER')
+
+        # ============================================================
+        # ✅ جديد: فحص الرصيد قبل السحب
+        # ============================================================
+        if trans_type == 'withdrawal' and not skip_balance_check:
+            ok, err = check_sufficient_balance(
+                cash_code, float(amount), conn=conn
+            )
+            if not ok:
+                if own_conn:
+                    conn.rollback()
+                return False, err
 
         base_currency = get_base_currency()
         if currency == base_currency['code']:
@@ -302,7 +394,7 @@ def add_cash_transaction(
 
 def transfer_between_cashes(from_account_id, to_account_id, amount, transfer_date,
                              description="تحويل بين الصناديق", reference=""):
-    """تحويل بين صندوقين"""
+    """تحويل بين صندوقين — مع فحص الرصيد"""
     conn = get_connection()
     try:
         from_acc = get_cash_account_by_id(from_account_id, conn=conn)
@@ -313,6 +405,11 @@ def transfer_between_cashes(from_account_id, to_account_id, amount, transfer_dat
 
         from_code = from_acc.get('account_code') or _read_functional_code(conn, "cash")
         to_code = to_acc.get('account_code') or _read_functional_code(conn, "cash")
+
+        # ✅ جديد: فحص الرصيد في الصندوق المصدر
+        ok, err = check_sufficient_balance(from_code, float(amount), conn=conn)
+        if not ok:
+            return False, err
 
         from_curr = from_acc.get('currency_code', 'YER')
         to_curr = to_acc.get('currency_code', 'YER')
