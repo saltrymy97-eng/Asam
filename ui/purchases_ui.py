@@ -1,5 +1,5 @@
-# ui/purchases_ui.py – واجهة المشتريات (v7.0)
-# ✅ دعم البنك والصندوق مع فحص فوري للرصيد
+# ui/purchases_ui.py – واجهة المشتريات (v8.0)
+# ✅ دعم البنك والصندوق + السند اليدوي باختيار الحساب
 import streamlit as st
 import pandas as pd
 from services.purchases_service import (
@@ -197,9 +197,6 @@ def show():
                 selected_acc = all_accounts[idx]
                 cash_account = selected_acc['code']
 
-                # ✅ نوع الحساب (بنكي/نقدي) — للتسجيل الصحيح
-                account_type = selected_acc['type']  # 'cash' | 'bank'
-
                 if payment_choice == 'cash':
                     paid_amount = total_purchase
                     st.info(f"💵 سيتم دفع {total_purchase:,.2f} {currency_code} للمورد فوراً")
@@ -392,27 +389,73 @@ def show():
                         f"| **طريقة الدفع:** {PAYMENT_METHOD_LABELS.get(inv_sel.get('payment_method'), '—')}"
                     )
 
+                    # ============================================================
+                    # ✅ إنشاء السند يدوياً — مع اختيار الحساب
+                    # ============================================================
                     if inv_sel.get('has_warning'):
                         st.warning(
                             f"⚠️ **تنبيه:** {inv_sel.get('reference', '')}"
                         )
 
-                        if float(inv_sel.get('paid_amount', 0)) > 0:
-                            if st.button(
-                                f"🔧 إنشاء سند الصرف يدوياً للفاتورة #{selected_id}",
-                                type="primary",
-                                key=f"create_voucher_btn_{selected_id}"
-                            ):
-                                with st.spinner("جاري إنشاء سند الصرف..."):
-                                    vid, verr = create_payment_voucher_for_invoice(
-                                        invoice_id=selected_id,
-                                        username=st.session_state.user.get('username', 'admin')
+                        paid_amt = float(inv_sel.get('paid_amount', 0))
+                        if paid_amt > 0:
+                            st.markdown("---")
+                            st.markdown("#### 🔧 إنشاء سند الصرف يدوياً")
+
+                            manual_accounts = get_payment_accounts()
+
+                            if not manual_accounts:
+                                st.error("⚠️ لا يوجد صندوق أو بنك نشط.")
+                            else:
+                                manual_labels = [
+                                    _format_account_label(a)
+                                    for a in manual_accounts
+                                ]
+                                manual_selected_label = st.selectbox(
+                                    "💵 من أي صندوق/بنك سيتم الصرف؟",
+                                    manual_labels,
+                                    key=f"manual_voucher_acc_{selected_id}"
+                                )
+                                manual_idx = manual_labels.index(manual_selected_label)
+                                manual_acc = manual_accounts[manual_idx]
+
+                                # ✅ فحص الرصيد
+                                if paid_amt > manual_acc['balance']:
+                                    st.error(
+                                        f"⚠️ **الرصيد غير كافٍ في {manual_acc['name']}**\n\n"
+                                        f"المتاح: **{manual_acc['balance']:,.2f}** "
+                                        f"{manual_acc['currency']}\n\n"
+                                        f"المطلوب: **{paid_amt:,.2f}** "
+                                        f"{manual_acc['currency']}\n\n"
+                                        f"❌ لن تتم العملية"
                                     )
-                                    if verr:
-                                        st.error(f"❌ فشل: {verr}")
-                                    else:
-                                        st.success(f"✅ تم إنشاء سند الصرف رقم {vid}")
-                                        st.rerun()
+                                else:
+                                    st.info(
+                                        f"✅ الرصيد كافٍ — سيتبقى "
+                                        f"**{manual_acc['balance'] - paid_amt:,.2f}** "
+                                        f"{manual_acc['currency']}"
+                                    )
+
+                                    if st.button(
+                                        f"🔧 إنشاء سند الصرف يدوياً للفاتورة #{selected_id}",
+                                        type="primary",
+                                        key=f"create_voucher_btn_{selected_id}"
+                                    ):
+                                        with st.spinner("جاري إنشاء سند الصرف..."):
+                                            vid, verr = create_payment_voucher_for_invoice(
+                                                invoice_id=selected_id,
+                                                username=st.session_state.user.get(
+                                                    'username', 'admin'
+                                                ),
+                                                payment_account_code=manual_acc['code']
+                                            )
+                                            if verr:
+                                                st.error(f"❌ فشل: {verr}")
+                                            else:
+                                                st.success(
+                                                    f"✅ تم إنشاء سند الصرف رقم {vid}"
+                                                )
+                                                st.rerun()
         else:
             st.info("لا توجد فواتير مشتريات بعد")
 
