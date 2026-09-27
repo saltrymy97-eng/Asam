@@ -1,7 +1,7 @@
-# ui/returns.py – واجهة مرتجعات البضاعة (v2.0)
-# ✅ عرض الكميات المباعة/المرجعة/المتبقية لكل فاتورة
-# ✅ اختيار طريقة الاسترداد (نقدي / حساب)
-# ✅ حماية الرصيد
+# ui/returns.py – واجهة مرتجعات البضاعة (v3.0)
+# ✅ 3 طرق استرداد: حساب / صندوق / بنك
+# ✅ عرض الكميات المباعة/المرجعة/المتبقية
+# ✅ فحص فوري للرصيد
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -13,6 +13,7 @@ from services.returns_service import (
     get_return_history,
 )
 from services.cash_service import get_all_cash_accounts
+from services.bank_service import get_all_bank_accounts
 
 
 # ========== ألوان التصميم ==========
@@ -51,12 +52,7 @@ def glass(content):
 # مساعد: عرض بنود الفاتورة + اختيار المرتجع
 # ============================================================
 def _render_return_items(items, prefix, invoice_id):
-    """
-    يعرض بنود الفاتورة مع الكميات المباعة والمرجعة والمتبقية.
-    
-    Returns:
-        list of (product_name, qty) للبنود المرتجعة
-    """
+    """عرض بنود الفاتورة مع الكميات، وإرجاع قائمة المنتجات المختارة"""
     display_items = []
     for item in items:
         display_items.append({
@@ -116,30 +112,41 @@ def _render_return_items(items, prefix, invoice_id):
 
 
 # ============================================================
-# مساعد: نموذج المرتجع النقدي/الحسابي
+# ✅ مساعد: خيارات الاسترداد (حساب / نقدي / بنكي)
 # ============================================================
-def _render_refund_options(prefix, invoice_type, total_estimate):
+def _render_refund_options(prefix, total_estimate):
     """
-    يعرض خيارات طريقة الاسترداد مع اختيار الصندوق.
+    يعرض 3 خيارات للاسترداد.
     
     Returns:
-        (refund_method, cash_account_code)
+        (refund_method, cash_account_code, bank_account_code)
+        refund_method ∈ {'account', 'cash', 'bank', 'invalid'}
     """
     st.markdown("---")
     h3("طريقة الاسترداد", GR)
 
     refund_choice = st.radio(
-        "كيف يتم إرجاع المبلغ؟",
-        ["خصم من الحساب (بدون نقد)", "استرداد نقدي من الصندوق"],
+        "كيف يتم إرجاع المبلغ للطرف؟",
+        [
+            "💼 خصم من الحساب (بدون نقد)",
+            "💵 استرداد نقدي من الصندوق",
+            "🏦 تحويل بنكي"
+        ],
         horizontal=True,
         key=f"{prefix}_refund_method"
     )
 
-    if refund_choice == "استرداد نقدي من الصندوق":
+    # ============ خصم من الحساب ============
+    if "خصم من الحساب" in refund_choice:
+        st.info(f"📌 سيتم خصم **{total_estimate:,.2f}** من رصيد الطرف")
+        return "account", None, None
+
+    # ============ استرداد نقدي ============
+    if "استرداد نقدي" in refund_choice:
         cash_accounts = get_all_cash_accounts(active_only=True)
         if not cash_accounts:
             st.error("⚠️ لا يوجد صندوق نشط. أضف صندوقاً أولاً.")
-            return "account", None
+            return "invalid", None, None
 
         cash_labels = [
             f"{ca['name']} ({ca['currency_code']}) — الرصيد: {ca['current_balance']:,.2f}"
@@ -153,19 +160,138 @@ def _render_refund_options(prefix, invoice_type, total_estimate):
         idx = cash_labels.index(selected)
         cash_acc = cash_accounts[idx]
 
-        # ✅ فحص فوري
         if total_estimate > cash_acc["current_balance"]:
             st.error(
-                f"⚠️ **الرصيد غير كافٍ**\n\n"
-                f"المتاح في الصندوق: **{cash_acc['current_balance']:,.2f}**\n\n"
-                f"المطلوب إرجاعه: **{total_estimate:,.2f}**\n\n"
+                f"⚠️ **الرصيد غير كافٍ في الصندوق**\n\n"
+                f"المتاح: **{cash_acc['current_balance']:,.2f}**\n\n"
+                f"المطلوب: **{total_estimate:,.2f}**\n\n"
                 f"❌ لن تتم العملية"
             )
-            return "cash", None  # سيُرفض
+            return "invalid", None, None
 
-        return "cash", cash_acc["account_code"]
+        return "cash", cash_acc["account_code"], None
 
-    return "account", None
+    # ============ تحويل بنكي ============
+    if "تحويل بنكي" in refund_choice:
+        bank_accounts = get_all_bank_accounts(active_only=True)
+        if not bank_accounts:
+            st.error("⚠️ لا يوجد حساب بنكي نشط. أضف حساباً بنكياً أولاً.")
+            return "invalid", None, None
+
+        bank_labels = [
+            f"{ba['bank_name']} ({ba['account_number']}) - {ba['currency_code']} — الرصيد: {ba['current_balance']:,.2f}"
+            for ba in bank_accounts
+        ]
+        selected = st.selectbox(
+            "🏦 من أي حساب بنكي سيتم الاسترداد؟",
+            bank_labels,
+            key=f"{prefix}_bank_sel"
+        )
+        idx = bank_labels.index(selected)
+        bank_acc = bank_accounts[idx]
+
+        if total_estimate > bank_acc["current_balance"]:
+            st.error(
+                f"⚠️ **الرصيد غير كافٍ في البنك**\n\n"
+                f"المتاح: **{bank_acc['current_balance']:,.2f}**\n\n"
+                f"المطلوب: **{total_estimate:,.2f}**\n\n"
+                f"❌ لن تتم العملية"
+            )
+            return "invalid", None, None
+
+        return "bank", None, bank_acc["account_code"]
+
+    return "invalid", None, None
+
+
+# ============================================================
+# مساعد: نموذج مرتجع كامل (مبيعات/مشتريات)
+# ============================================================
+def _render_return_form(invoice_type, inv, items, prefix):
+    """
+    نموذج موحّد لمرتجع مبيعات أو مشتريات.
+    """
+    return_items = _render_return_items(items, prefix, inv["id"])
+
+    if not return_items:
+        return
+
+    return_date = st.date_input(
+        "تاريخ المرتجع",
+        value=date.today(),
+        key=f"{prefix}_date"
+    )
+    reason = st.text_area(
+        "سبب الإرجاع (اختياري)",
+        key=f"{prefix}_reason"
+    )
+
+    # حساب تقريبي للإجمالي
+    estimate = 0.0
+    for name, qty in return_items:
+        for it in items:
+            if it["name"] == name:
+                estimate += qty * float(it["unit_price"])
+                break
+    estimate = estimate * (1 + float(inv.get("vat_rate") or 0.15))
+
+    refund_method, cash_code, bank_code = _render_refund_options(prefix, estimate)
+
+    st.markdown("---")
+    st.markdown(f"**💰 الإجمالي المتوقع للمرتجع:** {estimate:,.2f}")
+
+    # ============ زر التأكيد ============
+    session_key = f"saving_{prefix}_return"
+    if session_key not in st.session_state:
+        st.session_state[session_key] = False
+
+    can_save = (
+        not st.session_state[session_key]
+        and refund_method != "invalid"
+    )
+
+    if st.button(
+        f"✅ تأكيد مرتجع {'المبيعات' if invoice_type == 'sale' else 'المشتريات'}",
+        key=f"confirm_{prefix}_return",
+        type="primary",
+        disabled=not can_save
+    ):
+        st.session_state[session_key] = True
+        st.session_state[f"_pending_{prefix}_return"] = {
+            "invoice_id": inv["id"],
+            "items": return_items,
+            "date": return_date.strftime("%Y-%m-%d"),
+            "reason": reason,
+            "refund_method": refund_method,
+            "cash_code": cash_code,
+            "bank_code": bank_code,
+        }
+        st.rerun()
+
+    if st.session_state[session_key]:
+        p = st.session_state.get(f"_pending_{prefix}_return")
+        if p:
+            ok, result, total, note = process_return(
+                invoice_type,
+                p["invoice_id"],
+                p["items"],
+                p["date"],
+                p["reason"],
+                refund_method=p["refund_method"],
+                cash_account_code=p["cash_code"],
+                bank_account_code=p["bank_code"],
+            )
+            if ok:
+                msg = f"✅ تم تسجيل المرتجع رقم {result} — الإجمالي: {total:,.2f}"
+                if note:
+                    msg += f"\n\n{note}"
+                glass(msg)
+            else:
+                st.error(f"❌ فشل العملية: {result}")
+
+        st.session_state[session_key] = False
+        st.session_state.pop(f"_pending_{prefix}_return", None)
+        st.rerun()
 
 
 # ============================================================
@@ -199,76 +325,8 @@ def show():
             if selected:
                 inv = invoice_options[selected]
                 items = get_invoice_items(inv["id"])
-
                 if items:
-                    return_items = _render_return_items(items, "sret", inv["id"])
-
-                    if return_items:
-                        return_date = st.date_input("تاريخ المرتجع", value=date.today())
-                        reason = st.text_area("سبب الإرجاع (اختياري)")
-
-                        # حساب تقريبي للإجمالي
-                        estimate = 0.0
-                        for name, qty in return_items:
-                            for it in items:
-                                if it["name"] == name:
-                                    estimate += qty * float(it["unit_price"])
-                                    break
-                        estimate = estimate * (1 + float(inv.get("vat_rate") or 0.15))
-
-                        refund_method, cash_code = _render_refund_options(
-                            "sale", "sale", estimate
-                        )
-
-                        # ✅ زر التأكيد
-                        if "saving_sale_return" not in st.session_state:
-                            st.session_state.saving_sale_return = False
-
-                        can_save = (
-                            not st.session_state.saving_sale_return
-                            and (refund_method == "account" or cash_code is not None)
-                        )
-
-                        if st.button(
-                            "✅ تأكيد مرتجع المبيعات",
-                            key="confirm_sale_return",
-                            type="primary",
-                            disabled=not can_save
-                        ):
-                            st.session_state.saving_sale_return = True
-                            st.session_state._pending_sale_return = {
-                                "invoice_id": inv["id"],
-                                "items": return_items,
-                                "date": return_date.strftime("%Y-%m-%d"),
-                                "reason": reason,
-                                "refund_method": refund_method,
-                                "cash_code": cash_code,
-                            }
-                            st.rerun()
-
-                        if st.session_state.saving_sale_return:
-                            p = st.session_state.get("_pending_sale_return")
-                            if p:
-                                ok, result, total, note = process_return(
-                                    "sale",
-                                    p["invoice_id"],
-                                    p["items"],
-                                    p["date"],
-                                    p["reason"],
-                                    refund_method=p["refund_method"],
-                                    cash_account_code=p["cash_code"],
-                                )
-                                if ok:
-                                    msg = f"✅ تم تسجيل المرتجع رقم {result} — الإجمالي: {total:,.2f}"
-                                    if note:
-                                        msg += f"\n\n{note}"
-                                    glass(msg)
-                                else:
-                                    st.error(f"❌ فشل العملية: {result}")
-
-                            st.session_state.saving_sale_return = False
-                            st.session_state.pop("_pending_sale_return", None)
-                            st.rerun()
+                    _render_return_form("sale", inv, items, "sret")
 
     # ============================================================
     # تبويب 2: مرتجع مشتريات
@@ -293,78 +351,8 @@ def show():
             if selected:
                 inv = invoice_options[selected]
                 items = get_invoice_items(inv["id"])
-
                 if items:
-                    return_items = _render_return_items(items, "pret", inv["id"])
-
-                    if return_items:
-                        return_date = st.date_input("تاريخ المرتجع",
-                                                     value=date.today(),
-                                                     key="purchase_ret_date")
-                        reason = st.text_area("سبب الإرجاع (اختياري)",
-                                               key="purchase_ret_reason")
-
-                        # حساب تقريبي
-                        estimate = 0.0
-                        for name, qty in return_items:
-                            for it in items:
-                                if it["name"] == name:
-                                    estimate += qty * float(it["unit_price"])
-                                    break
-                        estimate = estimate * (1 + float(inv.get("vat_rate") or 0.15))
-
-                        refund_method, cash_code = _render_refund_options(
-                            "purchase", "purchase", estimate
-                        )
-
-                        if "saving_purchase_return" not in st.session_state:
-                            st.session_state.saving_purchase_return = False
-
-                        can_save = (
-                            not st.session_state.saving_purchase_return
-                            and (refund_method == "account" or cash_code is not None)
-                        )
-
-                        if st.button(
-                            "✅ تأكيد مرتجع المشتريات",
-                            key="confirm_purchase_return",
-                            type="primary",
-                            disabled=not can_save
-                        ):
-                            st.session_state.saving_purchase_return = True
-                            st.session_state._pending_purchase_return = {
-                                "invoice_id": inv["id"],
-                                "items": return_items,
-                                "date": return_date.strftime("%Y-%m-%d"),
-                                "reason": reason,
-                                "refund_method": refund_method,
-                                "cash_code": cash_code,
-                            }
-                            st.rerun()
-
-                        if st.session_state.saving_purchase_return:
-                            p = st.session_state.get("_pending_purchase_return")
-                            if p:
-                                ok, result, total, note = process_return(
-                                    "purchase",
-                                    p["invoice_id"],
-                                    p["items"],
-                                    p["date"],
-                                    p["reason"],
-                                    refund_method=p["refund_method"],
-                                    cash_account_code=p["cash_code"],
-                                )
-                                if ok:
-                                    msg = f"✅ تم تسجيل المرتجع رقم {result} — الإجمالي: {total:,.2f}"
-                                    if note:
-                                        msg += f"\n\n{note}"
-                                    glass(msg)
-                                else:
-                                    st.error(f"❌ فشل العملية: {result}")
-
-                            st.session_state.saving_purchase_return = False
-                            st.session_state.pop("_pending_purchase_return", None)
-                            st.rerun()
+                    _render_return_form("purchase", inv, items, "pret")
 
     # ============================================================
     # تبويب 3: سجل المرتجعات
