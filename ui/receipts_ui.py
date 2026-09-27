@@ -1,11 +1,11 @@
-# ui/receipts_ui.py – واجهة سندات القبض والصرف (v3.0)
-# ✅ إصلاح KeyError: توحيد أسماء المفاتيح
+# ui/receipts_ui.py – واجهة سندات القبض والصرف (v4.0)
+# ✅ دعم البنك + الصندوق + عرض الرصيد + فحص فوري
 import streamlit as st
 import pandas as pd
 from datetime import date
 from services.receipts_service import (
     create_vouchers_table,
-    get_cash_accounts,
+    get_payment_accounts,           # ✅ موحّدة: صناديق + بنوك
     get_customers_with_balances,
     get_suppliers_with_balances,
     get_invoices_for_party,
@@ -37,23 +37,263 @@ PAYMENT_STATUS_LABELS = {
 
 
 # ============================================================
-# ✅ مساعد: استخراج قيم بأسماء مفاتيح متعددة (آمن)
+# مساعدات
 # ============================================================
 def _get_value(d, *keys, default=0):
     """استخراج قيمة من قاموس بأحد المفاتيح المحتملة"""
+    if d is None:
+        return default
     for k in keys:
         if k in d and d[k] is not None:
             return d[k]
     return default
 
 
+def _account_icon(acc_type: str) -> str:
+    """أيقونة حسب نوع الحساب"""
+    return "🏦" if acc_type == "bank" else "💵"
+
+
+def _account_label(acc: dict) -> str:
+    """تسمية موحّدة للحساب"""
+    icon = _account_icon(acc.get("type", "cash"))
+    name = acc.get("name", "—")
+    bal = float(acc.get("balance", 0) or 0)
+    cur = acc.get("currency", "YER")
+    return f"{icon} {acc.get('code', '')} - {name}  |  الرصيد: {bal:,.2f} {cur}"
+
+
+def _render_account_info(acc: dict):
+    """بطاقة معلومات الحساب المختار"""
+    if not acc:
+        return
+    icon = _account_icon(acc.get("type", "cash"))
+    kind = "بنك" if acc.get("type") == "bank" else "صندوق"
+    bal = float(acc.get("balance", 0) or 0)
+    cur = acc.get("currency", "YER")
+    color = GR if bal > 0 else RD
+
+    st.markdown(
+        f"""
+        <div style="
+            background: linear-gradient(90deg, rgba(59,130,246,0.15), rgba(139,92,246,0.10));
+            border-right: 4px solid {BL};
+            border-radius: 8px; padding: 12px 16px; margin: 6px 0;
+            text-align: right; direction: rtl;
+        ">
+            <span style="color:{S}; font-size:0.9rem;">{icon} {kind} مختار:</span>
+            <b style="color:{T}; margin-right:8px;">{acc.get('name','—')}</b>
+            <span style="color:{S};">({acc.get('code','')})</span>
+            &nbsp;|&nbsp;
+            <span style="color:{S};">الرصيد المتاح:</span>
+            <b style="color:{color}; font-size:1.05rem;"> {bal:,.2f} {cur}</b>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_party_card(name: str, balance: float, currency: str = "YER"):
+    """بطاقة الطرف والرصيد المستحق"""
+    color = RD if balance > 0 else GR
+    st.markdown(
+        f"""
+        <div style="
+            background: rgba(16,185,129,0.10);
+            border-right: 4px solid {color};
+            border-radius: 8px; padding: 10px 16px; margin: 6px 0;
+            text-align: right; direction: rtl;
+        ">
+            <span style="color:{S};">الطرف:</span>
+            <b style="color:{T};"> {name} </b>
+            &nbsp;|&nbsp;
+            <span style="color:{S};">الرصيد المستحق:</span>
+            <b style="color:{color};"> {balance:,.2f} {currency}</b>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ============================================================
+# نموذج سند موحّد (قبض / صرف)
+# ============================================================
+def _render_voucher_form(voucher_type: str):
+    """
+    voucher_type: 'receipt' أو 'payment'
+    """
+    is_receipt = voucher_type == 'receipt'
+    party_type = 'customer' if is_receipt else 'supplier'
+    title = "سند قبض" if is_receipt else "سند صرف"
+    icon = "🧾" if is_receipt else "📤"
+    color = GR if is_receipt else RD
+
+    st.markdown(f"<h3 style='color:{color};'>{icon} {title}</h3>",
+                unsafe_allow_html=True)
+
+    # 1) الحسابات (صناديق + بنوك)
+    accounts = get_payment_accounts()
+    if not accounts:
+        st.error("⚠️ لا توجد صناديق أو بنوك نشطة. أضف حساباً أولاً.")
+        return
+
+    # 2) الأطراف
+    if is_receipt:
+        parties = get_customers_with_balances()
+        party_label = "العميل"
+    else:
+        parties = get_suppliers_with_balances()
+        party_label = "المورد"
+
+    if not parties:
+        st.warning(f"لا يوجد {party_label}ون")
+        return
+
+    # -------- الصف الأول: الطرف + الحساب --------
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        party_options = {
+            f"{p['name']} (رصيد: {float(p['balance']):,.2f})": p
+            for p in parties
+        }
+        party_sel_str = st.selectbox(
+            f"اختر {party_label}",
+            list(party_options.keys()),
+            key=f"{voucher_type}_party"
+        )
+        party = party_options[party_sel_str]
+        _render_party_card(party['name'], float(party['balance']))
+
+    with col_b:
+        account_options = {_account_label(a): a for a in accounts}
+        account_sel_str = st.selectbox(
+            "حساب الدفع (صندوق / بنك)",
+            list(account_options.keys()),
+            key=f"{voucher_type}_account"
+        )
+        account = account_options[account_sel_str]
+        _render_account_info(account)
+
+    # -------- الفواتير المعلقة --------
+    invoices = get_invoices_for_party(party_type, party['id'])
+    invoice_options = {"بدون فاتورة (دفعة عامة)": None}
+    for inv in invoices:
+        remaining = _get_value(inv, 'remaining_amount', 'remaining')
+        label = f"فاتورة #{inv['id']} | المتبقي: {float(remaining):,.2f}"
+        invoice_options[label] = inv
+
+    inv_sel_str = st.selectbox(
+        "ربط بفاتورة (اختياري)",
+        list(invoice_options.keys()),
+        key=f"{voucher_type}_invoice"
+    )
+    selected_inv = invoice_options[inv_sel_str]
+
+    # -------- المبلغ + التاريخ --------
+    col_c, col_d, col_e = st.columns(3)
+
+    with col_c:
+        default_amount = 0.0
+        if selected_inv:
+            default_amount = float(
+                _get_value(selected_inv, 'remaining_amount', 'remaining') or 0
+            )
+        amount = st.number_input(
+            "المبلغ",
+            min_value=0.0,
+            value=default_amount,
+            step=0.01,
+            key=f"{voucher_type}_amount"
+        )
+
+    with col_d:
+        voucher_date = st.date_input(
+            "التاريخ",
+            value=date.today(),
+            key=f"{voucher_type}_date"
+        )
+
+    with col_e:
+        st.write("")  # placeholder
+        st.write("")
+        # فحص الرصيد الفوري (سند صرف فقط)
+        if not is_receipt and amount > 0:
+            available = float(account.get("balance", 0) or 0)
+            if amount > available + 0.01:
+                shortage = amount - available
+                st.error(f"❌ نقص: {shortage:,.2f}")
+            else:
+                st.success("✅ الرصيد كافٍ")
+
+    # -------- المرجع + الملاحظات --------
+    reference = st.text_input("المرجع (اختياري)", key=f"{voucher_type}_ref")
+    notes = st.text_area("ملاحظات", key=f"{voucher_type}_notes")
+
+    # -------- فحص نهائي + زر الحفظ --------
+    can_save = True
+    reason = ""
+
+    if amount <= 0:
+        can_save = False
+        reason = "المبلغ يجب أن يكون أكبر من صفر"
+    elif not is_receipt:
+        available = float(account.get("balance", 0) or 0)
+        if amount > available + 0.01:
+            can_save = False
+            reason = f"الرصيد غير كافٍ — المتاح: {available:,.2f} {account.get('currency', 'YER')}"
+
+    if not can_save:
+        st.warning(f"⚠️ {reason}")
+
+    if st.button(
+        f"💾 حفظ {title}",
+        type="primary",
+        key=f"save_{voucher_type}",
+        disabled=not can_save
+    ):
+        account_code = account.get("code", "")
+        if not account_code:
+            st.error("❌ لم يتم تحديد كود الحساب")
+            return
+
+        inv_id = selected_inv['id'] if selected_inv else None
+        username = st.session_state.get('user', {}).get('username', 'admin')
+
+        vid, err = create_voucher(
+            voucher_type=voucher_type,
+            party_type=party_type,
+            party_id=party['id'],
+            amount=amount,
+            account=account_code,
+            invoice_id=inv_id,
+            reference=reference,
+            notes=notes,
+            created_by=username,
+            voucher_date=voucher_date.strftime("%Y-%m-%d")
+        )
+
+        if err:
+            st.error(f"❌ فشل الحفظ: {err}")
+        else:
+            acc_icon = _account_icon(account.get("type", "cash"))
+            st.success(
+                f"✅ تم إنشاء {title} رقم **#{vid}** "
+                f"({acc_icon} {account.get('name','')})"
+            )
+            st.rerun()
+
+
+# ============================================================
+# الواجهة الرئيسية
+# ============================================================
 def show():
     create_vouchers_table()
 
     st.markdown(f"""
     <div style="margin-bottom:2rem; text-align:right;">
         <h1 style="color:{T}; font-size:2.8rem; margin:0; text-shadow:0 0 20px {PR};">💵 سندات القبض والصرف</h1>
-        <p style="color:{S}; font-size:1.2rem;">إدارة المقبوضات والمدفوعات النقدية وربطها بالفواتير</p>
+        <p style="color:{S}; font-size:1.2rem;">إدارة المقبوضات والمدفوعات (نقدي + بنكي) مع حماية الرصيد</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -68,161 +308,13 @@ def show():
     # تبويب 1: سند قبض
     # ============================================================
     with tab1:
-        st.markdown(f"<h3 style='color:{GR};'>إنشاء سند قبض (استلام نقدية)</h3>",
-                    unsafe_allow_html=True)
-
-        cash_accounts = get_cash_accounts()
-        cash_options = [f"{a['code']} - {a['name']}" for a in cash_accounts]
-
-        customers = get_customers_with_balances()
-        if not customers:
-            st.warning("لا يوجد عملاء")
-        else:
-            customer_options = {
-                f"{c['name']} (الرصيد: {c['balance']:,.2f})": c
-                for c in customers
-            }
-            selected_cust_str = st.selectbox("اختر العميل",
-                                              list(customer_options.keys()),
-                                              key="receipt_cust")
-            selected_cust = customer_options[selected_cust_str]
-
-            # ✅ الفواتير — استخدام أسماء المفاتيح الصحيحة
-            invoices = get_invoices_for_party('customer', selected_cust['id'])
-            invoice_options = {"بدون فاتورة (دفعة عامة)": None}
-            for inv in invoices:
-                # ✅ _get_value يتعامل مع remaining / remaining_amount
-                remaining = _get_value(inv, 'remaining_amount', 'remaining')
-                label = f"فاتورة #{inv['id']} - المتبقي: {float(remaining):,.2f}"
-                invoice_options[label] = inv
-
-            selected_inv_str = st.selectbox("ربط بفاتورة (اختياري)",
-                                             list(invoice_options.keys()),
-                                             key="receipt_inv")
-            selected_inv = invoice_options[selected_inv_str]
-
-            default_amount = _get_value(selected_inv, 'remaining_amount', 'remaining') if selected_inv else 0.0
-            amount = st.number_input("المبلغ", min_value=0.0,
-                                      value=float(default_amount),
-                                      step=0.01, key="receipt_amount")
-
-            col1, col2 = st.columns(2)
-            with col1:
-                voucher_date = st.date_input("التاريخ", value=date.today(),
-                                              key="receipt_date")
-            with col2:
-                cash_selected = st.selectbox("حساب النقدية", cash_options,
-                                              key="receipt_cash")
-
-            reference = st.text_input("المرجع (اختياري)", key="receipt_ref")
-            notes = st.text_area("ملاحظات", key="receipt_notes")
-
-            if "saving_receipt" not in st.session_state:
-                st.session_state.saving_receipt = False
-
-            if st.button("💾 حفظ سند القبض", type="primary",
-                        key="save_receipt",
-                        disabled=st.session_state.saving_receipt):
-                st.session_state.saving_receipt = True
-                st.rerun()
-
-            if st.session_state.saving_receipt:
-                if amount <= 0:
-                    st.error("المبلغ يجب أن يكون أكبر من صفر")
-                else:
-                    account_code = cash_selected.split(" - ")[0]
-                    inv_id = selected_inv['id'] if selected_inv else None
-                    vid, err = create_voucher(
-                        'receipt', 'customer', selected_cust['id'], amount,
-                        account_code, inv_id, reference, notes,
-                        st.session_state.user.get('username', 'admin'),
-                        voucher_date.strftime("%Y-%m-%d")
-                    )
-                    if err:
-                        st.error(f"فشل: {err}")
-                    else:
-                        st.success(f"تم إنشاء سند القبض رقم {vid}")
-                st.session_state.saving_receipt = False
-                st.rerun()
+        _render_voucher_form('receipt')
 
     # ============================================================
     # تبويب 2: سند صرف
     # ============================================================
     with tab2:
-        st.markdown(f"<h3 style='color:{RD};'>إنشاء سند صرف (دفع نقدية)</h3>",
-                    unsafe_allow_html=True)
-
-        cash_accounts = get_cash_accounts()
-        cash_options = [f"{a['code']} - {a['name']}" for a in cash_accounts]
-
-        suppliers = get_suppliers_with_balances()
-        if not suppliers:
-            st.warning("لا يوجد موردين")
-        else:
-            supplier_options = {
-                f"{s['name']} (الرصيد: {s['balance']:,.2f})": s
-                for s in suppliers
-            }
-            selected_sup_str = st.selectbox("اختر المورد",
-                                             list(supplier_options.keys()),
-                                             key="payment_sup")
-            selected_sup = supplier_options[selected_sup_str]
-
-            invoices = get_invoices_for_party('supplier', selected_sup['id'])
-            invoice_options = {"بدون فاتورة (دفعة عامة)": None}
-            for inv in invoices:
-                remaining = _get_value(inv, 'remaining_amount', 'remaining')
-                label = f"فاتورة #{inv['id']} - المتبقي: {float(remaining):,.2f}"
-                invoice_options[label] = inv
-
-            selected_inv_str = st.selectbox("ربط بفاتورة (اختياري)",
-                                             list(invoice_options.keys()),
-                                             key="payment_inv")
-            selected_inv = invoice_options[selected_inv_str]
-
-            default_amount = _get_value(selected_inv, 'remaining_amount', 'remaining') if selected_inv else 0.0
-            amount = st.number_input("المبلغ", min_value=0.0,
-                                      value=float(default_amount),
-                                      step=0.01, key="payment_amount")
-
-            col1, col2 = st.columns(2)
-            with col1:
-                voucher_date = st.date_input("التاريخ", value=date.today(),
-                                              key="payment_date")
-            with col2:
-                cash_selected = st.selectbox("حساب النقدية", cash_options,
-                                              key="payment_cash")
-
-            reference = st.text_input("المرجع (اختياري)", key="payment_ref")
-            notes = st.text_area("ملاحظات", key="payment_notes")
-
-            if "saving_payment" not in st.session_state:
-                st.session_state.saving_payment = False
-
-            if st.button("💾 حفظ سند الصرف", type="primary",
-                        key="save_payment",
-                        disabled=st.session_state.saving_payment):
-                st.session_state.saving_payment = True
-                st.rerun()
-
-            if st.session_state.saving_payment:
-                if amount <= 0:
-                    st.error("المبلغ يجب أن يكون أكبر من صفر")
-                else:
-                    account_code = cash_selected.split(" - ")[0]
-                    inv_id = selected_inv['id'] if selected_inv else None
-                    vid, err = create_voucher(
-                        'payment', 'supplier', selected_sup['id'], amount,
-                        account_code, inv_id, reference, notes,
-                        st.session_state.user.get('username', 'admin'),
-                        voucher_date.strftime("%Y-%m-%d")
-                    )
-                    if err:
-                        st.error(f"فشل: {err}")
-                    else:
-                        st.success(f"تم إنشاء سند الصرف رقم {vid}")
-                st.session_state.saving_payment = False
-                st.rerun()
+        _render_voucher_form('payment')
 
     # ============================================================
     # تبويب 3: سجل السندات
@@ -233,7 +325,6 @@ def show():
         vouchers = get_vouchers()
         if vouchers:
             df = pd.DataFrame(vouchers)
-
             df['linked_amount'] = df['linked_amount'].fillna(0).astype(float)
             df['unlinked'] = df['amount'].astype(float) - df['linked_amount']
             df['ربط'] = df.apply(
@@ -273,7 +364,7 @@ def show():
 
                     st.markdown(f"**الطرف:** {details.get('party_name', '—')}")
                     st.markdown(f"**التاريخ:** {details.get('date', '—')}")
-                    st.markdown(f"**حساب النقدية:** {details.get('account', '—')}")
+                    st.markdown(f"**حساب الدفع:** {details.get('account', '—')}")
 
                     if details.get("lines"):
                         st.markdown("### 📊 القيد المحاسبي")
@@ -370,7 +461,6 @@ def show():
             else:
                 inv_options = {}
                 for inv in pending_invoices:
-                    # ✅ _get_value يدعم remaining_amount / remaining
                     remaining = _get_value(inv, 'remaining_amount', 'remaining')
                     inv_date = _get_value(inv, 'invoice_date', 'date')
                     total = _get_value(inv, 'total')
