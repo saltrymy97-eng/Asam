@@ -1,15 +1,22 @@
-# services/inventory_adjustment_service.py – التسويات المخزنية والجرد (ديناميكية ومتكاملة محاسبياً)
+# services/inventory_adjustment_service.py – التسويات المخزنية والجرد (v2.0)
+# ✅ Connection Registry + conn=None
 import sqlite3
 from datetime import date
-from database import get_connection
+from database import get_connection, close_connection
 from services.audit_service import log_action
-from services.fifo_service import consume_fifo, add_batch, get_fifo_cost, get_available_batches
+from services.fifo_service import (
+    consume_fifo, add_batch, get_fifo_cost, get_available_batches
+)
 from services.chart_service import get_functional_account
 from services.accounting_service import save_journal_entry
 
-def create_adjustments_table():
+
+def create_adjustments_table(conn=None):
     """إنشاء جدول التسويات إذا لم يكن موجوداً"""
-    conn = get_connection()
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
     try:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS inventory_adjustments (
@@ -29,14 +36,19 @@ def create_adjustments_table():
                 FOREIGN KEY (product_id) REFERENCES products(id)
             )
         """)
-        conn.commit()
+        if own_conn:
+            conn.commit()
     finally:
-        conn.close()
+        if own_conn:
+            close_connection(conn)
 
-def get_products_for_adjustment():
+
+def get_products_for_adjustment(conn=None):
     """جلب المنتجات مع الكمية الحالية في النظام"""
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
     try:
         products = conn.execute("""
             SELECT id, name, quantity, selling_price, purchase_price
@@ -44,53 +56,76 @@ def get_products_for_adjustment():
         """).fetchall()
         return [dict(p) for p in products]
     finally:
-        conn.close()
+        if own_conn:
+            close_connection(conn)
+
 
 def create_adjustment(product_id, expected_qty, actual_qty, unit_cost=None,
-                      reason="", reference="", created_by="admin", adjustment_date=None):
+                      reason="", reference="", created_by="admin",
+                      adjustment_date=None, conn=None):
     """
-    إنشاء تسوية مخزنية (جرد) مع القيد المحاسبي باستخدام الحسابات الوظيفية.
-    إذا actual > expected => فائض (يضاف للمخزون وFIFO مع قيد إيرادات فائض الجرد).
-    إذا actual < expected => عجز (يخصم من المخزون وFIFO مع قيد خسائر عجز الجرد).
+    إنشاء تسوية مخزنية (جرد) مع القيد المحاسبي.
+    
+    - إذا actual > expected → فائض (قيد إيرادات فائض الجرد)
+    - إذا actual < expected → عجز (قيد خسائر عجز الجرد)
+    
+    ⚠️ ملاحظة: لا يمس الصندوق/البنك — لا يحتاج فحص رصيد.
     """
     if adjustment_date is None:
         adjustment_date = date.today().strftime("%Y-%m-%d")
-    
-    create_adjustments_table()
-    
-    # جلب الحسابات الوظيفية ديناميكياً
+
+    create_adjustments_table(conn=conn)
+
+    # الحسابات الوظيفية
     inventory_acc = get_functional_account("inventory")
-    inventory_gain_acc = get_functional_account("inventory_gain") or get_functional_account("other_income") or get_functional_account("cogs")
-    inventory_loss_acc = get_functional_account("inventory_loss") or get_functional_account("cogs") or get_functional_account("other_expense")
+    inventory_gain_acc = (
+        get_functional_account("inventory_gain")
+        or get_functional_account("other_income")
+        or get_functional_account("cogs")
+    )
+    inventory_loss_acc = (
+        get_functional_account("inventory_loss")
+        or get_functional_account("cogs")
+        or get_functional_account("other_expense")
+    )
 
     if not inventory_acc:
         return None, "حساب المخزون الوظيفي (inventory) غير معرف في شجرة الحسابات"
 
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
+
     try:
-        conn.execute("BEGIN")
-        
+        if own_conn:
+            conn.execute("BEGIN")
+
         # 1. جلب بيانات المنتج
-        product = conn.execute("SELECT id, name, quantity, selling_price FROM products WHERE id=?", 
-                               (product_id,)).fetchone()
+        product = conn.execute(
+            "SELECT id, name, quantity, selling_price FROM products WHERE id=?",
+            (product_id,)
+        ).fetchone()
         if not product:
             raise Exception("المنتج غير موجود")
-        
+
         system_qty = product["quantity"]
         difference = actual_qty - expected_qty
-        
+
         if difference == 0:
             raise Exception("لا يوجد فرق بين الكمية الفعلية والمتوقعة")
-        
-        # 2. تحديد التكلفة إذا لم يعطها المستخدم
+
+        # 2. تحديد التكلفة
         if unit_cost is None:
             if difference > 0:
                 batches = get_available_batches(product_id, conn)
                 if batches:
                     unit_cost = batches[-1]["unit_cost"]
                 else:
-                    unit_cost = product["selling_price"] if product["selling_price"] else 1.0
+                    unit_cost = (
+                        product["selling_price"]
+                        if product["selling_price"] else 1.0
+                    )
             else:
                 fifo_cost = get_fifo_cost(product_id, abs(difference), conn)
                 if fifo_cost is None:
@@ -98,84 +133,122 @@ def create_adjustment(product_id, expected_qty, actual_qty, unit_cost=None,
                 unit_cost = fifo_cost / abs(difference)
         else:
             unit_cost = float(unit_cost)
-        
+
         total_cost = round(abs(difference) * unit_cost, 2)
-        
-        # 3. تحديث المخزون وFIFO وإعداد سطور القيد المحاسبي
+
+        # 3. تحديث المخزون و FIFO وإعداد سطور القيد
         if difference > 0:
             if not inventory_gain_acc:
-                raise Exception("حساب أرباح/فائض الجرد الوظيفي (inventory_gain) غير معرف")
+                raise Exception("حساب أرباح/فائض الجرد (inventory_gain) غير معرف")
 
-            # فائض: إضافة للمخزون
-            conn.execute("UPDATE products SET quantity = quantity + ? WHERE id = ?",
-                        (difference, product_id))
+            # فائض
+            conn.execute(
+                "UPDATE products SET quantity = quantity + ? WHERE id = ?",
+                (difference, product_id)
+            )
             conn.execute("""
                 INSERT INTO stock_movements (product_id, type, quantity, date, reference)
                 VALUES (?, 'in', ?, ?, ?)
-            """, (product_id, difference, adjustment_date, f"تسوية جرد (فائض) - مرجع: {reference}"))
-            
-            add_batch(product_id, difference, unit_cost, adjustment_date,
-                     reference=f"تسوية جرد (فائض) - {reference}", conn=conn)
-            
-            # القيد المحاسبي (من ح/ المخزون إلى ح/ أرباح وفائض الجرد)
+            """, (product_id, difference, adjustment_date,
+                  f"تسوية جرد (فائض) - مرجع: {reference}"))
+
+            add_batch(
+                product_id, difference, unit_cost, adjustment_date,
+                reference=f"تسوية جرد (فائض) - {reference}", conn=conn
+            )
+
             lines = [
-                {"account_id": inventory_acc, "debit": total_cost, "credit": 0.0, "currency_code": "YER", "exchange_rate": 1.0},
-                {"account_id": inventory_gain_acc, "debit": 0.0, "credit": total_cost, "currency_code": "YER", "exchange_rate": 1.0}
+                {
+                    "account": inventory_acc,
+                    "debit": total_cost,
+                    "credit": 0.0,
+                    "currency_code": "YER",
+                    "exchange_rate": 1.0,
+                },
+                {
+                    "account": inventory_gain_acc,
+                    "debit": 0.0,
+                    "credit": total_cost,
+                    "currency_code": "YER",
+                    "exchange_rate": 1.0,
+                },
             ]
             desc = f"فائض جرد - {product['name']} (+{difference})"
         else:
             if not inventory_loss_acc:
-                raise Exception("حساب خسائر/عجز الجرد الوظيفي (inventory_loss) غير معرف")
+                raise Exception("حساب خسائر/عجز الجرد (inventory_loss) غير معرف")
 
-            # عجز: خصم من المخزون
+            # عجز
             qty_to_remove = abs(difference)
             if system_qty < qty_to_remove:
-                raise Exception(f"الكمية المتاحة ({system_qty}) أقل من العجز ({qty_to_remove})")
-            
-            conn.execute("UPDATE products SET quantity = quantity - ? WHERE id = ?",
-                        (qty_to_remove, product_id))
+                raise Exception(
+                    f"الكمية المتاحة ({system_qty}) أقل من العجز ({qty_to_remove})"
+                )
+
+            conn.execute(
+                "UPDATE products SET quantity = quantity - ? WHERE id = ?",
+                (qty_to_remove, product_id)
+            )
             conn.execute("""
                 INSERT INTO stock_movements (product_id, type, quantity, date, reference)
                 VALUES (?, 'out', ?, ?, ?)
-            """, (product_id, qty_to_remove, adjustment_date, f"تسوية جرد (عجز) - مرجع: {reference}"))
-            
-            cost, err = consume_fifo(product_id, qty_to_remove, conn=conn,
-                                    reference=f"تسوية جرد (عجز) - {reference}")
+            """, (product_id, qty_to_remove, adjustment_date,
+                  f"تسوية جرد (عجز) - مرجع: {reference}"))
+
+            cost, err = consume_fifo(
+                product_id, qty_to_remove, conn=conn,
+                reference=f"تسوية جرد (عجز) - {reference}"
+            )
             if cost is None:
                 raise Exception(f"فشل استهلاك FIFO: {err}")
             total_cost = round(cost, 2)
-            
-            # القيد المحاسبي (من ح/ خسائر وعجز الجرد إلى ح/ المخزون)
+
             lines = [
-                {"account_id": inventory_loss_acc, "debit": total_cost, "credit": 0.0, "currency_code": "YER", "exchange_rate": 1.0},
-                {"account_id": inventory_acc, "debit": 0.0, "credit": total_cost, "currency_code": "YER", "exchange_rate": 1.0}
+                {
+                    "account": inventory_loss_acc,
+                    "debit": total_cost,
+                    "credit": 0.0,
+                    "currency_code": "YER",
+                    "exchange_rate": 1.0,
+                },
+                {
+                    "account": inventory_acc,
+                    "debit": 0.0,
+                    "credit": total_cost,
+                    "currency_code": "YER",
+                    "exchange_rate": 1.0,
+                },
             ]
             desc = f"عجز جرد - {product['name']} (-{abs(difference)})"
-        
+
         # 4. إدراج سجل التسوية
         cur = conn.execute("""
             INSERT INTO inventory_adjustments 
-            (date, product_id, expected_qty, actual_qty, difference, unit_cost, total_cost, reason, reference, created_by)
+                (date, product_id, expected_qty, actual_qty, difference,
+                 unit_cost, total_cost, reason, reference, created_by)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (adjustment_date, product_id, expected_qty, actual_qty, difference,
               unit_cost, total_cost, reason, reference, created_by))
         adj_id = cur.lastrowid
-        
-        # 5. إنشاء القيد المحاسبي
+
+        # 5. إنشاء القيد
         entry_id, error = save_journal_entry(
             description=f"{desc} - تسوية #{adj_id}",
             lines=lines,
             entry_date=adjustment_date,
-            conn=conn
+            conn=conn,
         )
         if error:
             raise Exception(f"فشل إنشاء القيد المحاسبي: {error}")
-        
-        conn.execute("UPDATE inventory_adjustments SET journal_entry_id=? WHERE id=?", 
-                    (entry_id, adj_id))
-        
-        conn.commit()
-        
+
+        conn.execute(
+            "UPDATE inventory_adjustments SET journal_entry_id=? WHERE id=?",
+            (entry_id, adj_id)
+        )
+
+        if own_conn:
+            conn.commit()
+
         log_action(
             username=created_by,
             action="تسوية مخزنية",
@@ -183,18 +256,27 @@ def create_adjustment(product_id, expected_qty, actual_qty, unit_cost=None,
             record_id=adj_id,
             new_value=f"{product['name']}: {difference:+.2f} وحدة، التكلفة: {total_cost:,.2f}"
         )
-        
+
         return adj_id, None
+
     except Exception as e:
-        conn.rollback()
+        if own_conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         return None, str(e)
     finally:
-        conn.close()
+        if own_conn:
+            close_connection(conn)
 
-def get_adjustments(limit=50):
+
+def get_adjustments(limit=50, conn=None):
     """سجل التسويات المخزنية"""
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
     try:
         adjustments = conn.execute("""
             SELECT a.*, p.name as product_name
@@ -205,4 +287,5 @@ def get_adjustments(limit=50):
         """, (limit,)).fetchall()
         return [dict(a) for a in adjustments]
     finally:
-        conn.close()
+        if own_conn:
+            close_connection(conn)
