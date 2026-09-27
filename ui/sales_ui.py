@@ -1,6 +1,5 @@
-# ui/sales_ui.py – واجهة المبيعات (v6.0)
-# ✅ إصلاح StreamlitWidgetAlreadyInstantiatedError
-# ✅ لا نُعدّل key الـ widget مباشرة
+# ui/sales_ui.py – واجهة المبيعات (v7.0)
+# ✅ دعم البنك والصندوق في القبض
 import streamlit as st
 import pandas as pd
 from services.sales_service import (
@@ -14,7 +13,7 @@ from services.sales_service import (
     create_receipt_voucher_for_invoice,
 )
 from services.currency_service import get_all_currencies, get_base_currency
-from services.cash_service import get_all_cash_accounts
+from services.expenses_service import get_payment_accounts
 
 
 # ========== ألوان التصميم ==========
@@ -41,9 +40,6 @@ PAYMENT_METHOD_LABELS = {
 }
 
 
-# ============================================================
-# ✅ مساعد: قراءة مبلغ رقمي من حقل نصي
-# ============================================================
 def _read_amount_from_text(text_value, default=0.0, max_value=None):
     """تحويل نص إلى رقم بأمان."""
     if text_value is None:
@@ -62,6 +58,15 @@ def _read_amount_from_text(text_value, default=0.0, max_value=None):
     return value
 
 
+def _format_account_label(acc):
+    """تنسيق عرض الحساب مع الرصيد والنوع."""
+    icon = "💵" if acc["type"] == "cash" else "🏦"
+    return (
+        f"{icon} {acc['name']} ({acc['currency']}) — "
+        f"الرصيد: {acc['balance']:,.2f}"
+    )
+
+
 def show():
     st.markdown(f"""
     <div style="margin-bottom:2rem; text-align:right;">
@@ -73,7 +78,7 @@ def show():
     tab1, tab2, tab3 = st.tabs(["📝 إنشاء فاتورة", "📋 فواتير المبيعات", "👥 العملاء"])
 
     # ============================================================
-    # التبويب 1: إنشاء فاتورة
+    # تبويب 1: إنشاء فاتورة
     # ============================================================
     with tab1:
         st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>إنشاء فاتورة مبيعات جديدة</h3>",
@@ -156,7 +161,7 @@ def show():
                         unsafe_allow_html=True)
 
             payment_options = {
-                "نقدي (دفع كامل الآن)": "cash",
+                "نقدي/بنكي (دفع فوري)": "cash",
                 "آجل (بدون دفع الآن)": "credit",
                 "جزئي (دفعة + متبقي)": "partial"
             }
@@ -170,33 +175,34 @@ def show():
 
             cash_account = None
             paid_amount = 0.0
+            selected_acc = None
 
             if payment_choice in ('cash', 'partial'):
-                cash_accounts = get_all_cash_accounts(active_only=True)
-                if not cash_accounts:
-                    st.error("⚠️ لا يوجد صندوق أو حساب بنكي. أضف صندوقاً من وحدة الصندوق أولاً.")
+                # ============================================================
+                # ✅ استخدام القائمة الموحّدة (صناديق + بنوك)
+                # ============================================================
+                all_accounts = get_payment_accounts()
+                if not all_accounts:
+                    st.error("⚠️ لا يوجد صندوق أو حساب بنكي. أضف صندوقاً أو بنكاً أولاً.")
                     return
 
-                cash_labels = [
-                    f"{ca['name']} ({ca['currency_code']}) - الرصيد: {ca['current_balance']:,.2f}"
-                    for ca in cash_accounts
-                ]
-                selected_cash_label = st.selectbox(
-                    "💵 من أي صندوق/بنك تم استلام المبلغ؟",
-                    cash_labels,
+                labels = [_format_account_label(a) for a in all_accounts]
+                selected_label = st.selectbox(
+                    "💵 إلى أي صندوق/بنك سيُقبض المبلغ؟",
+                    labels,
                     key="cash_acc_sel"
                 )
-                cash_idx = cash_labels.index(selected_cash_label)
-                cash_account = cash_accounts[cash_idx]['account_code']
+                idx = labels.index(selected_label)
+                selected_acc = all_accounts[idx]
+                cash_account = selected_acc['code']
 
                 if payment_choice == 'cash':
                     paid_amount = total_invoice
-                    st.info(f"💵 سيتم استلام {total_invoice:,.2f} {currency_code} نقداً")
+                    st.info(f"💵 سيتم استلام {total_invoice:,.2f} {currency_code} فوراً")
 
                 else:  # partial
                     st.markdown(f"**💵 المبلغ المدفوع الآن (من إجمالي {total_invoice:,.2f} {currency_code})**")
 
-                    # ✅ on_change callback — يُنفّذ مع كل ضغطة
                     def _on_paid_change():
                         txt = st.session_state.get("paid_amount_text", "")
                         val = _read_amount_from_text(txt, 0.0, total_invoice)
@@ -210,7 +216,6 @@ def show():
                         on_change=_on_paid_change
                     )
 
-                    # ✅ قراءة من القيمة المخزّنة
                     paid_amount = st.session_state.get("paid_amount_final", 0.0)
 
                     remaining = total_invoice - paid_amount
@@ -233,12 +238,12 @@ def show():
 
             if st.button("💾 حفظ الفاتورة", type="primary",
                         disabled=save_disabled, key="save_sales_btn"):
-                # ✅ قراءة القيمة النهائية من session_state
+                # ✅ قراءة القيمة النهائية
                 if payment_choice == 'cash':
                     final_paid = total_invoice
                 elif payment_choice == 'credit':
                     final_paid = 0.0
-                else:  # partial — نقرأ من final
+                else:
                     final_paid = st.session_state.get("paid_amount_final", 0.0)
 
                 st.session_state.final_paid_to_save = final_paid
@@ -249,17 +254,25 @@ def show():
                 try:
                     actual_paid = st.session_state.get("final_paid_to_save", 0.0)
 
+                    # ✅ تحديد payment_method بناءً على نوع الحساب
+                    if actual_paid == 0:
+                        actual_method = 'credit'
+                    elif selected_acc and selected_acc['type'] == 'bank':
+                        actual_method = 'bank'
+                    else:
+                        actual_method = 'cash'
+
+                    # جزئي
+                    if 0 < actual_paid < total_invoice:
+                        actual_method = 'mixed'
+
                     invoice_id, total, error = create_sale_invoice(
                         customer_id=customer_id,
                         items=st.session_state.invoice_items,
                         username=st.session_state.user.get('username', 'admin'),
                         currency_code=currency_code,
                         paid_amount=actual_paid,
-                        payment_method=(
-                            'cash' if payment_choice == 'cash'
-                            else 'credit' if payment_choice == 'credit'
-                            else 'mixed'
-                        ),
+                        payment_method=actual_method,
                         cash_account=cash_account
                     )
 
@@ -289,14 +302,14 @@ def show():
                     st.session_state.saving_sale = False
                     st.rerun()
 
-            # ✅ زر مسح — بدون لمس key الـ widget
+            # ✅ زر مسح
             if st.button("🗑️ مسح جميع البنود"):
                 st.session_state.invoice_items = []
                 st.session_state.paid_amount_final = 0.0
                 st.rerun()
 
     # ============================================================
-    # التبويب 2: فواتير المبيعات
+    # تبويب 2: فواتير المبيعات
     # ============================================================
     with tab2:
         st.markdown(f"<h3 style='color:{ACCENT_GREEN};'>فواتير المبيعات المسجلة</h3>",
@@ -377,7 +390,7 @@ def show():
             st.info("لا توجد فواتير مبيعات بعد")
 
     # ============================================================
-    # التبويب 3: العملاء
+    # تبويب 3: العملاء
     # ============================================================
     with tab3:
         st.markdown(f"<h3 style='color:{ACCENT_ORANGE};'>إدارة العملاء</h3>",
