@@ -1,4 +1,5 @@
-# ui/inventory_adjustment_ui.py – واجهة التسويات المخزنية والجرد (تصميم زجاجي فخم + بطاقات محسّنة)
+# ui/inventory_adjustment_ui.py – واجهة التسويات المخزنية (v2.0)
+# ✅ إصلاح حساب إجمالي العجز + تحسين العرض
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -7,8 +8,9 @@ from services.inventory_adjustment_service import (
     create_adjustments_table,
     get_products_for_adjustment,
     create_adjustment,
-    get_adjustments
+    get_adjustments,
 )
+
 
 # ========== ألوان التصميم ==========
 T = "#F8FAFC"
@@ -21,8 +23,9 @@ PR = "#8B5CF6"
 GLASS_BG = "rgba(255, 255, 255, 0.08)"
 GLASS_BORDER = "rgba(255, 255, 255, 0.15)"
 
+
 def kpi_card(title, value, icon, color):
-    """بطاقة مؤشر بتصميم فخم ومتناسق"""
+    """بطاقة مؤشر بتصميم فخم"""
     st.markdown(f"""
     <div style="background: linear-gradient(145deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 100%);
          backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
@@ -36,9 +39,10 @@ def kpi_card(title, value, icon, color):
     </div>
     """, unsafe_allow_html=True)
 
+
 def show():
     create_adjustments_table()
-    
+
     # ========== هيدر ==========
     st.markdown(f"""
     <div style="margin-bottom:2rem; text-align:right;">
@@ -49,20 +53,29 @@ def show():
 
     tab1, tab2, tab3 = st.tabs(["📝 تسجيل جرد", "📋 سجل التسويات", "📊 تحليل الانحرافات"])
 
-    # ---------- تبويب تسجيل الجرد ----------
+    # ============================================================
+    # تبويب 1: تسجيل جرد
+    # ============================================================
     with tab1:
         products = get_products_for_adjustment()
         if not products:
             st.info("لا توجد منتجات في المخزون")
         else:
-            st.markdown(f"<h3 style='color:{GR};'>تسجيل الجرد الفعلي</h3>", unsafe_allow_html=True)
-            
-            product_names = [f"{p['name']} (النظام: {p['quantity']})" for p in products]
-            selected_idx = st.selectbox("اختر المنتج", range(len(product_names)), 
-                                       format_func=lambda i: product_names[i],
-                                       key="adj_product")
+            st.markdown(f"<h3 style='color:{GR};'>تسجيل الجرد الفعلي</h3>",
+                        unsafe_allow_html=True)
+
+            product_names = [
+                f"{p['name']} (النظام: {p['quantity']})"
+                for p in products
+            ]
+            selected_idx = st.selectbox(
+                "اختر المنتج",
+                range(len(product_names)),
+                format_func=lambda i: product_names[i],
+                key="adj_product"
+            )
             product = products[selected_idx]
-            
+
             with st.container(border=True):
                 col1, col2 = st.columns(2)
                 with col1:
@@ -70,14 +83,17 @@ def show():
                     st.markdown(f"**سعر البيع:** {product['selling_price']}")
                 with col2:
                     st.markdown(f"**سعر الشراء:** {product['purchase_price']}")
-            
-            actual_qty = st.number_input("الكمية الفعلية (بعد الجرد)", 
-                                         min_value=0.0, step=1.0,
-                                         value=float(product['quantity']),
-                                         key="actual_qty_input")
-            
+
+            actual_qty = st.number_input(
+                "الكمية الفعلية (بعد الجرد)",
+                min_value=0.0, step=1.0,
+                value=float(product['quantity']),
+                key="actual_qty_input"
+            )
+
             difference = actual_qty - product['quantity']
-            
+
+            # عرض النوع
             if difference > 0:
                 st.markdown(f"""
                 <div style="background:rgba(16,185,129,0.1); border:1px solid {GR}; 
@@ -99,66 +115,116 @@ def show():
                     <span style="color:{BL}; font-size:1.3rem;">📊 الكمية متطابقة</span>
                 </div>
                 """, unsafe_allow_html=True)
-            
+
             col_c1, col_c2 = st.columns(2)
             with col_c1:
-                unit_cost_input = st.number_input("تكلفة الوحدة (اختياري)", 
-                                                  min_value=0.0, step=0.01,
-                                                  value=0.0,
-                                                  key="unit_cost_adj",
-                                                  help="إذا تركت 0 سيحسبها النظام تلقائياً")
+                unit_cost_input = st.number_input(
+                    "تكلفة الوحدة (اختياري)",
+                    min_value=0.0, step=0.01,
+                    value=0.0,
+                    key="unit_cost_adj",
+                    help="إذا تركت 0 سيحسبها النظام تلقائياً"
+                )
             with col_c2:
-                adj_date = st.date_input("تاريخ التسوية", value=date.today(), key="adj_date")
-            
-            reason = st.text_area("سبب التسوية", placeholder="مثال: جرد سنوي، تلف، سرقة...", key="adj_reason")
-            reference = st.text_input("المرجع", placeholder="رقم محضر الجرد", key="adj_ref")
-            
+                adj_date = st.date_input(
+                    "تاريخ التسوية",
+                    value=date.today(),
+                    key="adj_date"
+                )
+
+            reason = st.text_area(
+                "سبب التسوية",
+                placeholder="مثال: جرد سنوي، تلف، سرقة...",
+                key="adj_reason"
+            )
+            reference = st.text_input(
+                "المرجع",
+                placeholder="رقم محضر الجرد",
+                key="adj_ref"
+            )
+
             if difference != 0:
-                total_cost = abs(difference) * (unit_cost_input if unit_cost_input > 0 else (product['purchase_price'] or product['selling_price']))
+                # ✅ حساب التكلفة التقديرية
+                default_unit_price = (
+                    product['purchase_price']
+                    or product['selling_price']
+                    or 0
+                )
+                effective_unit_cost = (
+                    unit_cost_input
+                    if unit_cost_input > 0
+                    else float(default_unit_price)
+                )
+                total_cost = abs(difference) * effective_unit_cost
+
                 st.markdown(f"""
-                <div style="background:{GLASS_BG}; border-radius:8px; padding:10px; text-align:center; margin:10px 0;">
-                    <span style="color:{OR}; font-weight:700;">التكلفة التقديرية: {total_cost:,.2f}</span>
+                <div style="background:{GLASS_BG}; border-radius:8px; padding:10px; 
+                     text-align:center; margin:10px 0;">
+                    <span style="color:{OR}; font-weight:700;">
+                        التكلفة التقديرية: {total_cost:,.2f}
+                    </span>
                 </div>
                 """, unsafe_allow_html=True)
-                
+
                 # ✅ حماية من التكرار
                 if "saving_adjustment" not in st.session_state:
                     st.session_state.saving_adjustment = False
-                
-                if st.button("💾 حفظ التسوية", type="primary", use_container_width=True, key="save_adj", disabled=st.session_state.saving_adjustment):
+
+                can_save = not st.session_state.saving_adjustment
+
+                if st.button(
+                    "💾 حفظ التسوية",
+                    type="primary",
+                    use_container_width=True,
+                    key="save_adj",
+                    disabled=not can_save
+                ):
                     st.session_state.saving_adjustment = True
                     st.rerun()
-                
+
                 if st.session_state.saving_adjustment:
-                    unit_cost = unit_cost_input if unit_cost_input > 0 else None
-                    adj_id, err = create_adjustment(
-                        product_id=product['id'],
-                        expected_qty=product['quantity'],
-                        actual_qty=actual_qty,
-                        unit_cost=unit_cost,
-                        reason=reason,
-                        reference=reference,
-                        created_by=st.session_state.user.get('username', 'admin'),
-                        adjustment_date=adj_date.strftime("%Y-%m-%d")
-                    )
-                    if err:
-                        st.error(f"فشل: {err}")
-                    else:
-                        st.success(f"تم تسجيل التسوية رقم {adj_id}")
-                    st.session_state.saving_adjustment = False
-                    st.rerun()
+                    try:
+                        unit_cost = unit_cost_input if unit_cost_input > 0 else None
+                        adj_id, err = create_adjustment(
+                            product_id=product['id'],
+                            expected_qty=product['quantity'],
+                            actual_qty=actual_qty,
+                            unit_cost=unit_cost,
+                            reason=reason,
+                            reference=reference,
+                            created_by=st.session_state.user.get('username', 'admin'),
+                            adjustment_date=adj_date.strftime("%Y-%m-%d")
+                        )
+                        if err:
+                            st.error(f"❌ فشل: {err}")
+                        else:
+                            st.success(f"✅ تم تسجيل التسوية رقم {adj_id}")
+                    except Exception as e:
+                        st.error(f"❌ خطأ غير متوقع: {e}")
+                    finally:
+                        st.session_state.saving_adjustment = False
+                        st.rerun()
             else:
                 st.info("الكمية الفعلية تطابق المتوقعة، لا حاجة لتسوية")
 
-    # ---------- سجل التسويات ----------
+    # ============================================================
+    # تبويب 2: سجل التسويات
+    # ============================================================
     with tab2:
-        st.markdown(f"<h3 style='color:{PR};\">📋 سجل التسويات المخزنية</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:{PR};'>📋 سجل التسويات المخزنية</h3>",
+                    unsafe_allow_html=True)
+
         adjustments = get_adjustments()
+
         if adjustments:
             df = pd.DataFrame(adjustments)
-            df['النوع'] = df['difference'].apply(lambda x: '🟢 فائض' if x > 0 else '🔴 عجز')
-            df['الفرق'] = df['difference'].apply(lambda x: f"+{x:.2f}" if x > 0 else f"{x:.2f}")
-            
+            df['النوع'] = df['difference'].apply(
+                lambda x: '🟢 فائض' if x > 0 else '🔴 عجز'
+            )
+            df['الفرق'] = df['difference'].apply(
+                lambda x: f"+{x:.2f}" if x > 0 else f"{x:.2f}"
+            )
+
             df_display = df.rename(columns={
                 'id': 'الرقم',
                 'date': 'التاريخ',
@@ -168,55 +234,91 @@ def show():
                 'unit_cost': 'تكلفة الوحدة',
                 'total_cost': 'الإجمالي',
                 'reason': 'السبب',
-                'reference': 'المرجع'
+                'reference': 'المرجع',
             })
-            
-            st.dataframe(df_display[['الرقم', 'التاريخ', 'النوع', 'المنتج', 'المتوقعة', 
-                                     'الفعلية', 'الفرق', 'تكلفة الوحدة', 'الإجمالي', 'السبب', 'المرجع']],
-                         use_container_width=True, hide_index=True,
-                         column_config={
-                             'الإجمالي': st.column_config.NumberColumn(format='%.2f')
-                         })
-            
-            total_faed = df[df['difference'] > 0]['total_cost'].sum()
-            total_ajz = df[abs(df['difference']) > 0][df['difference'] < 0]['total_cost'].sum()
-            
+
+            st.dataframe(
+                df_display[[
+                    'الرقم', 'التاريخ', 'النوع', 'المنتج',
+                    'المتوقعة', 'الفعلية', 'الفرق',
+                    'تكلفة الوحدة', 'الإجمالي', 'السبب', 'المرجع'
+                ]],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    'الإجمالي': st.column_config.NumberColumn(format='%.2f'),
+                }
+            )
+
+            # ============================================================
+            # ✅ إصلاح: حساب إجمالي الفائض والعجز بشكل صحيح
+            # ============================================================
+            total_gain = 0.0
+            total_loss = 0.0
+
+            for _, row in df.iterrows():
+                diff = float(row['difference'] or 0)
+                cost = float(row['total_cost'] or 0)
+                if diff > 0:
+                    total_gain += cost
+                elif diff < 0:
+                    total_loss += cost
+
             st.markdown("<br>", unsafe_allow_html=True)
             col_k1, col_k2, col_k3 = st.columns(3)
             with col_k1:
                 kpi_card("إجمالي التسويات", str(len(adjustments)), "📋", BL)
             with col_k2:
-                kpi_card("قيمة الفائض", f"{total_faed:,.2f}", "🟢", GR)
+                kpi_card("قيمة الفائض", f"{total_gain:,.2f}", "🟢", GR)
             with col_k3:
-                kpi_card("قيمة العجز", f"{abs(total_ajz):,.2f}", "🔴", RD)
+                kpi_card("قيمة العجز", f"{total_loss:,.2f}", "🔴", RD)
         else:
             st.info("لا توجد تسويات مسجلة بعد")
 
-    # ---------- تحليل الانحرافات ----------
+    # ============================================================
+    # تبويب 3: تحليل الانحرافات
+    # ============================================================
     with tab3:
-        st.markdown(f"<h3 style='color:{OR};\">📊 تحليل الانحرافات المخزنية</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:{OR};'>📊 تحليل الانحرافات المخزنية</h3>",
+                    unsafe_allow_html=True)
+
         adjustments = get_adjustments()
+
         if adjustments:
             df = pd.DataFrame(adjustments)
+
             if not df.empty:
                 col_ch1, col_ch2 = st.columns(2)
-                
+
                 with col_ch1:
-                    df_chart = df.groupby('product_name')['total_cost'].sum().reset_index()
-                    df_chart['type'] = df.groupby('product_name')['difference'].sum().apply(
-                        lambda x: 'فائض' if x > 0 else 'عجز'
-                    ).values
-                    
-                    fig = px.bar(df_chart, x='product_name', y='total_cost',
-                                color='type',
-                                color_discrete_map={'فائض': GR, 'عجز': RD},
-                                title="قيمة الانحرافات حسب المنتج",
-                                labels={'product_name': 'المنتج', 'total_cost': 'القيمة'})
-                    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', 
-                                    plot_bgcolor='rgba(0,0,0,0)',
-                                    font_color='white')
+                    df_chart = (
+                        df.groupby('product_name')['total_cost']
+                        .sum()
+                        .reset_index()
+                    )
+                    df_chart['type'] = (
+                        df.groupby('product_name')['difference']
+                        .sum()
+                        .apply(lambda x: 'فائض' if x > 0 else 'عجز')
+                        .values
+                    )
+
+                    fig = px.bar(
+                        df_chart,
+                        x='product_name',
+                        y='total_cost',
+                        color='type',
+                        color_discrete_map={'فائض': GR, 'عجز': RD},
+                        title="قيمة الانحرافات حسب المنتج",
+                        labels={'product_name': 'المنتج', 'total_cost': 'القيمة'}
+                    )
+                    fig.update_layout(
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        font_color='white'
+                    )
                     st.plotly_chart(fig, use_container_width=True)
-                
+
                 with col_ch2:
                     pie_data = pd.DataFrame({
                         'النوع': ['فائض', 'عجز'],
@@ -225,13 +327,19 @@ def show():
                             abs(df[df['difference'] < 0]['total_cost'].sum())
                         ]
                     })
-                    fig2 = px.pie(pie_data, names='النوع', values='القيمة',
-                                 color='النوع',
-                                 color_discrete_map={'فائض': GR, 'عجز': RD},
-                                 title="توزيع الانحرافات",
-                                 hole=0.5)
-                    fig2.update_layout(paper_bgcolor='rgba(0,0,0,0)',
-                                     font_color='white')
+                    fig2 = px.pie(
+                        pie_data,
+                        names='النوع',
+                        values='القيمة',
+                        color='النوع',
+                        color_discrete_map={'فائض': GR, 'عجز': RD},
+                        title="توزيع الانحرافات",
+                        hole=0.5
+                    )
+                    fig2.update_layout(
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        font_color='white'
+                    )
                     st.plotly_chart(fig2, use_container_width=True)
         else:
             st.info("لا توجد بيانات كافية للتحليل")
