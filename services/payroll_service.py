@@ -1,77 +1,127 @@
-# services/payroll_service.py – منطق كشوف الرواتب (SQLite - دعم الحسابات الوظيفية)
+# services/payroll_service.py – منطق كشوف الرواتب (v2.0)
+# ✅ Registry + فحص الرصيد + دعم البنك والصندوق + تسجيل الحركة
 import sqlite3
 from datetime import date
-from database import get_connection
+from database import get_connection, close_connection
 from services.audit_service import log_action
 from services.chart_service import get_functional_account
 from services.accounting_service import save_journal_entry
 
-def create_payroll_tables():
+
+def create_payroll_tables(conn=None):
     """إنشاء جداول الرواتب وإعدادات الموظفين إذا لم تكن موجودة"""
-    conn = get_connection()
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS employee_salaries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            employee_id INTEGER UNIQUE,
-            basic_salary REAL DEFAULT 0,
-            housing_allowance REAL DEFAULT 0,
-            transport_allowance REAL DEFAULT 0,
-            other_allowances REAL DEFAULT 0,
-            deductions REAL DEFAULT 0,
-            FOREIGN KEY (employee_id) REFERENCES employees(id)
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS payroll_runs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            employee_id INTEGER,
-            month TEXT NOT NULL,
-            basic_salary REAL,
-            housing_allowance REAL,
-            transport_allowance REAL,
-            other_allowances REAL,
-            total_allowances REAL,
-            deductions REAL,
-            net_salary REAL,
-            journal_entry_id INTEGER,
-            FOREIGN KEY (employee_id) REFERENCES employees(id)
-        )
-    """)
-    conn.commit()
-    conn.close()
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS employee_salaries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                employee_id INTEGER UNIQUE,
+                basic_salary REAL DEFAULT 0,
+                housing_allowance REAL DEFAULT 0,
+                transport_allowance REAL DEFAULT 0,
+                other_allowances REAL DEFAULT 0,
+                deductions REAL DEFAULT 0,
+                FOREIGN KEY (employee_id) REFERENCES employees(id)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS payroll_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                employee_id INTEGER,
+                month TEXT NOT NULL,
+                basic_salary REAL,
+                housing_allowance REAL,
+                transport_allowance REAL,
+                other_allowances REAL,
+                total_allowances REAL,
+                deductions REAL,
+                net_salary REAL,
+                journal_entry_id INTEGER,
+                FOREIGN KEY (employee_id) REFERENCES employees(id)
+            )
+        """)
+        if own_conn:
+            conn.commit()
+    finally:
+        if own_conn:
+            close_connection(conn)
 
-def get_employees():
+
+def get_employees(conn=None):
     """جلب قائمة الموظفين"""
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    emps = conn.execute("SELECT id, name FROM employees").fetchall()
-    conn.close()
-    return emps
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
+    try:
+        emps = conn.execute("SELECT id, name FROM employees").fetchall()
+        return [dict(e) for e in emps]
+    finally:
+        if own_conn:
+            close_connection(conn)
 
-def get_salary_config(employee_id):
+
+def get_salary_config(employee_id, conn=None):
     """جلب إعدادات الراتب لموظف محدد"""
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    conf = conn.execute("SELECT * FROM employee_salaries WHERE employee_id=?", (employee_id,)).fetchone()
-    conn.close()
-    return conf
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
+    try:
+        conf = conn.execute(
+            "SELECT * FROM employee_salaries WHERE employee_id=?",
+            (employee_id,)
+        ).fetchone()
+        return dict(conf) if conf else None
+    finally:
+        if own_conn:
+            close_connection(conn)
 
-def save_salary_config(employee_id, basic, housing, transport, other, deductions):
+
+def save_salary_config(employee_id, basic, housing, transport, other,
+                       deductions, conn=None):
     """حفظ أو تحديث إعدادات الراتب للموظف"""
-    conn = get_connection()
-    exists = conn.execute("SELECT id FROM employee_salaries WHERE employee_id=?", (employee_id,)).fetchone()
-    if exists:
-        conn.execute("""
-            UPDATE employee_salaries SET basic_salary=?, housing_allowance=?, transport_allowance=?,
-            other_allowances=?, deductions=? WHERE employee_id=?
-        """, (basic, housing, transport, other, deductions, employee_id))
-    else:
-        conn.execute("""
-            INSERT INTO employee_salaries (employee_id, basic_salary, housing_allowance, transport_allowance, other_allowances, deductions)
-            VALUES (?,?,?,?,?,?)
-        """, (employee_id, basic, housing, transport, other, deductions))
-    conn.commit()
-    conn.close()
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
+    try:
+        if own_conn:
+            conn.execute("BEGIN")
+        exists = conn.execute(
+            "SELECT id FROM employee_salaries WHERE employee_id=?",
+            (employee_id,)
+        ).fetchone()
+        if exists:
+            conn.execute("""
+                UPDATE employee_salaries SET basic_salary=?,
+                housing_allowance=?, transport_allowance=?,
+                other_allowances=?, deductions=? WHERE employee_id=?
+            """, (basic, housing, transport, other, deductions, employee_id))
+        else:
+            conn.execute("""
+                INSERT INTO employee_salaries 
+                (employee_id, basic_salary, housing_allowance, transport_allowance,
+                 other_allowances, deductions)
+                VALUES (?,?,?,?,?,?)
+            """, (employee_id, basic, housing, transport, other, deductions))
+        if own_conn:
+            conn.commit()
+        return True, None
+    except Exception as e:
+        if own_conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False, str(e)
+    finally:
+        if own_conn:
+            close_connection(conn)
+
 
 def calculate_net(basic, housing, transport, other, deductions):
     """حساب إجمالي البدلات وصافي الراتب"""
@@ -79,87 +129,168 @@ def calculate_net(basic, housing, transport, other, deductions):
     net = basic + total_allowances - deductions
     return total_allowances, net
 
-def run_payroll(employee_id, month):
-    """تشغيل كشف الراتب لشهر محدد وإنشاء قيد محاسبي عبر الحسابات الوظيفية"""
-    conf = get_salary_config(employee_id)
+
+def run_payroll(employee_id, month, payment_account_code=None,
+                payment_method="bank", conn=None):
+    """
+    تشغيل كشف الراتب لشهر محدد.
+    
+    Args:
+        employee_id:           معرف الموظف
+        month:                 الشهر (YYYY-MM)
+        payment_account_code:  كود الصندوق/البنك (يُختار في الواجهة)
+        payment_method:        'cash' | 'bank'
+    
+    Returns:
+        (net, None)         عند النجاح
+        (None, "رسالة")     عند الفشل
+    """
+    conf = get_salary_config(employee_id, conn=conn)
     if not conf:
         return None, "لا توجد إعدادات راتب للموظف"
 
-    basic = conf["basic_salary"]
-    housing = conf["housing_allowance"]
-    transport = conf["transport_allowance"]
-    other = conf["other_allowances"]
-    deductions = conf["deductions"]
+    basic = float(conf["basic_salary"] or 0)
+    housing = float(conf["housing_allowance"] or 0)
+    transport = float(conf["transport_allowance"] or 0)
+    other = float(conf["other_allowances"] or 0)
+    deductions = float(conf["deductions"] or 0)
+
     total_allowances, net = calculate_net(basic, housing, transport, other, deductions)
     gross_salary = basic + total_allowances
 
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
+    if net <= 0:
+        return None, "صافي الراتب يجب أن يكون أكبر من صفر"
+
+    # ✅ فحص الرصيد قبل الصرف
+    if payment_account_code and payment_method in ('cash', 'bank'):
+        from services.cash_service import check_sufficient_balance
+        ok, err = check_sufficient_balance(payment_account_code, net, conn=conn)
+        if not ok:
+            return None, f"لا يمكن صرف الراتب: {err}"
+    else:
+        return None, "يجب تحديد حساب الدفع (صندوق أو بنك)"
+
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
 
     try:
         # جلب اسم الموظف
-        emp = conn.execute("SELECT name FROM employees WHERE id=?", (employee_id,)).fetchone()
+        emp = conn.execute(
+            "SELECT name FROM employees WHERE id=?", (employee_id,)
+        ).fetchone()
         emp_name = emp["name"] if emp else "موظف غير معروف"
 
-        conn.execute("BEGIN")
+        if own_conn:
+            conn.execute("BEGIN")
 
-        # 1. جلب الحسابات الوظيفية
+        # 1. الحسابات الوظيفية
         acc_salaries_exp = get_functional_account("salaries_expense")
-        acc_bank = get_functional_account("bank")
         acc_accrued = get_functional_account("accrued_expenses")
+        acc_payment = payment_account_code  # الصندوق أو البنك
 
-        # 2. تجهيز بنود القيد المحاسبي
+        if not acc_salaries_exp:
+            raise Exception("لم يتم العثور على حساب مصروف الرواتب (salaries_expense)")
+        if not acc_accrued:
+            acc_accrued = get_functional_account("accounts_payable")
+
+        # 2. بناء القيد:
+        #    مدين: مصروف الرواتب (الإجمالي)
+        #    دائن: حساب الدفع (الصافي) + مستحقات (الاستقطاعات)
         lines = [
-            # مدين: إجمالي الرواتب والبدلات (مصروف الرواتب)
             {
                 "account": acc_salaries_exp,
                 "debit": gross_salary,
                 "credit": 0,
                 "currency_code": "YER",
-                "exchange_rate": 1.0
+                "exchange_rate": 1.0,
             },
-            # دائن: صافي الراتب المدفوع من البنك/النقدية
             {
-                "account": acc_bank,
+                "account": acc_payment,
                 "debit": 0,
                 "credit": net,
                 "currency_code": "YER",
-                "exchange_rate": 1.0
-            }
+                "exchange_rate": 1.0,
+            },
         ]
 
-        # إذا كانت هناك استقطاعات، تضاف كمركب دائن في حساب المصروفات/الالتزامات المستحقة
         if deductions > 0:
             lines.append({
                 "account": acc_accrued,
                 "debit": 0,
                 "credit": deductions,
                 "currency_code": "YER",
-                "exchange_rate": 1.0
+                "exchange_rate": 1.0,
             })
 
-        # 3. حفظ القيد المحاسبي
-        entry_desc = f"راتب شهر {month} - الموظف: {emp_name}"
+        # 3. حفظ القيد
         entry_id, entry_error = save_journal_entry(
-            description=entry_desc,
+            description=f"راتب شهر {month} - الموظف: {emp_name}",
             lines=lines,
             entry_date=date.today().strftime("%Y-%m-%d"),
-            conn=conn
+            conn=conn,
         )
-
         if entry_error:
-            raise Exception(f"فشل إنشاء القيد المحاسبي للراتب: {entry_error}")
+            raise Exception(f"فشل إنشاء القيد المحاسبي: {entry_error}")
 
-        # 4. تسجيل مسير الراتب في الجدول
+        # 4. تسجيل مسير الراتب
         conn.execute("""
-            INSERT INTO payroll_runs (employee_id, month, basic_salary, housing_allowance, transport_allowance,
-            other_allowances, total_allowances, deductions, net_salary, journal_entry_id)
+            INSERT INTO payroll_runs 
+                (employee_id, month, basic_salary, housing_allowance,
+                 transport_allowance, other_allowances, total_allowances,
+                 deductions, net_salary, journal_entry_id)
             VALUES (?,?,?,?,?,?,?,?,?,?)
-        """, (employee_id, month, basic, housing, transport, other, total_allowances, deductions, net, entry_id))
+        """, (employee_id, month, basic, housing, transport, other,
+              total_allowances, deductions, net, entry_id))
 
-        conn.commit()
+        # 5. ✅ تسجيل حركة الصندوق/البنك
+        if payment_method == 'cash':
+            try:
+                from services.cash_service import add_cash_transaction
+                acc_row = conn.execute(
+                    "SELECT id FROM cash_accounts WHERE account_code=? AND is_active=1 LIMIT 1",
+                    (payment_account_code,)
+                ).fetchone()
+                if acc_row:
+                    add_cash_transaction(
+                        acc_row['id'],
+                        date.today().strftime("%Y-%m-%d"),
+                        f"راتب {month} - {emp_name}",
+                        'withdrawal',
+                        net,
+                        reference=f"payroll#{employee_id}_{month}",
+                        create_journal=False,
+                        conn=conn,
+                        skip_balance_check=True,
+                    )
+            except Exception as e:
+                print(f"⚠️ فشل تسجيل حركة الصندوق: {e}")
 
-        # 5. تسجيل العملية في سجل التدقيق
+        elif payment_method == 'bank':
+            try:
+                from services.bank_service import add_bank_transaction
+                acc_row = conn.execute(
+                    "SELECT id FROM bank_accounts WHERE account_code=? AND is_active=1 LIMIT 1",
+                    (payment_account_code,)
+                ).fetchone()
+                if acc_row:
+                    add_bank_transaction(
+                        acc_row['id'],
+                        date.today().strftime("%Y-%m-%d"),
+                        f"راتب {month} - {emp_name}",
+                        'withdrawal',
+                        net,
+                        reference=f"payroll#{employee_id}_{month}",
+                        conn=conn,
+                        skip_balance_check=True,
+                    )
+            except Exception as e:
+                print(f"⚠️ فشل تسجيل حركة البنك: {e}")
+
+        if own_conn:
+            conn.commit()
+
         log_action(
             username="admin",
             action="تشغيل راتب",
@@ -171,25 +302,38 @@ def run_payroll(employee_id, month):
         return net, None
 
     except Exception as e:
-        conn.rollback()
+        if own_conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         return None, str(e)
     finally:
-        conn.close()
+        if own_conn:
+            close_connection(conn)
 
-def get_payroll_history(month=None):
+
+def get_payroll_history(month=None, conn=None):
     """جلب سجل مسيرات الرواتب"""
-    conn = get_connection()
-    conn.row_factory = sqlite3.Row
-    query = """
-        SELECT pr.id, e.name, pr.month, pr.basic_salary, pr.total_allowances, pr.deductions, pr.net_salary, pr.journal_entry_id
-        FROM payroll_runs pr
-        JOIN employees e ON pr.employee_id = e.id
-    """
-    params = ()
-    if month:
-        query += " WHERE pr.month = ?"
-        params = (month,)
-    query += " ORDER BY pr.month DESC, e.name"
-    records = conn.execute(query, params).fetchall()
-    conn.close()
-    return records
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
+    try:
+        query = """
+            SELECT pr.id, e.name, pr.month, pr.basic_salary,
+                   pr.total_allowances, pr.deductions, pr.net_salary,
+                   pr.journal_entry_id
+            FROM payroll_runs pr
+            JOIN employees e ON pr.employee_id = e.id
+        """
+        params = ()
+        if month:
+            query += " WHERE pr.month = ?"
+            params = (month,)
+        query += " ORDER BY pr.month DESC, e.name"
+        records = conn.execute(query, params).fetchall()
+        return [dict(r) for r in records]
+    finally:
+        if own_conn:
+            close_connection(conn)
