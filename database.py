@@ -1,5 +1,5 @@
 # database.py - قاعدة بيانات نظام حوكمة ERP (SQLite)
-# v6.1 — مسار مطلق بجانب EXE + إزالة الإيموجي من print
+# v6.2 — مسار مطلق بجانب EXE + DELETE mode (لا WAL)
 import sqlite3
 import bcrypt
 import os
@@ -43,14 +43,13 @@ def _create_connection():
     )
 
     # === إعدادات PRAGMA ===
-    conn.execute("PRAGMA journal_mode = WAL")
+    # ✅ DELETE mode بدل WAL — أكثر أماناً لمستخدم واحد + Streamlit
+    conn.execute("PRAGMA journal_mode = DELETE")
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 30000")
     conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute("PRAGMA temp_store = MEMORY")
     conn.execute("PRAGMA cache_size = -16000")
-    conn.execute("PRAGMA wal_autocheckpoint = 1000")
-    conn.execute("PRAGMA mmap_size = 268435456")
 
     conn.row_factory = sqlite3.Row
     return conn
