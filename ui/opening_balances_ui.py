@@ -1,6 +1,5 @@
-# ui/opening_balances_ui.py – واجهة الأرصدة الافتتاحية (v3.0)
-# ✅ عرض الإجمالي + كشف الفرق + منع الحفظ عند عدم التوازن
-# ✅ إصلاح: عرض HTML بشكل صحيح
+# ui/opening_balances_ui.py – واجهة الأرصدة الافتتاحية (v4.0)
+# ✅ إصلاح: بناء HTML كنص واحد
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -11,7 +10,6 @@ from services.opening_balances_service import (
 )
 
 
-# ========== ألوان ==========
 T = "#F8FAFC"
 S = "#CBD5E1"
 GR = "#10B981"
@@ -22,32 +20,37 @@ OR = "#F59E0B"
 
 
 def _glass_card(content, color=BL):
-    """بطاقة زجاجية"""
-    st.markdown(f"""
-    <div style="background:rgba(255,255,255,0.08); border:1px solid {color};
-         border-radius:14px; padding:1rem 1.5rem; margin:0.75rem 0;
-         color:{T}; text-align:right;">
-        {content}
-    </div>
-    """, unsafe_allow_html=True)
+    """بطاقة زجاجية — HTML كنص واحد"""
+    html = (
+        f'<div style="background:rgba(255,255,255,0.08); border:1px solid {color}; '
+        f'border-radius:14px; padding:1rem 1.5rem; margin:0.75rem 0; '
+        f'color:{T}; text-align:right;">'
+        f'{content}'
+        f'</div>'
+    )
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def show():
-    st.markdown(f"""
-    <div style="margin-bottom:2rem; text-align:right;">
-        <h1 style="color:{T}; font-size:2.8rem; margin:0; text-shadow:0 0 20px {PR};">📋 الأرصدة الافتتاحية</h1>
-        <p style="color:{S}; font-size:1.2rem;">تسجيل أرصدة بداية المدة للحسابات والمخزون</p>
-    </div>
-    """, unsafe_allow_html=True)
+    header_html = (
+        f'<div style="margin-bottom:2rem; text-align:right;">'
+        f'<h1 style="color:{T}; font-size:2.8rem; margin:0; text-shadow:0 0 20px {PR};">'
+        f'الأرصدة الافتتاحية</h1>'
+        f'<p style="color:{S}; font-size:1.2rem;">تسجيل أرصدة بداية المدة للحسابات والمخزون</p>'
+        f'</div>'
+    )
+    st.markdown(header_html, unsafe_allow_html=True)
 
-    tab1, tab2 = st.tabs(["📊 أرصدة الحسابات", "📦 أرصدة المخزون"])
+    tab1, tab2 = st.tabs(["أرصدة الحسابات", "أرصدة المخزون"])
 
     # ============================================================
-    # تبويب 1: أرصدة الحسابات
+    # تبويب 1
     # ============================================================
     with tab1:
-        st.markdown(f"<h3 style='color:{BL};'>أرصدة الحسابات الافتتاحية</h3>",
-                    unsafe_allow_html=True)
+        st.markdown(
+            f"<h3 style='color:{BL};'>أرصدة الحسابات الافتتاحية</h3>",
+            unsafe_allow_html=True
+        )
 
         accounts = get_accounts_for_opening()
         if not accounts:
@@ -75,7 +78,6 @@ def show():
                 num_rows="fixed"
             )
 
-            # ✅ استخراج الأرصدة
             account_balances = []
             total_dr = 0.0
             total_cr = 0.0
@@ -95,23 +97,24 @@ def show():
 
             st.session_state['account_balances'] = account_balances
 
-            # ✅ عرض الإجمالي
             col_a, col_b, col_c = st.columns(3)
             col_a.metric("إجمالي المدين", f"{total_dr:,.2f}")
             col_b.metric("إجمالي الدائن", f"{total_cr:,.2f}")
             diff_acc = round(total_dr - total_cr, 2)
 
             if abs(diff_acc) < 0.01 and (total_dr > 0 or total_cr > 0):
-                col_c.metric("الفرق", "متوازن OK")
+                col_c.metric("الفرق", "متوازن")
             elif total_dr > 0 or total_cr > 0:
                 col_c.metric("الفرق", f"{diff_acc:,.2f}")
 
     # ============================================================
-    # تبويب 2: أرصدة المخزون
+    # تبويب 2
     # ============================================================
     with tab2:
-        st.markdown(f"<h3 style='color:{GR};'>أرصدة المخزون الافتتاحية</h3>",
-                    unsafe_allow_html=True)
+        st.markdown(
+            f"<h3 style='color:{GR};'>أرصدة المخزون الافتتاحية</h3>",
+            unsafe_allow_html=True
+        )
 
         products = get_products_for_opening()
         if not products:
@@ -120,9 +123,7 @@ def show():
             df_prod = pd.DataFrame(products)
             df_prod['الكمية الافتتاحية'] = 0.0
             df_prod['تكلفة الوحدة'] = df_prod['purchase_price'].fillna(0.0)
-            df_prod_display = df_prod[[
-                'id', 'name', 'الكمية الافتتاحية', 'تكلفة الوحدة'
-            ]]
+            df_prod_display = df_prod[['id', 'name', 'الكمية الافتتاحية', 'تكلفة الوحدة']]
 
             edited_prod_df = st.data_editor(
                 df_prod_display,
@@ -156,7 +157,6 @@ def show():
                     total_inv_cost += qty * cost
 
             st.session_state['inventory_items'] = inventory_items
-
             st.metric("إجمالي قيمة المخزون", f"{total_inv_cost:,.2f}")
 
     # ============================================================
@@ -165,7 +165,6 @@ def show():
     st.markdown("---")
     entry_date = st.date_input("تاريخ الافتتاح", value=date.today())
 
-    # ✅ عرض الملخص قبل الحفظ
     account_balances = st.session_state.get('account_balances', [])
     inventory_items = st.session_state.get('inventory_items', [])
 
@@ -173,40 +172,30 @@ def show():
     total_cr = sum(b['credit'] for b in account_balances)
     total_inv = sum(i['quantity'] * i['unit_cost'] for i in inventory_items)
 
-    # المخزون مدين — يجب أن يُضاف للمقارنة
     total_dr_with_inv = total_dr + total_inv
     diff_final = round(total_dr_with_inv - total_cr, 2)
 
-    # ✅ الألوان
     is_balanced = abs(diff_final) < 0.01
     color_status = GR if is_balanced else OR
 
-    # ✅ إصلاح: استخدام _glass_card الذي يستدعي st.markdown بشكل صحيح
-    _glass_card(f"""
-        <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:1rem;">
-            <span><b>إجمالي المدين</b> (مع المخزون): {total_dr_with_inv:,.2f}</span>
-            <span><b>إجمالي الدائن:</b> {total_cr:,.2f}</span>
-            <span><b>الفرق:</b> 
-                <span style="color:{color_status};">
-                    {diff_final:,.2f}
-                </span>
-            </span>
-        </div>
-    """, color=color_status)
+    # ✅ HTML كنص واحد — لا multi-line
+    summary_html = (
+        f'<div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:1rem;">'
+        f'<span><b>إجمالي المدين</b> (مع المخزون): {total_dr_with_inv:,.2f}</span>'
+        f'<span><b>إجمالي الدائن:</b> {total_cr:,.2f}</span>'
+        f'<span><b>الفرق:</b> <span style="color:{color_status};">{diff_final:,.2f}</span></span>'
+        f'</div>'
+    )
+    _glass_card(summary_html, color=color_status)
 
-    # ✅ حماية من التكرار
     if "saving_opening" not in st.session_state:
         st.session_state.saving_opening = False
 
-    # ✅ لا يمكن الحفظ إذا لا يوجد بيانات
     has_data = bool(account_balances) or bool(inventory_items)
-    can_save = (
-        not st.session_state.saving_opening
-        and has_data
-    )
+    can_save = (not st.session_state.saving_opening) and has_data
 
     if st.button(
-        "💾 حفظ الأرصدة الافتتاحية",
+        "حفظ الأرصدة الافتتاحية",
         type="primary",
         use_container_width=True,
         disabled=not can_save,
