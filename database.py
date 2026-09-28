@@ -1,5 +1,5 @@
 # database.py - قاعدة بيانات نظام حوكمة ERP (SQLite)
-# v6.0 — مسار مطلق بجانب EXE (يعمل مع نسخ احتياطي واستيراد)
+# v6.1 — مسار مطلق بجانب EXE + إزالة الإيموجي من print
 import sqlite3
 import bcrypt
 import os
@@ -8,27 +8,23 @@ import threading
 import atexit
 
 # ============================================================
-# ✅ تحديد مجلد قاعدة البيانات — مسار مطلق دائماً
+# تحديد مجلد قاعدة البيانات — مسار مطلق دائماً
 # ============================================================
 if getattr(sys, 'frozen', False):
-    # داخل EXE — بجانب HokamaERP.exe
     _APP_BASE = os.path.dirname(sys.executable)
 else:
-    # تشغيل عادي بـ Python
     _APP_BASE = os.path.dirname(os.path.abspath(__file__))
 
-# ضمان وجود مجلد data
 _DATA_DIR = os.path.join(_APP_BASE, "data")
 os.makedirs(_DATA_DIR, exist_ok=True)
 
-# المسار المطلق لقاعدة البيانات
 DB_PATH = os.path.join(_DATA_DIR, "erp.db")
 
-print(f"قاعدة البيانات: {DB_PATH}")
+print(f"Database: {DB_PATH}")
 
 
 # ============================================================
-# 🧠 Connection Registry — نفس الاتصال لكل Thread
+# Connection Registry — نفس الاتصال لكل Thread
 # ============================================================
 _local = threading.local()
 _registry_lock = threading.Lock()
@@ -37,7 +33,6 @@ _all_connections = []
 
 def _create_connection():
     """إنشاء اتصال جديد مع كل إعدادات PRAGMA"""
-    # ✅ التأكد من وجود المجلد
     os.makedirs(_DATA_DIR, exist_ok=True)
 
     conn = sqlite3.connect(
@@ -62,10 +57,7 @@ def _create_connection():
 
 
 def get_connection():
-    """
-    إعادة نفس الاتصال داخل نفس Thread.
-    ✅ يتعافى تلقائياً من Transactions المعلّقة.
-    """
+    """إعادة نفس الاتصال داخل نفس Thread"""
     existing = getattr(_local, "conn", None)
     if existing is not None:
         try:
@@ -73,7 +65,7 @@ def get_connection():
             if existing.in_transaction:
                 try:
                     existing.execute("ROLLBACK")
-                    print("⚠️ تم إلغاء Transaction معلّقة تلقائياً")
+                    print("Rolled back pending transaction")
                 except Exception:
                     pass
             return existing
@@ -92,11 +84,7 @@ def get_connection():
 
 
 def close_connection(conn=None):
-    """
-    ✅ نسخة ذكية:
-       - إن كان هناك Transaction معلّقة → rollback (حماية)
-       - لا يُغلق الاتصال الفعلي (يبقى في Registry)
-    """
+    """إغلاق ذكي مع rollback تلقائي"""
     target = conn if conn is not None else getattr(_local, "conn", None)
     if target is None:
         return None
@@ -143,7 +131,7 @@ atexit.register(_close_all_on_exit)
 
 
 # ============================================================
-# 🔧 دوال مساعدة للترحيل الآمن
+# دوال مساعدة للترحيل الآمن
 # ============================================================
 def _column_exists(cursor, table: str, column: str) -> bool:
     cursor.execute(f"PRAGMA table_info({table})")
@@ -154,7 +142,7 @@ def _safe_add_column(cursor, table: str, column: str, definition: str):
     if _column_exists(cursor, table, column):
         return False
     cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-    print(f"✅ تمت إضافة العمود '{column}' إلى جدول '{table}'")
+    print(f"Added column '{column}' to table '{table}'")
     return True
 
 
@@ -787,7 +775,6 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_cash_transactions_voucher ON cash_transactions(voucher_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_bank_transactions_voucher ON bank_transactions(voucher_id)")
 
-    # ✅ لا نُغلق الاتصال — يبقى في Registry
     close_connection()
 
 
