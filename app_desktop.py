@@ -1,12 +1,54 @@
 import os
 import sys
+import io
 import time
 import socket
 import multiprocessing
 import asyncio
-import webview
 import traceback
+
+
+# ═══════════════════════════════════════════════════════════
+# ✅ الحل الشامل لمشاكل Unicode على Windows
+# يجب أن يكون قبل أي import آخر
+# ═══════════════════════════════════════════════════════════
+if sys.platform == 'win32':
+    # 1) تغيير Console إلى UTF-8
+    try:
+        os.system("chcp 65001 > nul 2>&1")
+    except Exception:
+        pass
+
+    # 2) إعداد متغيرات البيئة
+    os.environ["PYTHONIOENCODING"] = "utf-8"
+    os.environ["PYTHONUTF8"] = "1"
+
+    # 3) إعادة توجيه stdout/stderr إلى UTF-8
+    try:
+        if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        # fallback: استبدال بـ TextIOWrapper
+        try:
+            if sys.stdout and hasattr(sys.stdout, 'buffer'):
+                sys.stdout = io.TextIOWrapper(
+                    sys.stdout.buffer, encoding='utf-8', errors='replace',
+                    line_buffering=True
+                )
+            if sys.stderr and hasattr(sys.stderr, 'buffer'):
+                sys.stderr = io.TextIOWrapper(
+                    sys.stderr.buffer, encoding='utf-8', errors='replace',
+                    line_buffering=True
+                )
+        except Exception:
+            pass
+
+
+import webview
 from streamlit.web import cli as stcli
+
 
 def find_free_port():
     """البحث عن منفذ شبكة فارغ"""
@@ -14,6 +56,7 @@ def find_free_port():
         s.bind(('127.0.0.1', 0))
         s.listen(1)
         return s.getsockname()[1]
+
 
 def is_server_running(host, port):
     """التحقق من أن السيرفر استيقظ وأصبح جاهزاً"""
@@ -23,38 +66,56 @@ def is_server_running(host, port):
     except (socket.error, TimeoutError, OSError):
         return False
 
+
 def get_base_path():
     """المسار الآمن للملفات المدمجة داخل الـ EXE"""
     if getattr(sys, 'frozen', False):
         return sys._MEIPASS
     return os.path.dirname(os.path.abspath(__file__))
 
+
 def resource_path(relative_path):
-    """تحديد مسار الأيقونة أو الملفات الخارجية بدقة سواء في البايثون أو الـ EXE"""
+    """تحديد مسار الأيقونة أو الملفات الخارجية بدقة"""
     try:
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
+
 def run_streamlit(port, app_path):
     """تشغيل السيرفر في عملية (Process) منفصلة تماماً"""
-    sys.stdout = open(os.devnull, "w")
-    sys.stderr = open(os.devnull, "w")
-    
+    # ✅ إعادة تطبيق الحل الشامل في العملية الجديدة
+    if sys.platform == 'win32':
+        try:
+            os.system("chcp 65001 > nul 2>&1")
+        except Exception:
+            pass
+        os.environ["PYTHONIOENCODING"] = "utf-8"
+        os.environ["PYTHONUTF8"] = "1"
+        try:
+            if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+                sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+            if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+                sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+        except Exception:
+            pass
+
+    sys.stdout = open(os.devnull, "w", encoding='utf-8')
+    sys.stderr = open(os.devnull, "w", encoding='utf-8')
+
     try:
-        # ✅ ✅ ✅ الجديد: ضبط مجلد العمل بجانب EXE
+        # ✅ ضبط مجلد العمل بجانب EXE
         if getattr(sys, 'frozen', False):
             exe_dir = os.path.dirname(sys.executable)
             os.chdir(exe_dir)
-            # إنشاء مجلد data إن لم يكن موجوداً
             os.makedirs(os.path.join(exe_dir, "data"), exist_ok=True)
-        
+
         if sys.platform == 'win32':
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        
+
         asyncio.set_event_loop(asyncio.new_event_loop())
-        
+
         sys.argv = [
             "streamlit",
             "run",
@@ -66,7 +127,7 @@ def run_streamlit(port, app_path):
             "--global.developmentMode=false"
         ]
         stcli.main()
-        
+
     except Exception as e:
         exe_dir = os.path.dirname(os.path.abspath(sys.executable))
         with open(os.path.join(exe_dir, "server_error_log.txt"), "w", encoding="utf-8") as f:
@@ -75,6 +136,7 @@ def run_streamlit(port, app_path):
             f.write(traceback.format_exc())
     except SystemExit:
         pass
+
 
 def main():
     base_path = get_base_path()
@@ -100,7 +162,6 @@ def main():
 
     window_title = "ERP Governance System - Asam"
 
-    # إنشاء النافذة بشكل مباشر بدون تمرير خيار 'icon' المسبب للخطأ
     webview.create_window(
         title=window_title,
         url=url,
@@ -109,8 +170,9 @@ def main():
         min_size=(1024, 600),
         resizable=True
     )
-    
+
     webview.start(private_mode=False)
+
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
