@@ -1,5 +1,6 @@
-# services/roles_service.py – منطق الصلاحيات والأدوار (v2.0)
+# services/roles_service.py – منطق الصلاحيات والأدوار (v2.1)
 # ✅ Connection Registry — لا conn.close()
+# ✅ إصلاح: لا COMMIT بعد CREATE TABLE
 import sqlite3
 from database import get_connection, close_connection
 from services.audit_service import log_action
@@ -32,8 +33,7 @@ def create_roles_tables(conn=None):
                 UNIQUE(role_id, module)
             )
         """)
-        if own_conn:
-            conn.execute("COMMIT")
+        # ✅ لا COMMIT — CREATE TABLE يعمل في autocommit
     finally:
         if own_conn:
             close_connection(conn)
@@ -260,7 +260,6 @@ def assign_role_to_user(user_id, role_id, conn=None):
         if own_conn:
             close_connection(conn)
 
-    # log_action خارج Transaction
     if username_str and role_name:
         try:
             log_action(
