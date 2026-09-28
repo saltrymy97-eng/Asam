@@ -43,6 +43,13 @@ def run_streamlit(port, app_path):
     sys.stderr = open(os.devnull, "w")
     
     try:
+        # ✅ ✅ ✅ الجديد: ضبط مجلد العمل بجانب EXE
+        if getattr(sys, 'frozen', False):
+            exe_dir = os.path.dirname(sys.executable)
+            os.chdir(exe_dir)
+            # إنشاء مجلد data إن لم يكن موجوداً
+            os.makedirs(os.path.join(exe_dir, "data"), exist_ok=True)
+        
         if sys.platform == 'win32':
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         
