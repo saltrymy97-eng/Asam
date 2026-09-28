@@ -1,5 +1,6 @@
-# ui/opening_balances_ui.py – واجهة الأرصدة الافتتاحية (v2.0)
+# ui/opening_balances_ui.py – واجهة الأرصدة الافتتاحية (v3.0)
 # ✅ عرض الإجمالي + كشف الفرق + منع الحفظ عند عدم التوازن
+# ✅ إصلاح: عرض HTML بشكل صحيح
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -21,6 +22,7 @@ OR = "#F59E0B"
 
 
 def _glass_card(content, color=BL):
+    """بطاقة زجاجية"""
     st.markdown(f"""
     <div style="background:rgba(255,255,255,0.08); border:1px solid {color};
          border-radius:14px; padding:1rem 1.5rem; margin:0.75rem 0;
@@ -50,7 +52,6 @@ def show():
         accounts = get_accounts_for_opening()
         if not accounts:
             st.warning("لا توجد حسابات في شجرة الحسابات. أضف حسابات أولاً.")
-            account_balances = []
         else:
             df = pd.DataFrame(accounts)
             df['الرصيد مدين'] = 0.0
@@ -101,9 +102,9 @@ def show():
             diff_acc = round(total_dr - total_cr, 2)
 
             if abs(diff_acc) < 0.01 and (total_dr > 0 or total_cr > 0):
-                col_c.metric("الفرق", "✅ متوازن")
+                col_c.metric("الفرق", "متوازن OK")
             elif total_dr > 0 or total_cr > 0:
-                col_c.metric("الفرق", f"⚠️ {diff_acc:,.2f}")
+                col_c.metric("الفرق", f"{diff_acc:,.2f}")
 
     # ============================================================
     # تبويب 2: أرصدة المخزون
@@ -115,7 +116,6 @@ def show():
         products = get_products_for_opening()
         if not products:
             st.warning("لا توجد منتجات. أضف منتجات أولاً.")
-            inventory_items = []
         else:
             df_prod = pd.DataFrame(products)
             df_prod['الكمية الافتتاحية'] = 0.0
@@ -177,17 +177,22 @@ def show():
     total_dr_with_inv = total_dr + total_inv
     diff_final = round(total_dr_with_inv - total_cr, 2)
 
+    # ✅ الألوان
+    is_balanced = abs(diff_final) < 0.01
+    color_status = GR if is_balanced else OR
+
+    # ✅ إصلاح: استخدام _glass_card الذي يستدعي st.markdown بشكل صحيح
     _glass_card(f"""
-        <div style="display:flex; justify-content:space-between;">
+        <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:1rem;">
             <span><b>إجمالي المدين</b> (مع المخزون): {total_dr_with_inv:,.2f}</span>
             <span><b>إجمالي الدائن:</b> {total_cr:,.2f}</span>
             <span><b>الفرق:</b> 
-                <span style="color:{'#10B981' if abs(diff_final) < 0.01 else '#EF4444'};">
+                <span style="color:{color_status};">
                     {diff_final:,.2f}
                 </span>
             </span>
         </div>
-    """, color=GR if abs(diff_final) < 0.01 else OR)
+    """, color=color_status)
 
     # ✅ حماية من التكرار
     if "saving_opening" not in st.session_state:
@@ -219,12 +224,12 @@ def show():
                 st.session_state.user.get('username', 'admin')
             )
             if err:
-                st.error(f"❌ فشل في حفظ الأرصدة: {err}")
+                st.error(f"فشل في حفظ الأرصدة: {err}")
             else:
-                st.success(f"✅ تم تسجيل الأرصدة الافتتاحية بقيد رقم {entry_id}")
+                st.success(f"تم تسجيل الأرصدة الافتتاحية بقيد رقم {entry_id}")
                 st.balloons()
         except Exception as e:
-            st.error(f"❌ خطأ غير متوقع: {e}")
+            st.error(f"خطأ غير متوقع: {e}")
         finally:
             st.session_state.saving_opening = False
             st.rerun()
