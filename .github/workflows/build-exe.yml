@@ -46,14 +46,18 @@ jobs:
             Where-Object { $_.FullName -match 'tests|test_' } |
             Remove-Item -Force -ErrorAction SilentlyContinue
       
-      - name: Zip output
+      - name: Install 7-Zip
+        run: |
+          choco install 7zip -y
+      
+      - name: Create ZIP with 7-Zip (compatible)
         shell: pwsh
         run: |
-          Compress-Archive -Path dist/HokamaERP/* -DestinationPath HokamaERP-Windows.zip -CompressionLevel Optimal
+          & "C:\Program Files\7-Zip\7z.exe" a -tzip -mx=9 HokamaERP-Windows.zip .\dist\HokamaERP\*
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: HokamaERP-Windows
           path: HokamaERP-Windows.zip
-          compression-level: 9
+          compression-level: 0
