@@ -1,5 +1,6 @@
-# services/backup_service.py - النسخ الاحتياطي (v2.0)
+# services/backup_service.py - النسخ الاحتياطي (v2.1)
 # ✅ Connection Registry + مسار مطلق بجانب EXE
+# ✅ إصلاح: لا COMMIT بعد CREATE TABLE
 import sqlite3
 import shutil
 import os
@@ -15,7 +16,7 @@ from database import get_connection, close_connection, DB_PATH as _DB_PATH
 
 
 # ============================================================
-# ✅ المسارات المطلقة — تعمل في EXE وفي Python
+# المسارات المطلقة — تعمل في EXE وفي Python
 # ============================================================
 def _get_app_base():
     """مجلد التطبيق (جانب EXE أو المشروع)"""
@@ -25,7 +26,7 @@ def _get_app_base():
 
 
 APP_BASE = _get_app_base()
-DB_PATH = _DB_PATH   # ✅ من database.py مباشرة
+DB_PATH = _DB_PATH
 
 BACKUP_DIR = os.path.join(APP_BASE, "backups")
 METADATA_DIR = os.path.join(BACKUP_DIR, "metadata")
@@ -98,8 +99,7 @@ def create_backup_table(conn=None):
                 notes TEXT DEFAULT ''
             )
         """)
-        if own_conn:
-            conn.execute("COMMIT")
+        # ✅ لا COMMIT — CREATE TABLE في autocommit
     finally:
         if own_conn:
             close_connection(conn)
@@ -256,7 +256,6 @@ def create_backup(user="غير معروف", backup_type="يدوي", tables=None,
     with open(meta_filepath, 'w', encoding='utf-8') as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2)
 
-    # ✅ تسجيل في قاعدة البيانات — باستخدام Registry
     conn = get_connection()
     try:
         if not conn.in_transaction:
@@ -295,13 +294,9 @@ def create_backup(user="غير معروف", backup_type="يدوي", tables=None,
 
 # ---------- الاستعادة ----------
 def restore_backup(filename):
-    """
-    استعادة نسخة احتياطية.
-    ✅ المسارات مطلقة — تعمل في EXE.
-    """
+    """استعادة نسخة احتياطية"""
     filepath = os.path.join(BACKUP_DIR, filename)
 
-    # 1) فك التشفير إن كان
     if filename.endswith('.enc'):
         with open(filepath, 'rb') as f:
             encrypted_data = f.read()
@@ -316,7 +311,6 @@ def restore_backup(filename):
         filepath = temp_filepath
         filename = temp_filename
 
-    # 2) فك ضغط ZIP إن كان
     if filename.endswith('.zip'):
         with zipfile.ZipFile(filepath, 'r') as zf:
             db_files = [f for f in zf.namelist() if f.endswith('.db')]
@@ -327,13 +321,11 @@ def restore_backup(filename):
         filepath = os.path.join(BACKUP_DIR, db_filename)
         filename = db_filename
 
-    # 3) التحقق
     if not os.path.exists(filepath):
         return False, "الملف غير موجود"
     if not is_valid_backup(filepath):
         return False, "الملف تالف أو ليس قاعدة بيانات صالحة"
 
-    # 4) نسخة أمان قبل الاستعادة
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safety_file = os.path.join(BACKUP_DIR, f"pre_restore_{timestamp}.db")
     try:
@@ -341,7 +333,6 @@ def restore_backup(filename):
     except Exception:
         return False, "فشل إنشاء نسخة أمان قبل الاستعادة"
 
-    # 5) الاستعادة — باستخدام مسار مطلق
     try:
         shutil.copy2(filepath, DB_PATH)
     except Exception as e:
