@@ -1,12 +1,31 @@
 # database.py - قاعدة بيانات نظام حوكمة ERP (SQLite)
-# v5.0 — Connection Registry احترافي + rollback تلقائي عند الخطأ
+# v6.0 — مسار مطلق بجانب EXE (يعمل مع نسخ احتياطي واستيراد)
 import sqlite3
 import bcrypt
 import os
+import sys
 import threading
 import atexit
 
-DB_PATH = os.path.join("data", "erp.db")
+# ============================================================
+# ✅ تحديد مجلد قاعدة البيانات — مسار مطلق دائماً
+# ============================================================
+if getattr(sys, 'frozen', False):
+    # داخل EXE — بجانب HokamaERP.exe
+    _APP_BASE = os.path.dirname(sys.executable)
+else:
+    # تشغيل عادي بـ Python
+    _APP_BASE = os.path.dirname(os.path.abspath(__file__))
+
+# ضمان وجود مجلد data
+_DATA_DIR = os.path.join(_APP_BASE, "data")
+os.makedirs(_DATA_DIR, exist_ok=True)
+
+# المسار المطلق لقاعدة البيانات
+DB_PATH = os.path.join(_DATA_DIR, "erp.db")
+
+print(f"📁 قاعدة البيانات: {DB_PATH}")
+
 
 # ============================================================
 # 🧠 Connection Registry — نفس الاتصال لكل Thread
@@ -18,13 +37,14 @@ _all_connections = []
 
 def _create_connection():
     """إنشاء اتصال جديد مع كل إعدادات PRAGMA"""
-    os.makedirs("data", exist_ok=True)
+    # ✅ التأكد من وجود المجلد
+    os.makedirs(_DATA_DIR, exist_ok=True)
 
     conn = sqlite3.connect(
         DB_PATH,
         check_same_thread=False,
         timeout=30,
-        isolation_level=None   # ← Autocommit mode (نتحكم يدوياً)
+        isolation_level=None
     )
 
     # === إعدادات PRAGMA ===
@@ -50,9 +70,7 @@ def get_connection():
     if existing is not None:
         try:
             existing.execute("SELECT 1")
-            # ✅ فحص: هل هناك Transaction معلّقة؟
             if existing.in_transaction:
-                # ⚠️ يوجد BEGIN بلا COMMIT — نعمل rollback للحماية
                 try:
                     existing.execute("ROLLBACK")
                     print("⚠️ تم إلغاء Transaction معلّقة تلقائياً")
@@ -75,7 +93,7 @@ def get_connection():
 
 def close_connection(conn=None):
     """
-    ✅ نسخة ذكية: 
+    ✅ نسخة ذكية:
        - إن كان هناك Transaction معلّقة → rollback (حماية)
        - لا يُغلق الاتصال الفعلي (يبقى في Registry)
     """
@@ -85,7 +103,6 @@ def close_connection(conn=None):
 
     try:
         if target.in_transaction:
-            # ⚠️ Transaction مفتوحة بلا COMMIT → نُلغيها
             try:
                 target.execute("ROLLBACK")
             except Exception:
@@ -93,12 +110,11 @@ def close_connection(conn=None):
     except Exception:
         pass
 
-    # ✅ لا نُغلق — الاتصال يبقى في Registry
     return None
 
 
 def release_connection(conn=None):
-    """إغلاق نهائي حقيقي — يُستخدم نادراً"""
+    """إغلاق نهائي حقيقي"""
     target = conn if conn is not None else getattr(_local, "conn", None)
     if target is not None:
         try:
