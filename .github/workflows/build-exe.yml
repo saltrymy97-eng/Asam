@@ -33,7 +33,7 @@ jobs:
       
       - name: Build EXE (Optimized)
         run: |
-          pyinstaller --noconfirm --onedir --windowed --icon=icon.ico --name=HokamaERP --collect-submodules streamlit --collect-submodules webview --collect-submodules groq --collect-data streamlit --hidden-import streamlit.web.cli --hidden-import cryptography.fernet --hidden-import groq --hidden-import database --add-data "app.py;." --add-data "ui;ui" --add-data "services;services" --add-data "icon.ico;." --exclude-module tkinter --exclude-module matplotlib --exclude-module scipy --exclude-module IPython --exclude-module jupyter --exclude-module notebook --exclude-module pytest --exclude-module sphinx app_desktop.py
+          pyinstaller --noconfirm --onedir --windowed --icon=icon.ico --name=HokamaERP --copy-metadata streamlit --copy-metadata pandas --copy-metadata altair --copy-metadata numpy --copy-metadata plotly --collect-submodules streamlit --collect-submodules webview --collect-submodules groq --collect-data streamlit --hidden-import streamlit.web.cli --hidden-import cryptography.fernet --hidden-import groq --hidden-import database --add-data "app.py;." --add-data "ui;ui" --add-data "services;services" --add-data "icon.ico;." --exclude-module tkinter --exclude-module matplotlib --exclude-module scipy --exclude-module IPython --exclude-module jupyter --exclude-module notebook --exclude-module pytest --exclude-module sphinx app_desktop.py
       
       - name: Cleanup tests and pycache
         shell: pwsh
