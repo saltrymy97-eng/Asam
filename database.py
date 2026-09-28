@@ -24,7 +24,7 @@ os.makedirs(_DATA_DIR, exist_ok=True)
 # المسار المطلق لقاعدة البيانات
 DB_PATH = os.path.join(_DATA_DIR, "erp.db")
 
-print(f"📁 قاعدة البيانات: {DB_PATH}")
+print(f"قاعدة البيانات: {DB_PATH}")
 
 
 # ============================================================
