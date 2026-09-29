@@ -1,5 +1,5 @@
-# services/financial_service.py – القوائم المالية (v2.0)
-# ✅ Connection Registry — لا conn.close()
+# services/financial_service.py – القوائم المالية (v3.0)
+# ✅ Connection Registry + دعم الكود والاسم معاً في البحث
 import sqlite3
 import calendar
 from datetime import datetime
@@ -7,10 +7,43 @@ from database import get_connection, close_connection
 from services.chart_service import get_functional_account
 
 
+def _get_account_variants(account_code, conn):
+    """
+    يُرجع قائمة بأشكال البحث الممكنة للحساب:
+    - "1102"
+    - "1102 - البنك"
+    - "البنك"
+    """
+    variants = [str(account_code)]
+
+    # البحث عن الحساب في شجرة الحسابات
+    try:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT code, name FROM accounts WHERE code = ?",
+            (str(account_code),)
+        ).fetchone()
+
+        if row:
+            code = row["code"]
+            name = row["name"]
+            variants.append(f"{code} - {name}")
+            variants.append(name)
+    except Exception:
+        pass
+
+    # إزالة التكرار
+    return list(dict.fromkeys(variants))
+
+
 def get_account_balance(account_code, cost_center_id=None, as_of_date=None,
                         from_date=None, to_date=None, conn=None):
     """
     رصيد حساب معين بالعملة الأساسية.
+    ✅ يدعم البحث بـ:
+       - الكود: "1102"
+       - الاسم: "البنك"
+       - الكود + الاسم: "1102 - البنك"
     """
     own_conn = False
     if conn is None:
@@ -20,9 +53,16 @@ def get_account_balance(account_code, cost_center_id=None, as_of_date=None,
     try:
         conn.row_factory = sqlite3.Row
 
-        params = [account_code]
-        date_filter = ""
+        # ✅ الحصول على كل أشكال البحث الممكنة
+        variants = _get_account_variants(account_code, conn)
 
+        # ✅ بناء شرط WHERE ديناميكي
+        placeholders = " OR ".join(["jl.account_name = ?"] * len(variants))
+        where_account = f"({placeholders})"
+
+        params = list(variants)
+
+        date_filter = ""
         if from_date:
             date_filter += " AND je.date >= ?"
             params.append(from_date)
@@ -39,9 +79,9 @@ def get_account_balance(account_code, cost_center_id=None, as_of_date=None,
                 FROM cost_center_allocations cca
                 JOIN journal_lines jl ON cca.journal_line_id = jl.id
                 JOIN journal_entries je ON jl.entry_id = je.id
-                WHERE jl.account_name = ? AND cca.cost_center_id = ? {date_filter}
+                WHERE {where_account} AND cca.cost_center_id = ? {date_filter}
             """
-            params.insert(1, cost_center_id)
+            params.insert(len(variants), cost_center_id)
         else:
             query = f"""
                 SELECT 
@@ -49,7 +89,7 @@ def get_account_balance(account_code, cost_center_id=None, as_of_date=None,
                     COALESCE(SUM(jl.credit * COALESCE(jl.exchange_rate, 1.0)), 0) AS total_credit
                 FROM journal_lines jl
                 JOIN journal_entries je ON jl.entry_id = je.id
-                WHERE jl.account_name = ? {date_filter}
+                WHERE {where_account} {date_filter}
             """
 
         row = conn.execute(query, params).fetchone()
@@ -90,11 +130,36 @@ def get_all_active_accounts(cost_center_id=None, conn=None):
 
         accounts = []
         for row in rows:
-            code = row["code"]
+            code = row["code"]   # قد يكون "1102" أو "1102 - البنك" أو "البنك"
+
+            # ✅ البحث المرن في accounts
+            tree = None
+
+            # 1) بحث مباشر
             tree = conn.execute(
-                "SELECT name, is_debit, account_type FROM accounts WHERE code = ? OR name = ?",
+                "SELECT code, name, is_debit, account_type FROM accounts WHERE code = ? OR name = ?",
                 (code, code)
             ).fetchone()
+
+            # 2) إذا لم يوجد — جرّب استخراج الكود من "1102 - البنك"
+            if not tree and " - " in str(code):
+                extracted_code = str(code).split(" - ")[0].strip()
+                tree = conn.execute(
+                    "SELECT code, name, is_debit, account_type FROM accounts WHERE code = ?",
+                    (extracted_code,)
+                ).fetchone()
+                if tree:
+                    code = tree["code"]   # ✅ استخدم الكود النظيف
+
+            # 3) إذا لم يوجد — جرّب الكود من الاسم
+            if not tree:
+                # بحث بالاسم
+                tree = conn.execute(
+                    "SELECT code, name, is_debit, account_type FROM accounts WHERE name = ?",
+                    (code,)
+                ).fetchone()
+                if tree:
+                    code = tree["code"]   # ✅ استخدم الكود
 
             accounts.append({
                 "code": code,
@@ -103,7 +168,15 @@ def get_all_active_accounts(cost_center_id=None, conn=None):
                 "is_debit": (tree["is_debit"] == "debit") if tree else None
             })
 
-        return accounts
+        # ✅ إزالة التكرار (بعد التوحيد)
+        seen = set()
+        unique = []
+        for acc in accounts:
+            if acc["code"] not in seen:
+                seen.add(acc["code"])
+                unique.append(acc)
+
+        return unique
     finally:
         if own_conn:
             close_connection(conn)
@@ -210,7 +283,10 @@ def get_balance_sheet(cost_center_id=None, year=None, month=None, conn=None):
         equity_list = []
         total_equity = 0
 
-        retained_earnings_code = get_functional_account("retained_earnings", conn=conn)
+        try:
+            retained_earnings_code = get_functional_account("retained_earnings", conn=conn)
+        except Exception:
+            retained_earnings_code = "3201"
 
         for acc in all_accounts:
             code = acc["code"]
@@ -232,16 +308,6 @@ def get_balance_sheet(cost_center_id=None, year=None, month=None, conn=None):
                     category = "Liability"
                 elif prefix == "3":
                     category = "Equity"
-            else:
-                debit, credit = get_account_balance(
-                    code, cost_center_id=cost_center_id,
-                    as_of_date=as_of_date, conn=conn
-                )
-                net = debit - credit
-                if net > 0:
-                    category = "Asset"
-                elif net < 0:
-                    category = "Liability"
 
             if category is None:
                 continue
