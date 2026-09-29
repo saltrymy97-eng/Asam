@@ -1,7 +1,8 @@
-# ui/purchases_ui.py – واجهة المشتريات (v8.0)
-# ✅ دعم البنك والصندوق + السند اليدوي باختيار الحساب
+# ui/purchases_ui.py – واجهة المشتريات (v9.0)
+# ✅ كشف الأخطاء + طباعتها + إزالة rerun من finally
 import streamlit as st
 import pandas as pd
+import traceback
 from services.purchases_service import (
     get_suppliers,
     get_products_for_purchase,
@@ -41,7 +42,6 @@ PAYMENT_METHOD_LABELS = {
 
 
 def _read_amount_from_text(text_value, default=0.0, max_value=None):
-    """تحويل نص إلى رقم بأمان"""
     if text_value is None:
         return default
     text = str(text_value).strip().replace(",", "").replace(" ", "")
@@ -59,7 +59,6 @@ def _read_amount_from_text(text_value, default=0.0, max_value=None):
 
 
 def _format_account_label(acc):
-    """تنسيق عرض الحساب مع الرصيد والنوع"""
     icon = "💵" if acc["type"] == "cash" else "🏦"
     return (
         f"{icon} {acc['name']} ({acc['currency']}) — "
@@ -179,9 +178,6 @@ def show():
             balance_ok = True
 
             if payment_choice in ('cash', 'partial'):
-                # ============================================================
-                # ✅ استخدام القائمة الموحّدة (صناديق + بنوك)
-                # ============================================================
                 all_accounts = get_payment_accounts()
                 if not all_accounts:
                     st.error("⚠️ لا يوجد صندوق أو حساب بنكي. أضف صندوقاً أو بنكاً أولاً.")
@@ -201,7 +197,7 @@ def show():
                     paid_amount = total_purchase
                     st.info(f"💵 سيتم دفع {total_purchase:,.2f} {currency_code} للمورد فوراً")
 
-                else:  # partial
+                else:
                     st.markdown(f"**💵 المبلغ المدفوع الآن (من إجمالي {total_purchase:,.2f} {currency_code})**")
 
                     def _on_paid_change():
@@ -229,7 +225,6 @@ def show():
                         unsafe_allow_html=True
                     )
 
-                # ✅ فحص فوري للرصيد
                 if paid_amount > 0 and paid_amount > selected_acc['balance']:
                     st.error(
                         f"⚠️ **الرصيد غير كافٍ**\n\n"
@@ -273,11 +268,13 @@ def show():
                 st.session_state.saving_purchase = True
                 st.rerun()
 
+            # ✅ الحفظ مع كشف الأخطاء
             if st.session_state.saving_purchase:
+                st.session_state.saving_purchase = False
+
                 try:
                     actual_paid = st.session_state.get("final_paid_to_save", 0.0)
 
-                    # ✅ تحديد payment_method بناءً على نوع الحساب
                     if actual_paid == 0:
                         actual_method = 'credit'
                     elif selected_acc and selected_acc['type'] == 'bank':
@@ -285,22 +282,54 @@ def show():
                     else:
                         actual_method = 'cash'
 
-                    # 'mixed' إذا كان جزئي
                     if 0 < actual_paid < total_purchase:
                         actual_method = 'mixed'
 
-                    invoice_id, total, error = create_purchase_invoice(
-                        supplier_id=supplier_id,
-                        items=st.session_state.purchase_items,
-                        username=st.session_state.user.get('username', 'admin'),
-                        currency_code=currency_code,
-                        paid_amount=actual_paid,
-                        payment_method=actual_method,
-                        cash_account=cash_account
-                    )
+                    # ══════════════════════════════════════════════════
+                    # ✅ DEBUG: عرض المدخلات
+                    # ══════════════════════════════════════════════════
+                    with st.expander("🐛 Debug — المدخلات", expanded=True):
+                        st.json({
+                            "supplier_id": supplier_id,
+                            "items_count": len(st.session_state.purchase_items),
+                            "currency_code": currency_code,
+                            "actual_paid": actual_paid,
+                            "actual_method": actual_method,
+                            "cash_account": cash_account,
+                            "total_purchase": total_purchase,
+                        })
+
+                    # ══════════════════════════════════════════════════
+                    # ✅ استدعاء الدالة مع كشف الأخطاء
+                    # ══════════════════════════════════════════════════
+                    try:
+                        invoice_id, total, error = create_purchase_invoice(
+                            supplier_id=supplier_id,
+                            items=st.session_state.purchase_items,
+                            username=st.session_state.user.get('username', 'admin'),
+                            currency_code=currency_code,
+                            paid_amount=actual_paid,
+                            payment_method=actual_method,
+                            cash_account=cash_account
+                        )
+                    except Exception as call_err:
+                        st.error("❌ **استثناء من create_purchase_invoice:**")
+                        st.code(f"{type(call_err).__name__}: {call_err}")
+                        st.code(traceback.format_exc())
+                        st.stop()
+
+                    # ══════════════════════════════════════════════════
+                    # ✅ DEBUG: عرض النتيجة
+                    # ══════════════════════════════════════════════════
+                    with st.expander("🐛 Debug — النتيجة", expanded=True):
+                        st.json({
+                            "invoice_id": str(invoice_id) if invoice_id else None,
+                            "total": str(total) if total else None,
+                            "error": error,
+                        })
 
                     if error and invoice_id is None:
-                        st.error(f"❌ فشل في حفظ الفاتورة: {error}")
+                        st.error(f"❌ **فشل في حفظ الفاتورة:**\n\n```\n{error}\n```")
 
                     elif error and invoice_id is not None:
                         st.warning(
@@ -320,10 +349,11 @@ def show():
                         st.session_state.purchase_paid_final = 0.0
 
                 except Exception as e:
-                    st.error(f"❌ خطأ غير متوقع: {e}")
-                finally:
-                    st.session_state.saving_purchase = False
-                    st.rerun()
+                    st.error("❌ **خطأ غير متوقع في الواجهة:**")
+                    st.code(f"{type(e).__name__}: {e}")
+                    st.code(traceback.format_exc())
+
+                # ❌ لا st.rerun() هنا — لتظهر الرسائل
 
             if st.button("🗑️ مسح بنود المشتريات"):
                 st.session_state.purchase_items = []
@@ -389,13 +419,8 @@ def show():
                         f"| **طريقة الدفع:** {PAYMENT_METHOD_LABELS.get(inv_sel.get('payment_method'), '—')}"
                     )
 
-                    # ============================================================
-                    # ✅ إنشاء السند يدوياً — مع اختيار الحساب
-                    # ============================================================
                     if inv_sel.get('has_warning'):
-                        st.warning(
-                            f"⚠️ **تنبيه:** {inv_sel.get('reference', '')}"
-                        )
+                        st.warning(f"⚠️ **تنبيه:** {inv_sel.get('reference', '')}")
 
                         paid_amt = float(inv_sel.get('paid_amount', 0))
                         if paid_amt > 0:
@@ -419,7 +444,6 @@ def show():
                                 manual_idx = manual_labels.index(manual_selected_label)
                                 manual_acc = manual_accounts[manual_idx]
 
-                                # ✅ فحص الرصيد
                                 if paid_amt > manual_acc['balance']:
                                     st.error(
                                         f"⚠️ **الرصيد غير كافٍ في {manual_acc['name']}**\n\n"
@@ -452,9 +476,7 @@ def show():
                                             if verr:
                                                 st.error(f"❌ فشل: {verr}")
                                             else:
-                                                st.success(
-                                                    f"✅ تم إنشاء سند الصرف رقم {vid}"
-                                                )
+                                                st.success(f"✅ تم إنشاء سند الصرف رقم {vid}")
                                                 st.rerun()
         else:
             st.info("لا توجد فواتير مشتريات بعد")
@@ -470,7 +492,7 @@ def show():
         name = st.text_input("اسم المورد", key="supp_name")
         col1, col2 = st.columns(2)
         phone = col1.text_input("رقم الهاتف", key="supp_phone")
-        address = col2.text_input("العنوان", key="supp_addr")
+        address = col2.text_input("عنوان المورد", key="supp_addr")
 
         if st.button("➕ إضافة المورد", key="add_supp_btn"):
             if name:
