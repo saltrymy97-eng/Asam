@@ -293,8 +293,7 @@ def show():
     st.markdown(f"""
     <div style="margin-bottom:2rem; text-align:right;">
         <h1 style="color:{T}; font-size:2.8rem; margin:0; text-shadow:0 0 20px {PR};">💵 سندات القبض والصرف</h1>
-        <p style="color:{S}; font-size:1.2rem;">إدارة المقبوضات والمدفوعات (نقدي + بنكي) مع حماية الرصيد</p>
-    </div>
+        <p style="color:{S}; font-size:1.2rem;">إدارة المقبوضات والمدفوعات
     """, unsafe_allow_html=True)
 
     tab1, tab2, tab3, tab4 = st.tabs([
