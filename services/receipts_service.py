@@ -1,5 +1,6 @@
-# services/receipts_service.py – سندات القبض والصرف الاحترافية (v6.0)
+# services/receipts_service.py – سندات القبض والصرف الاحترافية (v7.0)
 # ✅ دعم البنك والصندوق + فحص الرصيد
+# ✅ إصلاح: لا Transaction جديدة عند تمرير conn
 import sqlite3
 from datetime import date
 from database import get_connection, close_connection
@@ -43,15 +44,10 @@ def create_vouchers_table(conn=None):
 
 
 # ============================================================
-# ✅ دالة محدّثة: تدعم الصناديق والبنوك
+# دالة محدّثة: تدعم الصناديق والبنوك
 # ============================================================
 def get_cash_accounts(conn=None):
-    """
-    جلب كل الحسابات القابلة للقبض/الصرف (صناديق + بنوك).
-    
-    Returns:
-        list of {id, code, name, type, balance, currency}
-    """
+    """جلب كل الحسابات القابلة للقبض/الصرف (صناديق + بنوك)."""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -59,7 +55,6 @@ def get_cash_accounts(conn=None):
     try:
         result = []
 
-        # 1) الصناديق
         try:
             cash_rows = conn.execute("""
                 SELECT id, name, currency_code, current_balance, account_code
@@ -80,7 +75,6 @@ def get_cash_accounts(conn=None):
         except Exception:
             pass
 
-        # 2) البنوك
         try:
             bank_rows = conn.execute("""
                 SELECT id, bank_name, account_number, currency_code,
@@ -110,26 +104,21 @@ def get_cash_accounts(conn=None):
 
 
 def get_payment_accounts(conn=None):
-    """Alias للتوافق مع الواجهات الأخرى"""
     return get_cash_accounts(conn=conn)
 
 
 def get_bank_accounts_for_receipts(conn=None):
-    """جلب البنوك فقط (للاستخدام في الواجهات)"""
     return [a for a in get_cash_accounts(conn=conn) if a["type"] == "bank"]
 
 
 def get_cash_only_accounts(conn=None):
-    """جلب الصناديق فقط"""
     return [a for a in get_cash_accounts(conn=conn) if a["type"] == "cash"]
 
 
 # ============================================================
-# ✅ الربط اليدوي وإدارة العلاقات
+# الربط اليدوي وإدارة العلاقات
 # ============================================================
-
 def get_voucher_linked_amount(voucher_id, conn=None):
-    """حساب المبلغ الإجمالي الذي تم ربطه من هذا السند"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -146,7 +135,6 @@ def get_voucher_linked_amount(voucher_id, conn=None):
 
 
 def get_unlinked_vouchers(party_type=None, party_id=None, limit=100, conn=None):
-    """جلب السندات غير المربوطة بالكامل"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -183,7 +171,6 @@ def get_unlinked_vouchers(party_type=None, party_id=None, limit=100, conn=None):
 
 
 def get_vouchers_by_party(party_type, party_id, limit=50, conn=None):
-    """جلب جميع سندات طرف معين"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -206,7 +193,6 @@ def get_vouchers_by_party(party_type, party_id, limit=50, conn=None):
 
 
 def get_party_invoices_with_status(party_type, party_id, only_pending=True, conn=None):
-    """جلب فواتير طرف معين مع حالتها الحالية"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -239,9 +225,13 @@ def get_party_invoices_with_status(party_type, party_id, only_pending=True, conn
             close_connection(conn)
 
 
+# ============================================================
+# ✅ link_voucher_to_invoice — لا Transaction جديدة إذا conn مُمرَّر
+# ============================================================
 def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
     """
     ربط سند بفاتورة.
+    ✅ إصلاح: لا BEGIN/COMMIT إذا conn مُمرَّر (نحن داخل Transaction).
     ✅ يكتشف نوع الدفع بدقة (بنكي/نقدي) من حساب السند.
     """
     if amount is None or float(amount) <= 0:
@@ -253,15 +243,18 @@ def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
         own_conn = True
 
     try:
+        # ✅ BEGIN فقط إذا كنا نملك الاتصال
         if own_conn:
-            conn.execute("BEGIN")
+            conn.execute("BEGIN IMMEDIATE")
 
         inv = conn.execute(
             "SELECT id, type, total, paid_amount, remaining_amount FROM invoices WHERE id=?",
             (invoice_id,)
         ).fetchone()
         if not inv:
-            if own_conn: conn.rollback()
+            if own_conn:
+                try: conn.execute("ROLLBACK")
+                except Exception: pass
             return False, f"الفاتورة #{invoice_id} غير موجودة"
 
         inv = dict(inv) if not isinstance(inv, dict) else inv
@@ -270,7 +263,9 @@ def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
         remaining = total - paid
 
         if float(amount) > remaining + 0.01:
-            if own_conn: conn.rollback()
+            if own_conn:
+                try: conn.execute("ROLLBACK")
+                except Exception: pass
             return False, (
                 f"المبلغ المُدخل ({float(amount):,.2f}) أكبر من المتبقي "
                 f"({remaining:,.2f}) على الفاتورة #{invoice_id}"
@@ -283,7 +278,9 @@ def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
                 (voucher_id,)
             ).fetchone()
             if not v_row:
-                if own_conn: conn.rollback()
+                if own_conn:
+                    try: conn.execute("ROLLBACK")
+                    except Exception: pass
                 return False, f"السند #{voucher_id} غير موجود"
 
             v_amount = float(v_row["amount"] or 0)
@@ -295,19 +292,18 @@ def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
             voucher_remaining = v_amount - linked
 
             if float(amount) > voucher_remaining + 0.01:
-                if own_conn: conn.rollback()
+                if own_conn:
+                    try: conn.execute("ROLLBACK")
+                    except Exception: pass
                 return False, (
                     f"المبلغ المُدخل ({float(amount):,.2f}) أكبر من المتبقي من السند "
                     f"({voucher_remaining:,.2f})"
                 )
 
-        # ============================================================
-        # ✅ تحديد نوع الدفع: من نوع الحساب (بنك أم صندوق)
-        # ============================================================
+        # ✅ تحديد نوع الدفع
         payment_method = 'cash'
         if voucher_id and v_row:
             acc_code = v_row["account"]
-            # فحص الحساب في bank_accounts
             bank_row = conn.execute(
                 "SELECT id FROM bank_accounts WHERE account_code = ? AND is_active = 1 LIMIT 1",
                 (acc_code,)
@@ -342,14 +338,15 @@ def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
             WHERE id = ?
         """, (new_paid, new_remaining, new_status, invoice_id))
 
+        # ✅ COMMIT فقط إذا كنا نملك الاتصال
         if own_conn:
-            conn.commit()
+            conn.execute("COMMIT")
 
         return True, None
 
     except Exception as e:
         if own_conn:
-            try: conn.rollback()
+            try: conn.execute("ROLLBACK")
             except Exception: pass
         return False, str(e)
     finally:
@@ -358,7 +355,6 @@ def link_voucher_to_invoice(voucher_id, invoice_id, amount, conn=None):
 
 
 def unlink_voucher_from_invoice(payment_id, conn=None):
-    """إلغاء ربط دفعة بفاتورة"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -366,14 +362,16 @@ def unlink_voucher_from_invoice(payment_id, conn=None):
 
     try:
         if own_conn:
-            conn.execute("BEGIN")
+            conn.execute("BEGIN IMMEDIATE")
 
         row = conn.execute(
             "SELECT invoice_id, voucher_id, amount FROM invoice_payments WHERE id=?",
             (payment_id,)
         ).fetchone()
         if not row:
-            if own_conn: conn.rollback()
+            if own_conn:
+                try: conn.execute("ROLLBACK")
+                except Exception: pass
             return False, f"الدفعة #{payment_id} غير موجودة"
 
         row = dict(row) if not isinstance(row, dict) else row
@@ -407,12 +405,12 @@ def unlink_voucher_from_invoice(payment_id, conn=None):
             """, (new_paid, new_remaining, new_status, invoice_id))
 
         if own_conn:
-            conn.commit()
+            conn.execute("COMMIT")
         return True, None
 
     except Exception as e:
         if own_conn:
-            try: conn.rollback()
+            try: conn.execute("ROLLBACK")
             except Exception: pass
         return False, str(e)
     finally:
@@ -423,9 +421,7 @@ def unlink_voucher_from_invoice(payment_id, conn=None):
 # ============================================================
 # الأرصدة والفواتير المعلقة
 # ============================================================
-
 def get_customers_with_balances(conn=None):
-    """جلب العملاء مع رصيدهم المستحق"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -448,7 +444,6 @@ def get_customers_with_balances(conn=None):
 
 
 def get_suppliers_with_balances(conn=None):
-    """جلب الموردين مع رصيدهم المستحق"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -482,14 +477,7 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
                    voucher_date=None, auto_link=True, conn=None):
     """
     إنشاء سند قبض أو صرف.
-    
-    Args:
-        voucher_type: 'receipt' (قبض) أو 'payment' (صرف)
-        account:      كود الصندوق/البنك (يُحدَّد من الواجهة)
-        conn:         اتصال خارجي (اختياري)
-    
-    ✅ فحص الرصيد قبل سند الصرف.
-    ✅ دعم الصندوق والبنك.
+    ✅ إصلاح: لا Transaction جديدة عند تمرير conn.
     """
     if voucher_date is None:
         voucher_date = date.today().strftime("%Y-%m-%d")
@@ -503,8 +491,9 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
         own_conn = True
 
     try:
+        # ✅ BEGIN فقط إذا كنا نملك الاتصال
         if own_conn:
-            conn.execute("BEGIN")
+            conn.execute("BEGIN IMMEDIATE")
 
         # ✅ فحص الرصيد قبل سند الصرف
         if voucher_type == 'payment':
@@ -512,30 +501,9 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
             ok, err = check_sufficient_balance(account, float(amount), conn=conn)
             if not ok:
                 if own_conn:
-                    conn.rollback()
+                    try: conn.execute("ROLLBACK")
+                    except Exception: pass
                 return None, f"لا يمكن إنشاء سند الصرف: {err}"
-
-        # إنشاء الجدول من نفس الاتصال
-        try:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS vouchers (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    type TEXT NOT NULL,
-                    date TEXT NOT NULL,
-                    party_type TEXT NOT NULL,
-                    party_id INTEGER,
-                    amount REAL NOT NULL,
-                    account TEXT NOT NULL,
-                    invoice_id INTEGER,
-                    journal_entry_id INTEGER,
-                    reference TEXT,
-                    notes TEXT,
-                    created_by TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-        except Exception:
-            pass
 
         # 1. إدراج السند
         cur = conn.execute("""
@@ -588,23 +556,22 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
             conn=conn
         )
         if error:
-            raise Exception(f"فشل القيد المحاسبي: {error}")
+            if own_conn:
+                try: conn.execute("ROLLBACK")
+                except Exception: pass
+            return None, f"فشل القيد المحاسبي: {error}"
 
         conn.execute("UPDATE vouchers SET journal_entry_id=? WHERE id=?",
                     (entry_id, voucher_id))
 
-        # ============================================================
-        # 4. ✅ ربط السند بالصندوق أو البنك — من نفس الاتصال
-        # ============================================================
+        # 4. ربط السند بالصندوق/البنك
         try:
-            # فحص: هل الحساب بنكي؟
             bank_row = conn.execute(
                 "SELECT id FROM bank_accounts WHERE account_code = ? AND is_active = 1 LIMIT 1",
                 (account,)
             ).fetchone()
 
             if bank_row:
-                # ✅ بنكي
                 from services.bank_service import add_bank_transaction
                 trans_type = "deposit" if voucher_type == "receipt" else "withdrawal"
                 try:
@@ -619,9 +586,8 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
                         skip_balance_check=True,
                     )
                 except Exception as e:
-                    print(f"⚠️ فشل ربط السند بالبنك: {e}")
+                    print(f"WARN: فشل ربط السند بالبنك: {e}")
             else:
-                # ✅ نقدي
                 from services.cash_service import add_cash_transaction
 
                 _rows = conn.execute(
@@ -650,9 +616,9 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
                         skip_balance_check=True
                     )
                     if not ok:
-                        print(f"⚠️ فشل ربط السند بالصندوق: {msg}")
+                        print(f"WARN: فشل ربط السند بالصندوق: {msg}")
         except Exception as e:
-            print(f"⚠️ خطأ ربط السند: {e}")
+            print(f"WARN: خطأ ربط السند: {e}")
 
         # 5. الربط التلقائي بالفاتورة
         if invoice_id and auto_link:
@@ -663,10 +629,13 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
                 conn=conn
             )
             if not ok:
-                raise Exception(f"فشل ربط السند بالفاتورة: {err}")
+                if own_conn:
+                    try: conn.execute("ROLLBACK")
+                    except Exception: pass
+                return None, f"فشل ربط السند بالفاتورة: {err}"
 
         if own_conn:
-            conn.commit()
+            conn.execute("COMMIT")
 
         log_action(
             username=created_by,
@@ -680,7 +649,7 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
 
     except Exception as e:
         if own_conn:
-            try: conn.rollback()
+            try: conn.execute("ROLLBACK")
             except Exception: pass
         return None, str(e)
     finally:
@@ -691,7 +660,6 @@ def create_voucher(voucher_type, party_type, party_id, amount, account,
 # ============================================================
 # العرض والتفاصيل
 # ============================================================
-
 def get_vouchers(limit=50):
     conn = get_connection()
     try:
