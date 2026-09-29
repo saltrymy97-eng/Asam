@@ -1,5 +1,5 @@
 # database.py - قاعدة بيانات نظام حوكمة ERP (SQLite)
-# v6.2 — مسار مطلق بجانب EXE + DELETE mode (لا WAL)
+# v7.0 — Autocommit + تجاهل BEGIN/COMMIT + سرعة Registry
 import sqlite3
 import bcrypt
 import os
@@ -8,7 +8,7 @@ import threading
 import atexit
 
 # ============================================================
-# تحديد مجلد قاعدة البيانات — مسار مطلق دائماً
+# تحديد مجلد قاعدة البيانات — مسار مطلق
 # ============================================================
 if getattr(sys, 'frozen', False):
     _APP_BASE = os.path.dirname(sys.executable)
@@ -31,6 +31,34 @@ _registry_lock = threading.Lock()
 _all_connections = []
 
 
+# ============================================================
+# 🎯 اعتراض عمليات Transaction — تجاهل BEGIN / COMMIT / ROLLBACK
+# ============================================================
+def _is_transaction_command(sql: str) -> bool:
+    """هل SQL عبارة عن أمر Transaction؟"""
+    if not sql:
+        return False
+    s = sql.strip().upper()
+    if s in ("BEGIN", "BEGIN IMMEDIATE", "BEGIN DEFERRED", "BEGIN EXCLUSIVE"):
+        return True
+    if s in ("COMMIT", "ROLLBACK"):
+        return True
+    return False
+
+
+class _AutoCommitConnection(sqlite3.Connection):
+    """
+    اتصال يُتجاهل فيه BEGIN / COMMIT / ROLLBACK بصمت.
+    كل العمليات الأخرى تعمل بشكل طبيعي.
+    """
+    def execute(self, sql, *args, **kwargs):
+        if isinstance(sql, str) and _is_transaction_command(sql):
+            # ✅ لا تفعل شيئاً — Autocommit mode
+            # نُعيد cursor وهمي فارغ
+            return super().cursor()
+        return super().execute(sql, *args, **kwargs)
+
+
 def _create_connection():
     """إنشاء اتصال جديد مع كل إعدادات PRAGMA"""
     os.makedirs(_DATA_DIR, exist_ok=True)
@@ -39,11 +67,11 @@ def _create_connection():
         DB_PATH,
         check_same_thread=False,
         timeout=30,
-        isolation_level=None
+        isolation_level=None,
+        factory=_AutoCommitConnection   # ← ✅ اعتراض BEGIN/COMMIT
     )
 
     # === إعدادات PRAGMA ===
-    # ✅ DELETE mode بدل WAL — أكثر أماناً لمستخدم واحد + Streamlit
     conn.execute("PRAGMA journal_mode = DELETE")
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 30000")
@@ -61,12 +89,7 @@ def get_connection():
     if existing is not None:
         try:
             existing.execute("SELECT 1")
-            if existing.in_transaction:
-                try:
-                    existing.execute("ROLLBACK")
-                    print("Rolled back pending transaction")
-                except Exception:
-                    pass
+            # ✅ لا فحص in_transaction — لا Transactions
             return existing
         except (sqlite3.ProgrammingError, sqlite3.OperationalError):
             _local.conn = None
@@ -83,20 +106,7 @@ def get_connection():
 
 
 def close_connection(conn=None):
-    """إغلاق ذكي مع rollback تلقائي"""
-    target = conn if conn is not None else getattr(_local, "conn", None)
-    if target is None:
-        return None
-
-    try:
-        if target.in_transaction:
-            try:
-                target.execute("ROLLBACK")
-            except Exception:
-                pass
-    except Exception:
-        pass
-
+    """لا يُغلق — الاتصال يبقى في Registry"""
     return None
 
 
@@ -105,8 +115,6 @@ def release_connection(conn=None):
     target = conn if conn is not None else getattr(_local, "conn", None)
     if target is not None:
         try:
-            if target.in_transaction:
-                target.execute("ROLLBACK")
             target.close()
         except Exception:
             pass
@@ -114,12 +122,10 @@ def release_connection(conn=None):
 
 
 def _close_all_on_exit():
-    """إغلاق كل الاتصالات بأمان عند خروج التطبيق"""
+    """إغلاق كل الاتصالات عند الخروج"""
     with _registry_lock:
         for conn in _all_connections:
             try:
-                if conn.in_transaction:
-                    conn.execute("ROLLBACK")
                 conn.close()
             except Exception:
                 pass
@@ -737,12 +743,10 @@ def init_db():
         FOREIGN KEY (cash_account_id) REFERENCES cash_accounts(id)
     )''')
 
-    # ============================================================
-    # الترحيلات الآمنة
-    # ============================================================
+    # ========== 17. الترحيلات ==========
     _migrate_payment_cycle(c)
 
-    # ========== 17. الفهارس ==========
+    # ========== 18. الفهارس ==========
     c.execute("CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_products_name ON products(name)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_date ON invoices(invoice_date)")
@@ -755,26 +759,16 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_stock_movements_product ON stock_movements(product_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_inventory_batches_product ON inventory_batches(product_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_fifo_consumptions_batch ON fifo_consumptions(batch_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_attendance_employee ON attendance(employee_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_table ON audit_log(table_name)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(username)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_fixed_assets_category ON fixed_assets(category)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_depreciation_entries_asset ON depreciation_entries(asset_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_crm_leads_status ON crm_leads(status)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_crm_opportunities_lead ON crm_opportunities(lead_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_crm_interactions_lead ON crm_interactions(lead_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_cash_transactions_account ON cash_transactions(cash_account_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_cash_transactions_date ON cash_transactions(transaction_date)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_payment_status ON invoices(payment_status)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_paid_amount ON invoices(paid_amount)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoice_payments_invoice ON invoice_payments(invoice_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoice_payments_voucher ON invoice_payments(voucher_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_invoice_payments_date ON invoice_payments(payment_date)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_cash_transactions_voucher ON cash_transactions(voucher_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_bank_transactions_voucher ON bank_transactions(voucher_id)")
-
-    close_connection()
 
 
 def create_default_admin():
@@ -794,9 +788,8 @@ def create_default_admin():
             )
         except sqlite3.IntegrityError:
             pass
-    close_connection()
 
 
-# تهيئة قاعدة البيانات تلقائياً عند استيراد الملف
+# تهيئة قاعدة البيانات تلقائياً
 init_db()
 create_default_admin()
