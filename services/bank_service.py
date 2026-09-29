@@ -1,5 +1,5 @@
-# services/bank_service.py – منطق التعاملات البنكية (v3.0)
-# ✅ Connection Registry + حماية الرصيد + إصلاح Deadlock
+# services/bank_service.py – منطق التعاملات البنكية (v4.0)
+# ✅ Connection Registry + حماية الرصيد + إصلاح Deadlock + التحقق قبل الإضافة
 import sqlite3
 from datetime import date, datetime
 from database import get_connection, close_connection
@@ -66,6 +66,7 @@ def create_bank_account(bank_name, account_number, account_name="",
                         account_code=None, conn=None):
     """
     إضافة حساب بنكي جديد.
+    ✅ إصلاح: التحقق من الحسابات المطلوبة قبل الإضافة.
     ✅ إصلاح Deadlock - كل شيء في Transaction واحدة.
     """
     own_conn = False
@@ -74,12 +75,28 @@ def create_bank_account(bank_name, account_number, account_name="",
         own_conn = True
 
     try:
-        # ✅ BEGIN IMMEDIATE - لكل شيء
         if own_conn:
             conn.execute("BEGIN IMMEDIATE")
 
+        # ✅ التحقق من حساب البنك أولاً
         final_account_code = account_code or get_functional_account("bank")
+        if not final_account_code:
+            raise ValueError(
+                "حساب البنك مفقود في شجرة الحسابات. "
+                "أضف حساباً بالنوع الوظيفي 'bank' أولاً."
+            )
 
+        # ✅ التحقق من حساب رأس المال (قبل الإضافة)
+        capital_account_code = None
+        if opening_balance > 0:
+            capital_account_code = get_functional_account("capital")
+            if not capital_account_code:
+                raise ValueError(
+                    "حساب رأس المال مفقود في شجرة الحسابات. "
+                    "أضف حساباً بالنوع الوظيفي 'capital' أولاً."
+                )
+
+        # ✅ الآن نُضيف — كل شيء جاهز
         conn.execute(
             """INSERT INTO bank_accounts 
                (bank_name, account_number, account_name, currency_code, 
@@ -89,12 +106,8 @@ def create_bank_account(bank_name, account_number, account_name="",
              opening_balance, opening_balance, final_account_code)
         )
 
-        # ✅ قيد الرصيد الافتتاحي - بنفس الاتصال
+        # ✅ قيد الرصيد الافتتاحي — بنفس الاتصال
         if opening_balance > 0:
-            capital_account_code = get_functional_account("capital")
-            if not capital_account_code:
-                capital_account_code = "3101"
-
             lines = [
                 {
                     "account": final_account_code,
@@ -120,15 +133,13 @@ def create_bank_account(bank_name, account_number, account_name="",
                 skip_period_check=True
             )
 
-            # فحص نتيجة القيد
             if isinstance(_journal_result, tuple):
                 entry_id, err = _journal_result
                 if err:
                     raise ValueError(f"فشل القيد الافتتاحي: {err}")
 
-        # ✅ commit واحد في النهاية
         if own_conn:
-            conn.commit()
+            conn.execute("COMMIT")
 
         return True
 
@@ -185,7 +196,7 @@ def update_bank_account(account_id, bank_name=None, account_number=None,
         values.append(account_id)
         conn.execute(f"UPDATE bank_accounts SET {', '.join(fields)} WHERE id = ?", values)
         if own_conn:
-            conn.commit()
+            conn.execute("COMMIT")
     except Exception as e:
         if own_conn:
             try:
@@ -263,7 +274,6 @@ def update_bank_balance(account_id, conn=None):
         if own_conn:
             conn.execute("BEGIN IMMEDIATE")
 
-        # ✅ حساب ذرّي في UPDATE واحد
         conn.execute("""
             UPDATE bank_accounts
             SET current_balance = opening_balance + COALESCE((
@@ -277,7 +287,6 @@ def update_bank_balance(account_id, conn=None):
             WHERE id = ?
         """, (account_id, account_id))
 
-        # قراءة الرصيد الجديد
         row = conn.execute(
             "SELECT current_balance FROM bank_accounts WHERE id = ?",
             (account_id,)
@@ -285,7 +294,7 @@ def update_bank_balance(account_id, conn=None):
         new_balance = float(row["current_balance"] or 0) if row else 0.0
 
         if own_conn:
-            conn.commit()
+            conn.execute("COMMIT")
         return new_balance
 
     except Exception as e:
@@ -413,11 +422,10 @@ def add_bank_transaction(bank_account_id, transaction_date, description,
              amount, reference, reconciled_flag, journal_id)
         )
 
-        # ✅ تحديث الرصيد بنفس الاتصال
         update_bank_balance(bank_account_id, conn=conn)
 
         if own_conn:
-            conn.commit()
+            conn.execute("COMMIT")
 
         return True
     except Exception as e:
@@ -462,7 +470,6 @@ def transfer_between_banks(from_account_id, to_account_id, amount,
         if not from_acc or not to_acc:
             raise ValueError("أحد الحسابات البنكية غير موجود")
 
-        # ✅ فحص الرصيد قبل التحويل
         ok, err = check_bank_sufficient_balance(from_account_id, amount, conn=conn)
         if not ok:
             if own_conn:
@@ -512,7 +519,6 @@ def transfer_between_banks(from_account_id, to_account_id, amount,
         else:
             journal_id = _journal_result
 
-        # ✅ نسجل الحركتين - بنفس الاتصال
         add_bank_transaction(
             from_account_id, transfer_date,
             f"تحويل إلى {to_acc['bank_name']}", 'transfer_out',
@@ -526,7 +532,7 @@ def transfer_between_banks(from_account_id, to_account_id, amount,
         )
 
         if own_conn:
-            conn.commit()
+            conn.execute("COMMIT")
 
         return journal_id
     except Exception as e:
@@ -593,7 +599,7 @@ def reconcile_transaction(transaction_id, journal_line_id=None, conn=None):
                 (transaction_id,)
             )
         if own_conn:
-            conn.commit()
+            conn.execute("COMMIT")
         return True
     except Exception as e:
         if own_conn:
@@ -655,7 +661,7 @@ def create_bank_reconciliation(bank_account_id, reconciliation_date,
              book_balance, difference)
         )
         if own_conn:
-            conn.commit()
+            conn.execute("COMMIT")
         return True, difference
     except Exception as e:
         if own_conn:
