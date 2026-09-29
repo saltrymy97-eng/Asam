@@ -1,5 +1,5 @@
-# ui/inventory_ui.py – واجهة المخزون (v2.0)
-# ✅ close_connection بدل conn.close() + بطاقة الرصيد + تحقق محسّن
+# ui/inventory_ui.py – واجهة المخزون (v3.0)
+# ✅ حذف حقل البحث — الإبقاء على فلتر الفئة
 import streamlit as st
 import pandas as pd
 from services.inventory_service import (
@@ -9,9 +9,8 @@ from services.inventory_service import (
     get_stock_movements,
     get_low_stock_products,
     get_products_for_select,
-    get_product_quantity,      # ✅ جديد — أخف من فتح اتصال
+    get_product_quantity,
 )
-from services.purchases_service import create_purchase_invoice  # اختياري للشراء السريع
 
 # ========== ألوان ==========
 TEXT_PRIMARY = "#F8FAFC"
@@ -86,26 +85,14 @@ def show():
         if products:
             df = pd.DataFrame(products)
 
-            # ✅ فلترة سريعة
-            col_search, col_filter = st.columns([3, 1])
-            with col_search:
-                search = st.text_input("🔍 بحث (اسم / باركود)",
-                                       key="prod_search",
-                                       placeholder="اكتب للبحث...")
-            with col_filter:
-                categories = ["الكل"] + sorted(
-                    set(p.get("category") or "—" for p in products)
-                )
-                cat_filter = st.selectbox("الفئة", categories,
-                                           key="prod_cat_filter")
+            # ✅ فلتر الفئة فقط
+            categories = ["الكل"] + sorted(
+                set(p.get("category") or "—" for p in products)
+            )
+            cat_filter = st.selectbox("الفئة", categories,
+                                       key="prod_cat_filter")
 
             df_view = df.copy()
-            if search:
-                mask = (
-                    df_view['name'].astype(str).str.contains(search, case=False, na=False) |
-                    df_view.get('barcode', pd.Series(dtype=str)).astype(str).str.contains(search, case=False, na=False)
-                )
-                df_view = df_view[mask]
             if cat_filter != "الكل":
                 df_view = df_view[df_view['category'] == cat_filter]
 
@@ -186,10 +173,8 @@ def show():
             product = product_options[selected_name]
             product_id = product['id']
 
-            # ✅ استخدام get_product_quantity (لا فتح اتصال يدوي)
             current_qty = get_product_quantity(product_id) or 0.0
 
-            # جلب حد الطلب لعرض التحذير اللوني
             products_all = get_all_products()
             this_prod = next((p for p in products_all if p['id'] == product_id), None)
             reorder = float(this_prod.get('reorder_level', 0) or 0) if this_prod else 0
@@ -211,7 +196,6 @@ def show():
                 key="move_qty"
             )
 
-            # ✅ فحص فوري (لا نُعيد تعيين quantity — نعطّل الزر)
             is_out = "خارج" in move_type
             has_shortage = is_out and quantity > current_qty + 0.0001
 
@@ -252,7 +236,6 @@ def show():
         movements = get_stock_movements()
         if movements:
             df_mv = pd.DataFrame(movements)
-            # ترجمة النوع
             if 'type' in df_mv.columns:
                 df_mv['type'] = df_mv['type'].apply(
                     lambda x: "🟢 داخل" if x == "in" else "🔴 خارج"
@@ -271,7 +254,6 @@ def show():
         if low_stock:
             st.warning(f"يوجد **{len(low_stock)}** منتج تحت حد الطلب:")
             df_low = pd.DataFrame(low_stock)
-            # عرض النقص أيضاً
             if 'quantity' in df_low.columns and 'reorder_level' in df_low.columns:
                 df_low['النقص'] = df_low['reorder_level'].astype(float) - df_low['quantity'].astype(float)
             st.dataframe(df_low, use_container_width=True, hide_index=True)
