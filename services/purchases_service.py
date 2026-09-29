@@ -1,5 +1,6 @@
-# services/purchases_service.py – منطق أعمال المشتريات (v8.0)
+# services/purchases_service.py – منطق أعمال المشتريات (v9.0)
 # ✅ دعم البنك والصندوق + فحص الرصيد + إنشاء سند يدوي بمرونة
+# ✅ إصلاح: تمرير conn لإنشاء السند داخل نفس Transaction
 import sqlite3
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
@@ -84,15 +85,16 @@ def get_products_for_purchase():
 
 
 # ============================================================
-# 🎯 المرحلة 1: حفظ الفاتورة + القيد
+# 🎯 المرحلة 1: حفظ الفاتورة + القيد + السند (كل شيء في Transaction واحدة)
 # ============================================================
 def _save_invoice_core(supplier_id, items, username, currency_code,
                        exchange_rate, paid_amount_dec, remaining_dec,
                        payment_method, payment_status, total_local, total_base,
-                       subtotal_local, vat_amount_local, vat_rate):
+                       subtotal_local, vat_amount_local, vat_rate,
+                       cash_account=None):
     """
-    حفظ الفاتورة + القيد المحاسبي.
-    ✅ الفاتورة تُحفظ بحالة 'unpaid' (paid_amount=0، remaining=total)
+    حفظ الفاتورة + القيد المحاسبي + السند (إن وُجد دفع).
+    ✅ كل شيء في Transaction واحدة.
     """
     conn = get_connection()
     try:
@@ -121,7 +123,7 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
                 base_price = _to_decimal(row["purchase_price"])
             product_prices[item["product_id"]] = base_price
 
-        # ✅ إدراج الفاتورة — بدون paid_amount
+        # ✅ إدراج الفاتورة
         cur = conn.execute(
             """INSERT INTO invoices 
                (type, supplier_id, invoice_date, total, total_base, status, 
@@ -208,12 +210,28 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
         if entry_error:
             raise Exception(f"فشل إنشاء القيد المحاسبي: {entry_error}")
 
-        conn.commit()
+        # ✅ السند — بنفس الاتصال (إن وُجد دفع)
+        voucher_id = None
+        if paid_amount_dec > 0 and cash_account:
+            v_id, verr = _save_payment_side(
+                invoice_id=invoice_id,
+                supplier_id=supplier_id,
+                supplier_name=supplier_name,
+                paid_amount_dec=paid_amount_dec,
+                cash_account=cash_account,
+                username=username,
+                conn=conn
+            )
+            if verr:
+                raise Exception(f"فشل إنشاء سند الصرف: {verr}")
+            voucher_id = v_id
+
+        conn.execute("COMMIT")
         return invoice_id, supplier_name, None
 
     except Exception as e:
         try:
-            conn.rollback()
+            conn.execute("ROLLBACK")
         except Exception:
             pass
         return None, None, str(e)
@@ -222,22 +240,22 @@ def _save_invoice_core(supplier_id, items, username, currency_code,
 
 
 # ============================================================
-# 🎯 المرحلة 2: سند الصرف — مع فحص الرصيد
+# 🎯 المرحلة 2: سند الصرف — داخل نفس الاتصال
 # ============================================================
 def _save_payment_side(invoice_id, supplier_id, supplier_name,
-                       paid_amount_dec, cash_account, username):
+                       paid_amount_dec, cash_account, username, conn=None):
     """
-    إنشاء السند + تحديث الفاتورة تلقائياً.
+    إنشاء السند داخل نفس الاتصال.
     ✅ فحص الرصيد قبل محاولة الدفع.
     """
     if paid_amount_dec <= 0 or not cash_account:
         return None, None
 
-    # ✅ فحص الرصيد قبل استدعاء create_voucher
+    # ✅ فحص الرصيد
     try:
         from services.cash_service import check_sufficient_balance
         ok, balance_err = check_sufficient_balance(
-            cash_account, float(paid_amount_dec)
+            cash_account, float(paid_amount_dec), conn=conn
         )
         if not ok:
             return None, f"الرصيد غير كافٍ — {balance_err}"
@@ -257,7 +275,7 @@ def _save_payment_side(invoice_id, supplier_id, supplier_name,
             notes="دفعة تلقائية عند إنشاء الفاتورة",
             created_by=username,
             auto_link=True,
-            conn=None,
+            conn=conn,   # ✅ نفس الاتصال
         )
         if verr:
             return None, f"فشل إنشاء سند الصرف: {verr}"
@@ -363,7 +381,7 @@ def create_purchase_invoice(supplier_id, items, username="admin",
             payment_method = 'mixed'
         payment_status = 'partial'
 
-    # ============ المرحلة 1: الفاتورة + القيد ============
+    # ============ التنفيذ — كل شيء في Transaction واحدة ============
     invoice_id, supplier_name, err = _save_invoice_core(
         supplier_id=supplier_id,
         items=items,
@@ -379,25 +397,34 @@ def create_purchase_invoice(supplier_id, items, username="admin",
         subtotal_local=subtotal_local,
         vat_amount_local=vat_amount_local,
         vat_rate=vat_rate,
+        cash_account=cash_account,   # ✅ تمرير cash_account
     )
 
     if err:
         return None, Decimal("0"), f"فشل حفظ الفاتورة: {err}"
 
-    # ============ المرحلة 2: السند ============
-    payment_note = None
-    if paid_amount_dec > 0 and cash_account:
-        voucher_id, perr = _save_payment_side(
-            invoice_id=invoice_id,
-            supplier_id=supplier_id,
-            supplier_name=supplier_name,
-            paid_amount_dec=paid_amount_dec,
-            cash_account=cash_account,
-            username=username,
-        )
-        if perr:
-            payment_note = f"⚠️ السند لم يُنشأ — {perr}"
-            _add_note_to_invoice(invoice_id, payment_note)
+    # ============ تحديث paid_amount و payment_status ============
+    # (بعد نجاح السند — لأن السند يعمل UPDATE للفاتورة تلقائياً عند الربط)
+    try:
+        conn = get_connection()
+        try:
+            conn.execute("""
+                UPDATE invoices
+                SET paid_amount = ?, remaining_amount = ?, 
+                    payment_status = ?, payment_method = ?
+                WHERE id = ?
+            """, (
+                float(paid_amount_dec),
+                float(remaining_dec),
+                payment_status,
+                payment_method,
+                invoice_id
+            ))
+            conn.commit()
+        finally:
+            close_connection(conn)
+    except Exception as e:
+        print(f"⚠️ فشل تحديث حالة الفاتورة: {e}")
 
     # ============ تسجيل التدقيق ============
     try:
@@ -412,8 +439,6 @@ def create_purchase_invoice(supplier_id, items, username="admin",
     except Exception:
         pass
 
-    if payment_note:
-        return invoice_id, total_local, payment_note
     return invoice_id, total_local, None
 
 
@@ -497,19 +522,7 @@ def get_invoice_details(invoice_id):
 # ============================================================
 def create_payment_voucher_for_invoice(invoice_id, username="admin",
                                         payment_account_code=None, conn=None):
-    """
-    إنشاء سند صرف لفاتورة مشتريات موجودة (يدوياً).
-    
-    Args:
-        invoice_id:              معرف الفاتورة
-        username:                اسم المستخدم
-        payment_account_code:    كود الصندوق/البنك (اختياري)
-                                 إذا لم يُمرر → يُستخدم أول صندوق نشط
-        conn:                    اتصال خارجي (اختياري)
-    
-    Returns:
-        (voucher_id, None) أو (None, "رسالة")
-    """
+    """إنشاء سند صرف لفاتورة مشتريات موجودة (يدوياً)."""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -532,7 +545,6 @@ def create_payment_voucher_for_invoice(invoice_id, username="admin",
 
         supplier_id = inv["supplier_id"]
 
-        # ✅ تحديد الحساب: من المعامل، أو أول صندوق نشط
         if not payment_account_code:
             row = conn.execute("""
                 SELECT account_code FROM cash_accounts
@@ -547,7 +559,7 @@ def create_payment_voucher_for_invoice(invoice_id, username="admin",
         if own_conn:
             close_connection(conn)
 
-    # ✅ استدعاء _save_payment_side مع الحساب المحدد
+    # ✅ استدعاء _save_payment_side مع conn=None (خارج Transaction حالياً)
     voucher_id, perr = _save_payment_side(
         invoice_id=invoice_id,
         supplier_id=supplier_id,
@@ -555,6 +567,7 @@ def create_payment_voucher_for_invoice(invoice_id, username="admin",
         paid_amount_dec=Decimal(str(paid)),
         cash_account=payment_account_code,
         username=username,
+        conn=None,
     )
 
     if perr:
