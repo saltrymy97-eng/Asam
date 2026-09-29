@@ -1,5 +1,5 @@
-# ui/purchases_ui.py – واجهة المشتريات (v9.0)
-# ✅ كشف الأخطاء + طباعتها + إزالة rerun من finally
+# ui/purchases_ui.py – واجهة المشتريات (v10.0)
+# ✅ دفع فوري يشمل الضريبة + إزالة Debug + إبقاء زر السند اليدوي
 import streamlit as st
 import pandas as pd
 import traceback
@@ -15,6 +15,7 @@ from services.purchases_service import (
 )
 from services.currency_service import get_all_currencies, get_base_currency
 from services.expenses_service import get_payment_accounts
+from services.vat_service import get_vat_rate
 
 
 # ========== ألوان التصميم ==========
@@ -152,8 +153,25 @@ def show():
                 use_container_width=True,
                 hide_index=True
             )
+
+            # ✅ حساب الإجماليات مع الضريبة
             total_purchase = float(sum(item["total"] for item in st.session_state.purchase_items))
+
+            try:
+                vat_rate = float(get_vat_rate() or 0)
+            except Exception:
+                vat_rate = 0.0
+
+            vat_amount = total_purchase * vat_rate
+            total_with_vat = total_purchase + vat_amount
+
+            # ✅ عرض واضح للتفاصيل
             st.markdown(f"### الإجمالي: {total_purchase:,.2f} {currency_code}")
+            st.caption(
+                f"الإجمالي الفرعي: **{total_purchase:,.2f}** | "
+                f"الضريبة ({vat_rate*100:.0f}%): **{vat_amount:,.2f}** | "
+                f"الإجمالي النهائي: **{total_with_vat:,.2f}**"
+            )
 
             st.markdown("---")
             st.markdown(f"<h4 style='color:{ACCENT_ORANGE};'>💳 تفاصيل الدفع للمورد</h4>",
@@ -194,15 +212,22 @@ def show():
                 cash_account = selected_acc['code']
 
                 if payment_choice == 'cash':
-                    paid_amount = total_purchase
-                    st.info(f"💵 سيتم دفع {total_purchase:,.2f} {currency_code} للمورد فوراً")
+                    # ✅ الدفع الفوري = المبلغ كاملاً مع الضريبة
+                    paid_amount = total_with_vat
+                    st.info(
+                        f"💵 سيتم دفع **{total_with_vat:,.2f} {currency_code}** للمورد فوراً "
+                        f"(شامل الضريبة)"
+                    )
 
-                else:
-                    st.markdown(f"**💵 المبلغ المدفوع الآن (من إجمالي {total_purchase:,.2f} {currency_code})**")
+                else:  # partial
+                    st.markdown(
+                        f"**💵 المبلغ المدفوع الآن "
+                        f"(من إجمالي {total_with_vat:,.2f} {currency_code} — شامل الضريبة)**"
+                    )
 
                     def _on_paid_change():
                         txt = st.session_state.get("purchase_paid_amount_text", "")
-                        val = _read_amount_from_text(txt, 0.0, total_purchase)
+                        val = _read_amount_from_text(txt, 0.0, total_with_vat)
                         st.session_state["purchase_paid_final"] = val
 
                     st.text_input(
@@ -215,7 +240,7 @@ def show():
 
                     paid_amount = st.session_state.get("purchase_paid_final", 0.0)
 
-                    remaining = total_purchase - paid_amount
+                    remaining = total_with_vat - paid_amount
                     st.markdown(
                         f"<div style='padding:0.75rem; background:rgba(245,158,11,0.15); "
                         f"border-radius:8px; margin-top:0.5rem;'>"
@@ -241,7 +266,10 @@ def show():
                         f"{selected_acc['currency']}"
                     )
             else:
-                st.info(f"📌 سيتم تسجيل المبلغ كاملاً ({total_purchase:,.2f} {currency_code}) على حساب المورد")
+                st.info(
+                    f"📌 سيتم تسجيل المبلغ كاملاً "
+                    f"({total_with_vat:,.2f} {currency_code}) على حساب المورد"
+                )
 
             # ============================================================
             # زر الحفظ
@@ -258,7 +286,7 @@ def show():
             if st.button("💾 حفظ فاتورة المشتريات", type="primary",
                         disabled=save_disabled, key="save_purchase_btn"):
                 if payment_choice == 'cash':
-                    final_paid = total_purchase
+                    final_paid = total_with_vat       # ✅ شامل الضريبة
                 elif payment_choice == 'credit':
                     final_paid = 0.0
                 else:
@@ -268,7 +296,7 @@ def show():
                 st.session_state.saving_purchase = True
                 st.rerun()
 
-            # ✅ الحفظ مع كشف الأخطاء
+            # ✅ الحفظ
             if st.session_state.saving_purchase:
                 st.session_state.saving_purchase = False
 
@@ -282,26 +310,9 @@ def show():
                     else:
                         actual_method = 'cash'
 
-                    if 0 < actual_paid < total_purchase:
+                    if 0 < actual_paid < total_with_vat:
                         actual_method = 'mixed'
 
-                    # ══════════════════════════════════════════════════
-                    # ✅ DEBUG: عرض المدخلات
-                    # ══════════════════════════════════════════════════
-                    with st.expander("🐛 Debug — المدخلات", expanded=True):
-                        st.json({
-                            "supplier_id": supplier_id,
-                            "items_count": len(st.session_state.purchase_items),
-                            "currency_code": currency_code,
-                            "actual_paid": actual_paid,
-                            "actual_method": actual_method,
-                            "cash_account": cash_account,
-                            "total_purchase": total_purchase,
-                        })
-
-                    # ══════════════════════════════════════════════════
-                    # ✅ استدعاء الدالة مع كشف الأخطاء
-                    # ══════════════════════════════════════════════════
                     try:
                         invoice_id, total, error = create_purchase_invoice(
                             supplier_id=supplier_id,
@@ -313,30 +324,20 @@ def show():
                             cash_account=cash_account
                         )
                     except Exception as call_err:
-                        st.error("❌ **استثناء من create_purchase_invoice:**")
+                        st.error("❌ **خطأ غير متوقع أثناء الحفظ:**")
                         st.code(f"{type(call_err).__name__}: {call_err}")
-                        st.code(traceback.format_exc())
                         st.stop()
 
-                    # ══════════════════════════════════════════════════
-                    # ✅ DEBUG: عرض النتيجة
-                    # ══════════════════════════════════════════════════
-                    with st.expander("🐛 Debug — النتيجة", expanded=True):
-                        st.json({
-                            "invoice_id": str(invoice_id) if invoice_id else None,
-                            "total": str(total) if total else None,
-                            "error": error,
-                        })
-
                     if error and invoice_id is None:
-                        st.error(f"❌ **فشل في حفظ الفاتورة:**\n\n```\n{error}\n```")
+                        st.error(f"❌ **فشل في حفظ الفاتورة:**\n\n{error}")
 
                     elif error and invoice_id is not None:
                         st.warning(
                             f"⚠️ **تم حفظ الفاتورة رقم {invoice_id} بنجاح** "
                             f"لكن **لم يُنشأ سند الصرف التلقائي**.\n\n"
                             f"**السبب:** {error}\n\n"
-                            f"👉 اذهب لتبويب **'فواتير المشتريات'** واضغط **'إنشاء السند يدوياً'**."
+                            f"👉 اذهب لتبويب **'فواتير المشتريات'** "
+                            f"واختر هذه الفاتورة، ثم اضغط **'إنشاء سند الصرف يدوياً'**."
                         )
                         st.session_state.purchase_items = []
 
@@ -351,9 +352,6 @@ def show():
                 except Exception as e:
                     st.error("❌ **خطأ غير متوقع في الواجهة:**")
                     st.code(f"{type(e).__name__}: {e}")
-                    st.code(traceback.format_exc())
-
-                # ❌ لا st.rerun() هنا — لتظهر الرسائل
 
             if st.button("🗑️ مسح بنود المشتريات"):
                 st.session_state.purchase_items = []
@@ -419,6 +417,9 @@ def show():
                         f"| **طريقة الدفع:** {PAYMENT_METHOD_LABELS.get(inv_sel.get('payment_method'), '—')}"
                     )
 
+                    # ============================================================
+                    # ✅ إنشاء السند يدوياً — يظهر إذا فشل السند التلقائي
+                    # ============================================================
                     if inv_sel.get('has_warning'):
                         st.warning(f"⚠️ **تنبيه:** {inv_sel.get('reference', '')}")
 
