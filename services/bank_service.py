@@ -1,5 +1,6 @@
-# services/bank_service.py – منطق التعاملات البنكية (v4.0)
+# services/bank_service.py – منطق التعاملات البنكية (v5.0)
 # ✅ Connection Registry + حماية الرصيد + إصلاح Deadlock + التحقق قبل الإضافة
+# ✅ إصلاح: conn.commit() بدل conn.execute("COMMIT")
 import sqlite3
 from datetime import date, datetime
 from database import get_connection, close_connection
@@ -9,14 +10,10 @@ from services.accounting_service import save_journal_entry
 
 
 # ============================================================
-# دالة الفحص (تستخدم من cash_service أيضاً)
+# دالة الفحص
 # ============================================================
 def check_bank_sufficient_balance(bank_account_id, amount, conn=None):
-    """
-    فحص كفاية رصيد البنك قبل السحب/التحويل.
-    Returns:
-        (True, None) أو (False, "رسالة الخطأ")
-    """
+    """فحص كفاية رصيد البنك قبل السحب/التحويل."""
     if bank_account_id is None:
         return False, "معرف الحساب البنكي مفقود"
 
@@ -64,11 +61,7 @@ def check_bank_sufficient_balance(bank_account_id, amount, conn=None):
 def create_bank_account(bank_name, account_number, account_name="",
                         currency_code="YER", opening_balance=0.0,
                         account_code=None, conn=None):
-    """
-    إضافة حساب بنكي جديد.
-    ✅ إصلاح: التحقق من الحسابات المطلوبة قبل الإضافة.
-    ✅ إصلاح Deadlock - كل شيء في Transaction واحدة.
-    """
+    """إضافة حساب بنكي جديد."""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -78,7 +71,6 @@ def create_bank_account(bank_name, account_number, account_name="",
         if own_conn:
             conn.execute("BEGIN IMMEDIATE")
 
-        # ✅ التحقق من حساب البنك أولاً
         final_account_code = account_code or get_functional_account("bank")
         if not final_account_code:
             raise ValueError(
@@ -86,7 +78,6 @@ def create_bank_account(bank_name, account_number, account_name="",
                 "أضف حساباً بالنوع الوظيفي 'bank' أولاً."
             )
 
-        # ✅ التحقق من حساب رأس المال (قبل الإضافة)
         capital_account_code = None
         if opening_balance > 0:
             capital_account_code = get_functional_account("capital")
@@ -96,7 +87,6 @@ def create_bank_account(bank_name, account_number, account_name="",
                     "أضف حساباً بالنوع الوظيفي 'capital' أولاً."
                 )
 
-        # ✅ الآن نُضيف — كل شيء جاهز
         conn.execute(
             """INSERT INTO bank_accounts 
                (bank_name, account_number, account_name, currency_code, 
@@ -106,7 +96,6 @@ def create_bank_account(bank_name, account_number, account_name="",
              opening_balance, opening_balance, final_account_code)
         )
 
-        # ✅ قيد الرصيد الافتتاحي — بنفس الاتصال
         if opening_balance > 0:
             lines = [
                 {
@@ -139,14 +128,14 @@ def create_bank_account(bank_name, account_number, account_name="",
                     raise ValueError(f"فشل القيد الافتتاحي: {err}")
 
         if own_conn:
-            conn.execute("COMMIT")
+            conn.commit()
 
         return True
 
     except Exception as e:
         if own_conn:
             try:
-                conn.execute("ROLLBACK")
+                conn.rollback()
             except Exception:
                 pass
         raise e
@@ -196,11 +185,11 @@ def update_bank_account(account_id, bank_name=None, account_number=None,
         values.append(account_id)
         conn.execute(f"UPDATE bank_accounts SET {', '.join(fields)} WHERE id = ?", values)
         if own_conn:
-            conn.execute("COMMIT")
+            conn.commit()
     except Exception as e:
         if own_conn:
             try:
-                conn.execute("ROLLBACK")
+                conn.rollback()
             except Exception:
                 pass
         raise e
@@ -261,10 +250,7 @@ def get_bank_account_by_code(account_code, conn=None):
 
 
 def update_bank_balance(account_id, conn=None):
-    """
-    تحديث الرصيد الحالي للحساب.
-    ✅ حساب ذرّي - بدون Race Condition.
-    """
+    """تحديث الرصيد الحالي للحساب."""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -294,13 +280,13 @@ def update_bank_balance(account_id, conn=None):
         new_balance = float(row["current_balance"] or 0) if row else 0.0
 
         if own_conn:
-            conn.execute("COMMIT")
+            conn.commit()
         return new_balance
 
     except Exception as e:
         if own_conn:
             try:
-                conn.execute("ROLLBACK")
+                conn.rollback()
             except Exception:
                 pass
         raise e
@@ -315,10 +301,7 @@ def add_bank_transaction(bank_account_id, transaction_date, description,
                          trans_type, amount, reference="",
                          contra_account_code=None, conn=None,
                          skip_balance_check=False):
-    """
-    إضافة حركة بنكية مع قيد تلقائي.
-    ✅ فحص الرصيد قبل السحب/التحويل للخارج.
-    """
+    """إضافة حركة بنكية مع قيد تلقائي."""
     if trans_type not in ('deposit', 'withdrawal', 'transfer_in', 'transfer_out'):
         raise ValueError("نوع الحركة غير صالح")
 
@@ -346,15 +329,13 @@ def add_bank_transaction(bank_account_id, transaction_date, description,
         bank_account_code = bank_acc.get('account_code') or get_functional_account("bank")
         currency = bank_acc.get('currency_code', 'YER')
 
-        # ✅ فحص الرصيد قبل السحب/التحويل للخارج
         if trans_type in ('withdrawal', 'transfer_out') and not skip_balance_check:
             ok, err = check_bank_sufficient_balance(bank_account_id, amount, conn=conn)
             if not ok:
                 if own_conn:
-                    conn.execute("ROLLBACK")
+                    conn.rollback()
                 raise ValueError(err)
 
-        # سعر الصرف
         base_currency = get_base_currency()
         if currency == base_currency['code']:
             exchange_rate = 1.0
@@ -407,7 +388,7 @@ def add_bank_transaction(bank_account_id, transaction_date, description,
             journal_id, jerr = _journal_result[0], _journal_result[1] if len(_journal_result) > 1 else None
             if jerr:
                 if own_conn:
-                    conn.execute("ROLLBACK")
+                    conn.rollback()
                 raise ValueError(f"فشل القيد: {jerr}")
         else:
             journal_id = _journal_result
@@ -425,13 +406,13 @@ def add_bank_transaction(bank_account_id, transaction_date, description,
         update_bank_balance(bank_account_id, conn=conn)
 
         if own_conn:
-            conn.execute("COMMIT")
+            conn.commit()
 
         return True
     except Exception as e:
         if own_conn:
             try:
-                conn.execute("ROLLBACK")
+                conn.rollback()
             except Exception:
                 pass
         raise e
@@ -473,7 +454,7 @@ def transfer_between_banks(from_account_id, to_account_id, amount,
         ok, err = check_bank_sufficient_balance(from_account_id, amount, conn=conn)
         if not ok:
             if own_conn:
-                conn.execute("ROLLBACK")
+                conn.rollback()
             raise ValueError(err)
 
         from_code = from_acc.get('account_code') or get_functional_account("bank")
@@ -532,13 +513,13 @@ def transfer_between_banks(from_account_id, to_account_id, amount,
         )
 
         if own_conn:
-            conn.execute("COMMIT")
+            conn.commit()
 
         return journal_id
     except Exception as e:
         if own_conn:
             try:
-                conn.execute("ROLLBACK")
+                conn.rollback()
             except Exception:
                 pass
         raise e
@@ -599,12 +580,12 @@ def reconcile_transaction(transaction_id, journal_line_id=None, conn=None):
                 (transaction_id,)
             )
         if own_conn:
-            conn.execute("COMMIT")
+            conn.commit()
         return True
     except Exception as e:
         if own_conn:
             try:
-                conn.execute("ROLLBACK")
+                conn.rollback()
             except Exception:
                 pass
         raise e
@@ -661,12 +642,12 @@ def create_bank_reconciliation(bank_account_id, reconciliation_date,
              book_balance, difference)
         )
         if own_conn:
-            conn.execute("COMMIT")
+            conn.commit()
         return True, difference
     except Exception as e:
         if own_conn:
             try:
-                conn.execute("ROLLBACK")
+                conn.rollback()
             except Exception:
                 pass
         raise e
