@@ -1,5 +1,5 @@
-# ui/sales_ui.py – واجهة المبيعات (v8.0)
-# ✅ دعم البنك والصندوق + السند اليدوي باختيار الحساب
+# ui/sales_ui.py – واجهة المبيعات (v9.0)
+# ✅ دفع فوري يشمل الضريبة + عرض تفصيلي للإجمالي
 import streamlit as st
 import pandas as pd
 from services.sales_service import (
@@ -14,6 +14,7 @@ from services.sales_service import (
 )
 from services.currency_service import get_all_currencies, get_base_currency
 from services.expenses_service import get_payment_accounts
+from services.vat_service import get_vat_rate
 
 
 # ========== ألوان التصميم ==========
@@ -41,7 +42,6 @@ PAYMENT_METHOD_LABELS = {
 
 
 def _read_amount_from_text(text_value, default=0.0, max_value=None):
-    """تحويل نص إلى رقم بأمان."""
     if text_value is None:
         return default
     text = str(text_value).strip().replace(",", "").replace(" ", "")
@@ -59,7 +59,6 @@ def _read_amount_from_text(text_value, default=0.0, max_value=None):
 
 
 def _format_account_label(acc):
-    """تنسيق عرض الحساب مع الرصيد والنوع."""
     icon = "💵" if acc["type"] == "cash" else "🏦"
     return (
         f"{icon} {acc['name']} ({acc['currency']}) — "
@@ -153,8 +152,25 @@ def show():
                 use_container_width=True,
                 hide_index=True
             )
+
+            # ✅ حساب الإجماليات مع الضريبة
             total_invoice = float(sum(item["total"] for item in st.session_state.invoice_items))
+
+            try:
+                vat_rate = float(get_vat_rate() or 0)
+            except Exception:
+                vat_rate = 0.0
+
+            vat_amount = total_invoice * vat_rate
+            total_with_vat = total_invoice + vat_amount
+
+            # ✅ عرض واضح للتفاصيل
             st.markdown(f"### الإجمالي: {total_invoice:,.2f} {currency_code}")
+            st.caption(
+                f"الإجمالي الفرعي: **{total_invoice:,.2f}** | "
+                f"الضريبة ({vat_rate*100:.0f}%): **{vat_amount:,.2f}** | "
+                f"الإجمالي النهائي: **{total_with_vat:,.2f}**"
+            )
 
             st.markdown("---")
             st.markdown(f"<h4 style='color:{ACCENT_GREEN};'>💰 تفاصيل الدفع</h4>",
@@ -178,9 +194,6 @@ def show():
             selected_acc = None
 
             if payment_choice in ('cash', 'partial'):
-                # ============================================================
-                # ✅ استخدام القائمة الموحّدة (صناديق + بنوك)
-                # ============================================================
                 all_accounts = get_payment_accounts()
                 if not all_accounts:
                     st.error("⚠️ لا يوجد صندوق أو حساب بنكي. أضف صندوقاً أو بنكاً أولاً.")
@@ -197,15 +210,22 @@ def show():
                 cash_account = selected_acc['code']
 
                 if payment_choice == 'cash':
-                    paid_amount = total_invoice
-                    st.info(f"💵 سيتم استلام {total_invoice:,.2f} {currency_code} فوراً")
+                    # ✅ الدفع الفوري = المبلغ كاملاً مع الضريبة
+                    paid_amount = total_with_vat
+                    st.info(
+                        f"💵 سيتم استلام **{total_with_vat:,.2f} {currency_code}** فوراً "
+                        f"(شامل الضريبة)"
+                    )
 
                 else:  # partial
-                    st.markdown(f"**💵 المبلغ المدفوع الآن (من إجمالي {total_invoice:,.2f} {currency_code})**")
+                    st.markdown(
+                        f"**💵 المبلغ المدفوع الآن "
+                        f"(من إجمالي {total_with_vat:,.2f} {currency_code} — شامل الضريبة)**"
+                    )
 
                     def _on_paid_change():
                         txt = st.session_state.get("paid_amount_text", "")
-                        val = _read_amount_from_text(txt, 0.0, total_invoice)
+                        val = _read_amount_from_text(txt, 0.0, total_with_vat)
                         st.session_state["paid_amount_final"] = val
 
                     st.text_input(
@@ -218,7 +238,7 @@ def show():
 
                     paid_amount = st.session_state.get("paid_amount_final", 0.0)
 
-                    remaining = total_invoice - paid_amount
+                    remaining = total_with_vat - paid_amount
                     st.markdown(
                         f"<div style='padding:0.75rem; background:rgba(245,158,11,0.15); "
                         f"border-radius:8px; margin-top:0.5rem;'>"
@@ -228,7 +248,10 @@ def show():
                         unsafe_allow_html=True
                     )
             else:
-                st.info(f"📌 سيتم تسجيل المبلغ كاملاً ({total_invoice:,.2f} {currency_code}) على حساب العميل")
+                st.info(
+                    f"📌 سيتم تسجيل المبلغ كاملاً "
+                    f"({total_with_vat:,.2f} {currency_code}) على حساب العميل"
+                )
 
             # 5) زر الحفظ
             if "saving_sale" not in st.session_state:
@@ -238,9 +261,8 @@ def show():
 
             if st.button("💾 حفظ الفاتورة", type="primary",
                         disabled=save_disabled, key="save_sales_btn"):
-                # ✅ قراءة القيمة النهائية
                 if payment_choice == 'cash':
-                    final_paid = total_invoice
+                    final_paid = total_with_vat   # ✅ شامل الضريبة
                 elif payment_choice == 'credit':
                     final_paid = 0.0
                 else:
@@ -254,7 +276,6 @@ def show():
                 try:
                     actual_paid = st.session_state.get("final_paid_to_save", 0.0)
 
-                    # ✅ تحديد payment_method بناءً على نوع الحساب
                     if actual_paid == 0:
                         actual_method = 'credit'
                     elif selected_acc and selected_acc['type'] == 'bank':
@@ -262,8 +283,7 @@ def show():
                     else:
                         actual_method = 'cash'
 
-                    # جزئي
-                    if 0 < actual_paid < total_invoice:
+                    if 0 < actual_paid < total_with_vat:
                         actual_method = 'mixed'
 
                     invoice_id, total, error = create_sale_invoice(
@@ -394,7 +414,6 @@ def show():
                                 manual_idx = manual_labels.index(manual_selected_label)
                                 manual_acc = manual_accounts[manual_idx]
 
-                                # ✅ لا حاجة لفحص رصيد (القبض يزيد)
                                 st.info(
                                     f"✅ سيُقبض **{paid_amt:,.2f}** في "
                                     f"**{manual_acc['name']}**"
