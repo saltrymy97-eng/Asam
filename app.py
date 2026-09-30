@@ -5,7 +5,7 @@ import database
 database.init_db()
 database.create_default_admin()
 
-# تهيئة العملات الافتراضية (يجب أن تكون قبل استيراد الوحدات التي تستخدمها)
+# تهيئة العملات الافتراضية
 from services.currency_service import create_default_currencies
 create_default_currencies()
 
@@ -256,10 +256,14 @@ else:
         st.divider()
 
         # ============================================================
-        # زر الخروج
+        # ✅ زر الخروج (مُعدَّل)
         # ============================================================
         if st.button("🚪 تسجيل الخروج", key="logout", help="تسجيل الخروج من النظام"):
-            logout_session()
+            _u = st.session_state.get('user') or {}
+            logout_session(
+                username=_u.get('username'),
+                user_id=_u.get('id'),
+            )
 
     # ============================================================
     # توجيه الصفحات مع التحقق من الصلاحية
