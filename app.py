@@ -246,11 +246,23 @@ else:
         if can_access("نسخ احتياطي") and st.button("💾 نسخ احتياطي", key="backup"):
             st.session_state.current_page = "نسخ احتياطي"
 
-        # ✅ جديد: زر حقن البيانات (للمدير فقط)
+        # ============================================================
+        # ✅ زر حقن البيانات — تشغيل مباشر (بدون صفحة منفصلة)
+        # ============================================================
         if username == 'admin':
-            if st.button("🌱 حقن بيانات تجريبية", key="seed_data_btn",
-                         help="حذف كل البيانات + حقن بيانات واقعية في كل الوحدات"):
-                st.session_state.current_page = "حقن البيانات"
+            st.markdown("---")
+            st.markdown(
+                '<div class="menu-section" style="color:#fca5a5;">🧪 أدوات المطور</div>',
+                unsafe_allow_html=True
+            )
+            seed_clicked = st.button(
+                "🌱 حقن بيانات تجريبية",
+                key="seed_data_btn",
+                help="حذف كل البيانات + حقن بيانات واقعية في كل الوحدات",
+                type="primary"
+            )
+            if seed_clicked:
+                st.session_state.run_seed = True
 
         # ============================================================
         # المجموعة 6: الذكاء الاصطناعي
@@ -272,7 +284,49 @@ else:
             )
 
     # ============================================================
-    # توجيه الصفحات مع التحقق من الصلاحية
+    # ✅ تنفيذ الحقن مباشرة (بدون صفحة منفصلة)
+    # ============================================================
+    if st.session_state.get('run_seed', False):
+        from services.seed_service import run_full_seed
+
+        st.markdown("""
+        <div style="text-align:center; padding:3rem 1rem;">
+            <h1 style="color:#F8FAFC; font-size:2.5rem;">🌱 حقن البيانات التجريبية</h1>
+            <p style="color:#94A3B8; font-size:1.1rem;">جاري تجهيز النظام ببيانات واقعية...</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        with st.spinner("⏳ جاري الحقن... قد يستغرق دقيقة إلى دقيقتين"):
+            try:
+                result = run_full_seed(progress_callback=None)
+
+                if result.get("success"):
+                    st.success("✅ تم حقن البيانات بنجاح!")
+                    st.balloons()
+
+                    st.markdown("### 📊 ملخص البيانات المُحقنة")
+                    summary = result.get("summary", {})
+                    cols = st.columns(3)
+                    items = list(summary.items())
+                    for i, (key, value) in enumerate(items):
+                        with cols[i % 3]:
+                            st.metric(key, value)
+                else:
+                    st.error(f"❌ فشل الحقن: {result.get('error', 'خطأ غير معروف')}")
+
+            except Exception as e:
+                st.error(f"❌ خطأ غير متوقع: {e}")
+                import traceback
+                st.code(traceback.format_exc())
+
+        if st.button("✅ تم — العودة للنظام", type="primary", key="close_seed"):
+            st.session_state.run_seed = False
+            st.rerun()
+
+        st.stop()
+
+    # ============================================================
+    # توجيه الصفحات (كما هي)
     # ============================================================
     page = st.session_state.current_page
 
@@ -349,7 +403,3 @@ else:
         show_if_permitted("التقارير المالية XBRL", pdf_show)
     elif page == "الصندوق":
         show_if_permitted("الصندوق", cash_show)
-    # ✅ جديد: صفحة حقن البيانات
-    elif page == "حقن البيانات":
-        from ui.seed_ui import show as seed_show
-        seed_show()
