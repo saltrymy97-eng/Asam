@@ -1,4 +1,5 @@
-# ui/crm_ui.py – واجهة إدارة علاقات العملاء CRM (تصميم زجاجي فخم)
+# ui/crm_ui.py – واجهة إدارة علاقات العملاء CRM
+# ✅ حقل "المصدر" أصبح نصاً حراً
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime
@@ -26,17 +27,21 @@ RD = "#EF4444"
 PR = "#8B5CF6"
 CY = "#06B6D4"
 
+
 def h1(title, color=PR):
     st.markdown(f"""<div style="text-align:right;margin-bottom:2rem;">
         <h1 style="color:{T};font-size:2.8rem;margin:0;text-shadow:0 0 20px {color};">{title}</h1>
         <p style="color:{S};font-size:1.2rem;">إدارة العملاء المحتملين والفرص البيعية والتفاعلات</p>
     </div>""", unsafe_allow_html=True)
 
+
 def h3(title, color=BL):
     st.markdown(f"""<h3 style="color:{color};text-align:right;margin-bottom:1rem;">{title}</h3>""", unsafe_allow_html=True)
 
+
 def glass(content):
     st.markdown(f"""<div style="background:rgba(255,255,255,0.12);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.25);border-radius:16px;padding:1.5rem;margin:1rem 0;box-shadow:0 8px 32px rgba(0,0,0,0.37);color:{T};font-size:1.1rem;">{content}</div>""", unsafe_allow_html=True)
+
 
 def kpi_card(icon, title, value, color):
     return f"""<div style="background:rgba(255,255,255,0.10);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.20);border-radius:16px;padding:1.2rem;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.37);margin-bottom:0.8rem;">
@@ -44,6 +49,7 @@ def kpi_card(icon, title, value, color):
         <div style="color:{S};font-size:0.8rem;">{title}</div>
         <div style="color:{color};font-size:1.6rem;font-weight:800;">{value}</div>
     </div>"""
+
 
 def show():
     create_crm_tables()
@@ -57,7 +63,7 @@ def show():
     # ---------- تبويب العملاء المحتملين ----------
     with tab1:
         h3("العملاء المحتملين (Leads)", BL)
-        
+
         with st.expander("➕ إضافة عميل محتمل جديد"):
             with st.form("add_lead_form"):
                 col1, col2 = st.columns(2)
@@ -65,12 +71,23 @@ def show():
                 company = col2.text_input("الشركة")
                 phone = col1.text_input("الهاتف")
                 email = col2.text_input("البريد الإلكتروني")
-                source = st.selectbox("المصدر", ["موقع إلكتروني", "إحالة", "معرض", "وسائل تواصل", "بارد", "أخرى"])
+
+                # ✅ حقل نص حر للمصدر
+                source = st.text_input(
+                    "المصدر",
+                    placeholder="اكتب المصدر (مثال: معرض، إحالة، إنستغرام...)",
+                    key="lead_source_input"
+                )
+
                 status = st.selectbox("الحالة", ["جديد", "مؤهل", "قيد المتابعة", "غير مهتم", "تحول لعميل"])
                 notes = st.text_area("ملاحظات")
                 if st.form_submit_button("💾 حفظ"):
                     if name:
-                        add_lead(name, company, phone, email, source, status, notes)
+                        add_lead(
+                            name, company, phone, email,
+                            source.strip(),  # ← نص حر
+                            status, notes
+                        )
                         st.success(f"تم إضافة {name}")
                         st.rerun()
                     else:
@@ -87,7 +104,7 @@ def show():
     # ---------- تبويب الفرص البيعية ----------
     with tab2:
         h3("الفرص البيعية (Opportunities)", GR)
-        
+
         with st.expander("➕ إضافة فرصة بيعية"):
             leads = get_all_leads()
             lead_options = {l['name']: l['id'] for l in leads}
@@ -100,7 +117,10 @@ def show():
                 expected_date = st.date_input("تاريخ الإغلاق المتوقع")
                 if st.form_submit_button("💾 حفظ"):
                     if title:
-                        add_opportunity(lead_options[lead_name], title, amount, stage, probability, expected_date.strftime("%Y-%m-%d"))
+                        add_opportunity(
+                            lead_options[lead_name], title, amount, stage,
+                            probability, expected_date.strftime("%Y-%m-%d")
+                        )
                         st.success("تمت الإضافة")
                         st.rerun()
 
@@ -108,15 +128,15 @@ def show():
         opportunities = get_opportunities()
         if opportunities:
             df = pd.DataFrame(opportunities)
-            # ✅ تم حذف عمود الملاحظات من العرض هنا
-            st.dataframe(df.drop(columns=['notes'], errors='ignore'), use_container_width=True, hide_index=True)
+            st.dataframe(df.drop(columns=['notes'], errors='ignore'),
+                         use_container_width=True, hide_index=True)
         else:
             st.info("لا توجد فرص بيعية بعد")
 
     # ---------- تبويب التفاعلات ----------
     with tab3:
         h3("سجل التفاعلات", OR)
-        
+
         with st.expander("➕ تسجيل تفاعل"):
             leads = get_all_leads()
             lead_options = {l['name']: l['id'] for l in leads}
@@ -126,7 +146,10 @@ def show():
                 idate = st.date_input("التاريخ", value=date.today())
                 notes = st.text_area("ملاحظات")
                 if st.form_submit_button("💾 حفظ"):
-                    add_interaction(lead_options[lead_name], itype, idate.strftime("%Y-%m-%d"), notes)
+                    add_interaction(
+                        lead_options[lead_name], itype,
+                        idate.strftime("%Y-%m-%d"), notes
+                    )
                     st.success("تم التسجيل")
                     st.rerun()
 
@@ -144,13 +167,18 @@ def show():
         summary = get_crm_summary()
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.markdown(kpi_card("👥", "إجمالي العملاء المحتملين", summary['total_leads'], BL), unsafe_allow_html=True)
+            st.markdown(kpi_card("👥", "إجمالي العملاء المحتملين",
+                                 summary['total_leads'], BL), unsafe_allow_html=True)
         with col2:
-            st.markdown(kpi_card("🆕", "جديد", summary['new_leads'], GR), unsafe_allow_html=True)
+            st.markdown(kpi_card("🆕", "جديد",
+                                 summary['new_leads'], GR), unsafe_allow_html=True)
         with col3:
-            st.markdown(kpi_card("💼", "الفرص", summary['total_opportunities'], OR), unsafe_allow_html=True)
+            st.markdown(kpi_card("💼", "الفرص",
+                                 summary['total_opportunities'], OR), unsafe_allow_html=True)
         with col4:
-            st.markdown(kpi_card("💰", "قيمة الخط أنابيب", f"{summary['pipeline_value']:,.0f}", PR), unsafe_allow_html=True)
+            st.markdown(kpi_card("💰", "قيمة الخط أنابيب",
+                                 f"{summary['pipeline_value']:,.0f}", PR),
+                        unsafe_allow_html=True)
 
         st.markdown("---")
         h3("خط أنابيب المبيعات", CY)
