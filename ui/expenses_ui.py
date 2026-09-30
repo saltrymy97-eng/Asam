@@ -1,12 +1,12 @@
-# ui/expenses_ui.py – واجهة المصروفات التشغيلية (v2.0)
-# ✅ قائمة موحّدة (صناديق + بنوك) + عرض الرصيد + فحص فوري
+# ui/expenses_ui.py – واجهة المصروفات التشغيلية (v3.0)
+# ✅ حقل "نوع المصروف" أصبح نصاً حراً
 import streamlit as st
 import pandas as pd
 from datetime import date
 from services.expenses_service import (
     create_expenses_table,
     get_expense_categories,
-    get_payment_accounts,       # ✅ جديد
+    get_payment_accounts,
     get_suppliers_for_expense,
     create_expense,
     get_expenses,
@@ -23,9 +23,7 @@ PR = "#8B5CF6"
 
 
 def _format_account_label(acc):
-    """
-    تنسيق عرض الحساب مع الرصيد والنوع.
-    """
+    """تنسيق عرض الحساب مع الرصيد والنوع."""
     icon = "💵" if acc["type"] == "cash" else "🏦"
     return (
         f"{icon} {acc['name']} "
@@ -52,9 +50,12 @@ def show():
         st.markdown(f"<h3 style='color:{GR};'>تسجيل مصروف جديد</h3>",
                     unsafe_allow_html=True)
 
-        categories = get_expense_categories()
-        cat_options = [c["code"] for c in categories]
-        selected_cat = st.selectbox("نوع المصروف", cat_options)
+        # ✅ حقل نص حر لنوع المصروف
+        selected_cat = st.text_input(
+            "نوع المصروف",
+            placeholder="اكتب نوع المصروف (مثال: إيجار، كهرباء، رواتب...)",
+            key="expense_category_input"
+        )
 
         col1, col2 = st.columns([1, 1])
         with col1:
@@ -161,6 +162,7 @@ def show():
             not st.session_state.saving_expense
             and balance_ok
             and amount > 0
+            and selected_cat.strip() != ""
         )
 
         if st.button(
@@ -176,7 +178,7 @@ def show():
             try:
                 eid, err = create_expense(
                     expense_date.strftime("%Y-%m-%d"),
-                    selected_cat,
+                    selected_cat.strip(),
                     amount,
                     account_code,
                     payment_method,
@@ -206,7 +208,6 @@ def show():
         expenses = get_expenses()
 
         if expenses:
-            # ✅ عرض الإجمالي
             total = sum(float(e.get('amount', 0)) for e in expenses)
             st.markdown(
                 f"<div style='background:rgba(16,185,129,0.15); "
