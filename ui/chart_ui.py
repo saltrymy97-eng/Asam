@@ -1,4 +1,5 @@
-# ui/chart_ui.py – واجهة شجرة الحسابات (تصميم زجاجي فخم + توضيح وجهة الحساب + دعم الحسابات الوظيفية)
+# ui/chart_ui.py – واجهة شجرة الحسابات (v2.1)
+# ✅ v2.1: تمرير created_by + deleted_by لتسجيل التدقيق
 import streamlit as st
 import pandas as pd
 from services.chart_service import (
@@ -43,8 +44,15 @@ FUNCTIONAL_TYPES = {
     "المصروفات المستحقة (accrued_expenses)": "accrued_expenses",
     "عجز/خسائر المخزون (inventory_gain)": "inventory_gain",
     "خسائر/نقص الجرد (inventory_loss)": "inventory_loss",
-    "فروق أسعار الصرف (exchange_difference)": "exchange_difference",  # ✅ تمت إضافة هذا السطر
+    "فروق أسعار الصرف (exchange_difference)": "exchange_difference",
 }
+
+
+def _current_username():
+    """✅ الحصول على المستخدم الحالي بأمان"""
+    user = st.session_state.get('user') or {}
+    return user.get('username', 'admin')
+
 
 def show():
     st.markdown(f"""
@@ -58,18 +66,24 @@ def show():
 
     tab1, tab2 = st.tabs(["📊 عرض الشجرة", "➕ إضافة حساب"])
 
+    # ============================================================
+    # تبويب 1: عرض الشجرة
+    # ============================================================
     with tab1:
-        st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>شجرة الحسابات</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>شجرة الحسابات</h3>",
+                    unsafe_allow_html=True)
         accounts = get_accounts_tree()
-        
+
         if accounts:
-            # ✨ التعديل الاحترافي: فرز الشجرة بترتيب هرمي دقيق (1، 1.1، 1.2، 1.10...)
+            # ✨ فرز الشجرة بترتيب هرمي دقيق
             accounts = sorted(accounts, key=lambda x: (len(x["code"]), x["code"]))
-            
+
             tree = build_tree(accounts)
             df = pd.DataFrame(tree)
-            df["display_name"] = df.apply(lambda r: " " * r["indent"] + r["name"], axis=1)
-            
+            df["display_name"] = df.apply(
+                lambda r: " " * r["indent"] + r["name"], axis=1
+            )
+
             def where_appears(acc_type):
                 if acc_type in ("Asset", "Liability", "Equity"):
                     return "الميزانية العمومية"
@@ -77,67 +91,105 @@ def show():
                     return "قائمة الدخل"
                 else:
                     return "غير محدد"
-            
+
             df["يظهر في"] = df["account_type"].apply(where_appears)
-            
+
             if "functional_type" not in df.columns:
                 df["functional_type"] = "-"
 
-            df_display = df[["code", "display_name", "level", "account_type", "functional_type", "يظهر في"]].rename(
-                columns={
-                    "code": "الكود",
-                    "display_name": "اسم الحساب",
-                    "level": "المستوى",
-                    "account_type": "التصنيف",
-                    "functional_type": "النوع الوظيفي",
-                    "يظهر في": "يظهر في"
-                }
-            )
-            
+            df_display = df[[
+                "code", "display_name", "level",
+                "account_type", "functional_type", "يظهر في"
+            ]].rename(columns={
+                "code": "الكود",
+                "display_name": "اسم الحساب",
+                "level": "المستوى",
+                "account_type": "التصنيف",
+                "functional_type": "النوع الوظيفي",
+                "يظهر في": "يظهر في"
+            })
+
             st.dataframe(df_display, use_container_width=True, hide_index=True)
-            
+
             st.markdown("---")
             st.subheader("🗑️ إدارة الحسابات")
+
+            # ✅ تأكيد الحذف
+            if "delete_confirm" not in st.session_state:
+                st.session_state.delete_confirm = None
+
             for acc in accounts:
                 col1, col2 = st.columns([4, 1])
                 with col1:
                     st.text(f"{acc['code']} - {acc['name']}")
                 with col2:
-                    if st.button(f"🗑️ حذف", key=f"del_{acc['id']}"):
-                        success, message = delete_account(acc['id'])
-                        if success:
-                            st.success(message)
+                    if st.button("🗑️ حذف", key=f"del_{acc['id']}"):
+                        st.session_state.delete_confirm = acc['id']
+                        st.rerun()
+
+            # ✅ نافذة تأكيد الحذف
+            if st.session_state.delete_confirm:
+                acc_id = st.session_state.delete_confirm
+                acc = next((a for a in accounts if a['id'] == acc_id), None)
+                if acc:
+                    st.warning(
+                        f"⚠️ هل أنت متأكد من حذف الحساب "
+                        f"**{acc['code']} - {acc['name']}**؟"
+                    )
+                    col_c1, col_c2 = st.columns(2)
+                    with col_c1:
+                        if st.button("✅ نعم، احذف", type="primary",
+                                     key="confirm_delete_yes"):
+                            # ✅ تمرير deleted_by
+                            success, message = delete_account(
+                                acc_id,
+                                deleted_by=_current_username(),
+                            )
+                            st.session_state.delete_confirm = None
+                            if success:
+                                st.success(message)
+                                st.rerun()
+                            else:
+                                st.error(message)
+                    with col_c2:
+                        if st.button("❌ إلغاء", key="confirm_delete_no"):
+                            st.session_state.delete_confirm = None
                             st.rerun()
-                        else:
-                            st.error(message)
         else:
             st.info("لا توجد حسابات. أضف حسابات جديدة من التبويب الثاني.")
 
+    # ============================================================
+    # تبويب 2: إضافة حساب
+    # ============================================================
     with tab2:
-        st.markdown(f"<h3 style='color:{ACCENT_GREEN};'>إضافة حساب جديد</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:{ACCENT_GREEN};'>إضافة حساب جديد</h3>",
+                    unsafe_allow_html=True)
         account_options = get_account_options()
-        
+
         selected_parent = st.selectbox("الحساب الأب", list(account_options.keys()))
         parent_id = account_options[selected_parent]
 
         col1, col2 = st.columns(2)
-        code = col1.text_input("كود الحساب")
-        name = col2.text_input("اسم الحساب")
-        
+        code = col1.text_input("كود الحساب", key="add_acc_code")
+        name = col2.text_input("اسم الحساب", key="add_acc_name")
+
         col3, col4 = st.columns(2)
-        
+
         account_type = col3.selectbox(
             "تصنيف الحساب الرئيسي",
-            ["", "Asset - أصل", "Liability - خصم", "Equity - حقوق ملكية", "Revenue - إيراد", "Expense - مصروف"],
-            help="يحدد أين يظهر الحساب في القوائم المالية"
+            ["", "Asset - أصل", "Liability - خصم", "Equity - حقوق ملكية",
+             "Revenue - إيراد", "Expense - مصروف"],
+            help="يحدد أين يظهر الحساب في القوائم المالية",
+            key="add_acc_type"
         )
-        
+
         selected_func_label = col4.selectbox(
             "النوع الوظيفي للنظام",
             list(FUNCTIONAL_TYPES.keys()),
-            help="إذا كان هذا الحساب مخصصاً لاستقبال فواتير المبيعات/المشتريات أو الصندوق تلقائياً اختر نوعه هنا"
+            help="إذا كان هذا الحساب مخصصاً لاستقبال فواتير المبيعات/المشتريات أو الصندوق تلقائياً اختر نوعه هنا",
+            key="add_acc_func"
         )
-        
+
         account_type_map = {
             "Asset - أصل": "Asset",
             "Liability - خصم": "Liability",
@@ -148,11 +200,17 @@ def show():
         selected_account_type = account_type_map.get(account_type)
         functional_type = FUNCTIONAL_TYPES.get(selected_func_label)
 
-        if st.button("💾 حفظ الحساب"):
+        if st.button("💾 حفظ الحساب", key="add_acc_save"):
             if not code or not name:
                 st.error("الكود والاسم مطلوبان")
             else:
-                success, error = add_account(code, name, parent_id, selected_account_type, functional_type=functional_type)
+                # ✅ تمرير created_by
+                success, error = add_account(
+                    code, name, parent_id,
+                    selected_account_type,
+                    functional_type=functional_type,
+                    created_by=_current_username(),
+                )
                 if success:
                     st.success(f"تم إضافة الحساب {code} - {name} بنجاح!")
                     st.rerun()
