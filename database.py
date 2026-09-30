@@ -1,5 +1,6 @@
 # database.py - قاعدة بيانات نظام حوكمة ERP (SQLite)
-# v8.0 — Autocommit + تجاهل BEGIN/COMMIT + تحسينات أداء قصوى
+# v8.1 — Autocommit + تجاهل BEGIN/COMMIT + تحسينات أداء قصوى
+# ✅ v8.1: إضافة حقول الأصول الثابتة (annual_depreciation_rate, manual_monthly_depreciation, last_depreciation_date)
 import sqlite3
 import bcrypt
 import os
@@ -72,33 +73,13 @@ def _create_connection():
     # ============================================================
     # ✅ إعدادات PRAGMA المُحسَّنة للأداء الأقصى
     # ============================================================
-
-    # 1️⃣ journal_mode = DELETE — آمن على كل الأنظمة (بدل WAL)
     conn.execute("PRAGMA journal_mode = DELETE")
-
-    # 2️⃣ foreign_keys = ON — سلامة البيانات
     conn.execute("PRAGMA foreign_keys = ON")
-
-    # 3️⃣ busy_timeout = 30000 — انتظار 30 ثانية قبل الفشل
     conn.execute("PRAGMA busy_timeout = 30000")
-
-    # 4️⃣ synchronous = NORMAL — أسرع مع أمان مقبول
-    #    (OFF = أسرع لكن خطر فقدان بيانات عند انقطاع الكهرباء)
     conn.execute("PRAGMA synchronous = NORMAL")
-
-    # 5️⃣ ✅ temp_store = MEMORY — الجداول المؤقتة في الذاكرة (موجود)
     conn.execute("PRAGMA temp_store = MEMORY")
-
-    # 6️⃣ ✅ cache_size = -64000 → 64 MB (بدل 16 MB)
-    #    توفير مساحة أكبر في الذاكرة = استعلامات أسرع
     conn.execute("PRAGMA cache_size = -64000")
-
-    # 7️⃣ ✅ mmap_size = 268435456 → 256 MB memory-mapped I/O
-    #    قراءة/كتابة أسرع بكثير
     conn.execute("PRAGMA mmap_size = 268435456")
-
-    # 8️⃣ ✅ optimize — تحسين تلقائي للاستعلامات
-    #    يجعل SQLite يُحسّن الخطط بناءً على الإحصائيات
     conn.execute("PRAGMA optimize")
 
     conn.row_factory = sqlite3.Row
@@ -198,6 +179,19 @@ def _migrate_payment_cycle(cursor):
         END
         WHERE payment_status IS NULL
     """)
+
+
+def _migrate_fixed_assets_v2(cursor):
+    """
+    ✅ v8.1: ترحيل جدول fixed_assets لدعم نسبة الإهلاك القابلة للتحكم.
+    آمن للجداول الموجودة — يضيف الأعمدة إن لم تكن موجودة.
+    """
+    _safe_add_column(cursor, "fixed_assets", "annual_depreciation_rate",
+                     "REAL DEFAULT 0")
+    _safe_add_column(cursor, "fixed_assets", "manual_monthly_depreciation",
+                     "REAL DEFAULT 0")
+    _safe_add_column(cursor, "fixed_assets", "last_depreciation_date",
+                     "TEXT")
 
 
 def init_db():
@@ -447,6 +441,7 @@ def init_db():
     )''')
 
     # ========== 9. سجل التدقيق ==========
+    # ✅ v2.1: أعمدة موسّعة (user_id, ip_address, session_id)
     c.execute('''CREATE TABLE IF NOT EXISTS audit_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT,
@@ -455,8 +450,16 @@ def init_db():
         record_id INTEGER,
         old_value TEXT,
         new_value TEXT,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        user_id INTEGER,
+        ip_address TEXT,
+        session_id TEXT
     )''')
+
+    # ترقية الجداول القديمة
+    _safe_add_column(c, "audit_log", "user_id", "INTEGER")
+    _safe_add_column(c, "audit_log", "ip_address", "TEXT")
+    _safe_add_column(c, "audit_log", "session_id", "TEXT")
 
     # ========== 10. مراكز التكلفة ==========
     c.execute('''CREATE TABLE IF NOT EXISTS cost_centers (
@@ -673,6 +676,7 @@ def init_db():
     )''')
 
     # ========== 14. الأصول الثابتة ==========
+    # ✅ v8.1: إضافة حقول الإهلاك القابلة للتحكم
     c.execute('''CREATE TABLE IF NOT EXISTS fixed_assets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -687,6 +691,9 @@ def init_db():
         book_value REAL DEFAULT 0,
         status TEXT DEFAULT 'نشط',
         notes TEXT,
+        annual_depreciation_rate REAL DEFAULT 0,
+        manual_monthly_depreciation REAL DEFAULT 0,
+        last_depreciation_date TEXT,
         created_at TEXT DEFAULT (datetime('now','localtime'))
     )''')
 
@@ -766,6 +773,7 @@ def init_db():
 
     # ========== 17. الترحيلات ==========
     _migrate_payment_cycle(c)
+    _migrate_fixed_assets_v2(c)   # ✅ v8.1
 
     # ========== 18. الفهارس ==========
     c.execute("CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)")
@@ -782,6 +790,7 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_fifo_consumptions_batch ON fifo_consumptions(batch_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_table ON audit_log(table_name)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(username)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_ts ON audit_log(timestamp)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_cash_transactions_account ON cash_transactions(cash_account_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_cash_transactions_date ON cash_transactions(transaction_date)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoices_payment_status ON invoices(payment_status)")
