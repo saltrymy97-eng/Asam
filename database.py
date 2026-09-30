@@ -1,5 +1,5 @@
 # database.py - قاعدة بيانات نظام حوكمة ERP (SQLite)
-# v7.0 — Autocommit + تجاهل BEGIN/COMMIT + سرعة Registry
+# v8.0 — Autocommit + تجاهل BEGIN/COMMIT + تحسينات أداء قصوى
 import sqlite3
 import bcrypt
 import os
@@ -53,14 +53,12 @@ class _AutoCommitConnection(sqlite3.Connection):
     """
     def execute(self, sql, *args, **kwargs):
         if isinstance(sql, str) and _is_transaction_command(sql):
-            # ✅ لا تفعل شيئاً — Autocommit mode
-            # نُعيد cursor وهمي فارغ
             return super().cursor()
         return super().execute(sql, *args, **kwargs)
 
 
 def _create_connection():
-    """إنشاء اتصال جديد مع كل إعدادات PRAGMA"""
+    """إنشاء اتصال جديد مع كل إعدادات PRAGMA المُحسَّنة"""
     os.makedirs(_DATA_DIR, exist_ok=True)
 
     conn = sqlite3.connect(
@@ -68,16 +66,40 @@ def _create_connection():
         check_same_thread=False,
         timeout=30,
         isolation_level=None,
-        factory=_AutoCommitConnection   # ← ✅ اعتراض BEGIN/COMMIT
+        factory=_AutoCommitConnection
     )
 
-    # === إعدادات PRAGMA ===
+    # ============================================================
+    # ✅ إعدادات PRAGMA المُحسَّنة للأداء الأقصى
+    # ============================================================
+
+    # 1️⃣ journal_mode = DELETE — آمن على كل الأنظمة (بدل WAL)
     conn.execute("PRAGMA journal_mode = DELETE")
+
+    # 2️⃣ foreign_keys = ON — سلامة البيانات
     conn.execute("PRAGMA foreign_keys = ON")
+
+    # 3️⃣ busy_timeout = 30000 — انتظار 30 ثانية قبل الفشل
     conn.execute("PRAGMA busy_timeout = 30000")
+
+    # 4️⃣ synchronous = NORMAL — أسرع مع أمان مقبول
+    #    (OFF = أسرع لكن خطر فقدان بيانات عند انقطاع الكهرباء)
     conn.execute("PRAGMA synchronous = NORMAL")
+
+    # 5️⃣ ✅ temp_store = MEMORY — الجداول المؤقتة في الذاكرة (موجود)
     conn.execute("PRAGMA temp_store = MEMORY")
-    conn.execute("PRAGMA cache_size = -16000")
+
+    # 6️⃣ ✅ cache_size = -64000 → 64 MB (بدل 16 MB)
+    #    توفير مساحة أكبر في الذاكرة = استعلامات أسرع
+    conn.execute("PRAGMA cache_size = -64000")
+
+    # 7️⃣ ✅ mmap_size = 268435456 → 256 MB memory-mapped I/O
+    #    قراءة/كتابة أسرع بكثير
+    conn.execute("PRAGMA mmap_size = 268435456")
+
+    # 8️⃣ ✅ optimize — تحسين تلقائي للاستعلامات
+    #    يجعل SQLite يُحسّن الخطط بناءً على الإحصائيات
+    conn.execute("PRAGMA optimize")
 
     conn.row_factory = sqlite3.Row
     return conn
@@ -89,7 +111,6 @@ def get_connection():
     if existing is not None:
         try:
             existing.execute("SELECT 1")
-            # ✅ لا فحص in_transaction — لا Transactions
             return existing
         except (sqlite3.ProgrammingError, sqlite3.OperationalError):
             _local.conn = None
@@ -769,6 +790,12 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoice_payments_voucher ON invoice_payments(voucher_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_cash_transactions_voucher ON cash_transactions(voucher_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_bank_transactions_voucher ON bank_transactions(voucher_id)")
+
+    # ✅ تحسين بعد كل الإدراجات/الفهارس
+    try:
+        c.execute("PRAGMA optimize")
+    except Exception:
+        pass
 
 
 def create_default_admin():
