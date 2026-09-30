@@ -1,5 +1,6 @@
-# services/chart_service.py – منطق شجرة الحسابات (v2.0)
+# services/chart_service.py – منطق شجرة الحسابات (v2.1)
 # ✅ Connection Registry — لا يُغلق الاتصال
+# ✅ v2.1: تسجيل كامل (username + record_id + dict) + تسجيل الحذف
 import sqlite3
 from database import get_connection, close_connection
 from services.audit_service import log_action
@@ -59,8 +60,11 @@ def create_accounts_table():
 
 
 def add_account(code, name, parent_id=None, account_type=None,
-                functional_type=None, conn=None):
-    """إضافة حساب جديد."""
+                functional_type=None, conn=None, created_by="admin"):
+    """
+    إضافة حساب جديد.
+    ✅ v2.1: يسجّل مَن أضاف (created_by) + رقم الحساب (record_id)
+    """
     c, owns = _resolve_conn(conn)
     try:
         level = 1
@@ -77,21 +81,38 @@ def add_account(code, name, parent_id=None, account_type=None,
         if owns:
             c.execute("BEGIN IMMEDIATE")
 
-        c.execute(
+        cur = c.execute(
             "INSERT INTO accounts "
             "(code, name, parent_id, level, is_debit, account_type, functional_type) "
             "VALUES (?,?,?,?,?,?,?)",
             (code, name, parent_id, level, is_debit, account_type, functional_type)
         )
+        new_id = cur.lastrowid
 
         if owns:
             c.execute("COMMIT")
 
-        log_action(username="admin", action="إضافة حساب", table_name="accounts",
-                   new_value=f"الكود: {code}, الاسم: {name}, المستوى: {level}, "
-                             f"التصنيف: {account_type or 'غير محدد'}, "
-                             f"النوع الوظيفي: {functional_type or 'غير محدد'}")
+        # ✅ تسجيل كامل في سجل التدقيق
+        try:
+            log_action(
+                username=created_by,
+                action="📂 إضافة حساب",
+                table_name="accounts",
+                record_id=new_id,
+                new_value={
+                    "code": code,
+                    "name": name,
+                    "parent_id": parent_id,
+                    "level": level,
+                    "account_type": account_type or "غير محدد",
+                    "functional_type": functional_type or "غير محدد",
+                },
+            )
+        except Exception as e:
+            print(f"⚠️ فشل تسجيل إضافة الحساب: {e}")
+
         return True, None
+
     except sqlite3.IntegrityError:
         if owns:
             try:
@@ -172,9 +193,14 @@ def get_functional_account(functional_type, conn=None):
             close_connection(c)
 
 
-def delete_account(account_id, conn=None):
+def delete_account(account_id, conn=None, deleted_by="admin"):
+    """
+    حذف حساب.
+    ✅ v2.1: يسجّل الحذف كاملاً مع old_value قبل الحذف.
+    """
     c, owns = _resolve_conn(conn)
     try:
+        # ✅ 1. فحص الاستخدام في القيود
         try:
             used = c.execute(
                 "SELECT COUNT(*) FROM journal_lines WHERE account_id = ?",
@@ -186,13 +212,41 @@ def delete_account(account_id, conn=None):
         if used > 0:
             return False, "لا يمكن حذف هذا الحساب لأنه مستخدم في قيود محاسبية."
 
+        # ✅ 2. جلب بيانات الحساب قبل الحذف
+        c.row_factory = sqlite3.Row
+        account = c.execute(
+            "SELECT id, code, name, parent_id, level, account_type, "
+            "functional_type FROM accounts WHERE id = ?",
+            (account_id,)
+        ).fetchone()
+
+        if not account:
+            return False, "الحساب غير موجود."
+
+        old_data = dict(account)
+
+        # ✅ 3. الحذف
         if owns:
             c.execute("BEGIN IMMEDIATE")
         c.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
         if owns:
             c.execute("COMMIT")
 
+        # ✅ 4. تسجيل الحذف
+        try:
+            log_action(
+                username=deleted_by,
+                action="🗑️ حذف حساب",
+                table_name="accounts",
+                record_id=account_id,
+                old_value=old_data,
+                new_value=f"تم حذف الحساب: {old_data.get('code')} - {old_data.get('name')}",
+            )
+        except Exception as e:
+            print(f"⚠️ فشل تسجيل حذف الحساب: {e}")
+
         return True, "تم حذف الحساب بنجاح."
+
     except Exception as e:
         if owns:
             try:
