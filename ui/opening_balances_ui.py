@@ -1,7 +1,8 @@
-# ui/opening_balances_ui.py – واجهة الأرصدة الافتتاحية (v4.0)
-# ✅ إصلاح: بناء HTML كنص واحد
+# ui/opening_balances_ui.py – واجهة الأرصدة الافتتاحية (v4.1)
+# ✅ إصلاح: nan في مجاميع الأرصدة الافتتاحية
 import streamlit as st
 import pandas as pd
+import math
 from datetime import date
 from services.opening_balances_service import (
     get_accounts_for_opening,
@@ -17,6 +18,25 @@ RD = "#EF4444"
 PR = "#8B5CF6"
 BL = "#3B82F6"
 OR = "#F59E0B"
+
+
+# ============================================================
+# ✅ دالة مساعدة: تحويل آمن لأي قيمة رقمية
+# ============================================================
+def _safe_float(value, default=0.0):
+    """
+    تحويل آمن لأي قيمة إلى float.
+    يعالج: None, NaN, '', 'nan', سلاسل نصية.
+    """
+    if value is None:
+        return default
+    try:
+        f = float(value)
+        if math.isnan(f) or math.isinf(f):
+            return default
+        return f
+    except (ValueError, TypeError):
+        return default
 
 
 def _glass_card(content, color=BL):
@@ -44,7 +64,7 @@ def show():
     tab1, tab2 = st.tabs(["أرصدة الحسابات", "أرصدة المخزون"])
 
     # ============================================================
-    # تبويب 1
+    # تبويب 1: أرصدة الحسابات
     # ============================================================
     with tab1:
         st.markdown(
@@ -75,7 +95,8 @@ def show():
                 },
                 use_container_width=True,
                 hide_index=True,
-                num_rows="fixed"
+                num_rows="fixed",
+                key="accounts_editor"
             )
 
             account_balances = []
@@ -83,8 +104,9 @@ def show():
             total_cr = 0.0
 
             for _, row in edited_df.iterrows():
-                dr = float(row['الرصيد مدين'] or 0)
-                cr = float(row['الرصيد دائن'] or 0)
+                # ✅ استخدام _safe_float بدلاً من float(... or 0)
+                dr = _safe_float(row['الرصيد مدين'])
+                cr = _safe_float(row['الرصيد دائن'])
                 if dr > 0 or cr > 0:
                     account_balances.append({
                         'code': row['code'],
@@ -103,12 +125,12 @@ def show():
             diff_acc = round(total_dr - total_cr, 2)
 
             if abs(diff_acc) < 0.01 and (total_dr > 0 or total_cr > 0):
-                col_c.metric("الفرق", "متوازن")
+                col_c.metric("الفرق", "متوازن ✅")
             elif total_dr > 0 or total_cr > 0:
                 col_c.metric("الفرق", f"{diff_acc:,.2f}")
 
     # ============================================================
-    # تبويب 2
+    # تبويب 2: أرصدة المخزون
     # ============================================================
     with tab2:
         st.markdown(
@@ -122,8 +144,13 @@ def show():
         else:
             df_prod = pd.DataFrame(products)
             df_prod['الكمية الافتتاحية'] = 0.0
-            df_prod['تكلفة الوحدة'] = df_prod['purchase_price'].fillna(0.0)
-            df_prod_display = df_prod[['id', 'name', 'الكمية الافتتاحية', 'تكلفة الوحدة']]
+            # ✅ تعبئة آمنة لسعر الشراء
+            df_prod['تكلفة الوحدة'] = df_prod['purchase_price'].apply(
+                lambda x: _safe_float(x, 0.0)
+            )
+            df_prod_display = df_prod[
+                ['id', 'name', 'الكمية الافتتاحية', 'تكلفة الوحدة']
+            ]
 
             edited_prod_df = st.data_editor(
                 df_prod_display,
@@ -139,16 +166,18 @@ def show():
                 },
                 use_container_width=True,
                 hide_index=True,
-                num_rows="fixed"
+                num_rows="fixed",
+                key="inventory_editor"
             )
 
             inventory_items = []
             total_inv_cost = 0.0
 
             for _, row in edited_prod_df.iterrows():
-                qty = float(row['الكمية الافتتاحية'] or 0)
+                # ✅ استخدام _safe_float
+                qty = _safe_float(row['الكمية الافتتاحية'])
                 if qty > 0:
-                    cost = float(row['تكلفة الوحدة'] or 0)
+                    cost = _safe_float(row['تكلفة الوحدة'])
                     inventory_items.append({
                         'product_id': int(row['id']),
                         'quantity': qty,
@@ -168,17 +197,22 @@ def show():
     account_balances = st.session_state.get('account_balances', [])
     inventory_items = st.session_state.get('inventory_items', [])
 
-    total_dr = sum(b['debit'] for b in account_balances)
-    total_cr = sum(b['credit'] for b in account_balances)
-    total_inv = sum(i['quantity'] * i['unit_cost'] for i in inventory_items)
+    # ✅ حساب آمن للمجاميع النهائية
+    total_dr = sum(_safe_float(b.get('debit', 0)) for b in account_balances)
+    total_cr = sum(_safe_float(b.get('credit', 0)) for b in account_balances)
+    total_inv = sum(
+        _safe_float(i.get('quantity', 0)) * _safe_float(i.get('unit_cost', 0))
+        for i in inventory_items
+    )
 
-    total_dr_with_inv = total_dr + total_inv
+    total_dr_with_inv = round(total_dr + total_inv, 2)
+    total_cr = round(total_cr, 2)
     diff_final = round(total_dr_with_inv - total_cr, 2)
 
     is_balanced = abs(diff_final) < 0.01
     color_status = GR if is_balanced else OR
 
-    # ✅ HTML كنص واحد — لا multi-line
+    # ✅ عرض المجاميع (مع fallback آمن)
     summary_html = (
         f'<div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:1rem;">'
         f'<span><b>إجمالي المدين</b> (مع المخزون): {total_dr_with_inv:,.2f}</span>'
@@ -187,6 +221,15 @@ def show():
         f'</div>'
     )
     _glass_card(summary_html, color=color_status)
+
+    # ✅ تنبيه: متوازن أم لا
+    if not is_balanced and (total_dr_with_inv > 0 or total_cr > 0):
+        st.warning(
+            f"⚠️ الأرصدة غير متوازنة. الفرق: **{diff_final:,.2f}**\n\n"
+            f"سيقوم النظام بموازنة القيد تلقائياً عبر حساب **الأرباح المبقاة**."
+        )
+    elif is_balanced and (total_dr_with_inv > 0 or total_cr > 0):
+        st.success("✅ الأرصدة متوازنة — جاهزة للحفظ")
 
     if "saving_opening" not in st.session_state:
         st.session_state.saving_opening = False
