@@ -1,4 +1,5 @@
-# ui/auth_ui.py
+# ui/auth_ui.py - واجهة المصادقة (v2.1)
+# ✅ v2.1: تمرير ip_address + changed_by لتسجيل أحداث الأمان
 import streamlit as st
 from database import init_db
 from services.auth_service import (
@@ -13,6 +14,28 @@ S = "#94A3B8"
 PR = "#7C3AED"
 BL = "#2563EB"
 BG_CORE = "#020617"
+
+
+# ============================================================
+# ✅ دالة مساعدة: محاولة الحصول على IP العميل
+# ============================================================
+def _get_client_ip():
+    """
+    محاولة الحصول على IP العميل.
+    - في Streamlit محلي: يُعيد "محلي"
+    - في بيئة إنتاج: يمكن استخدام st.context (Streamlit ≥ 1.36)
+    """
+    try:
+        import streamlit as st_module
+        if hasattr(st_module, "context") and hasattr(st_module.context, "headers"):
+            headers = st_module.context.headers
+            for h in ("X-Forwarded-For", "X-Real-IP", "Remote-Addr"):
+                if h in headers:
+                    return headers[h].split(",")[0].strip()
+    except Exception:
+        pass
+    return "محلي"
+
 
 def apply_ultra_premium_css():
     """حقن نظام التصميم السيادي - بدون أي مسافات بادئة لتجنب تحولها لكود"""
@@ -255,33 +278,62 @@ def render_premium_header(is_change_password=False):
 
 def login_form():
     render_premium_header(is_change_password=False)
-    
+
     spacer_left, main_col, spacer_right = st.columns([0.5, 3, 0.5])
-    
+
     with main_col:
         with st.container():
-            username = st.text_input("👤 معرف المستخدم (ID)", placeholder="أدخل اسم المستخدم", key="login_user")
-            st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True) 
-            
-            password = st.text_input("🔒 رمز المرور السري", type="password", placeholder="••••••••", key="login_pass")
-            st.markdown("<div style='margin-bottom: 45px;'></div>", unsafe_allow_html=True)
-            
-            login_btn = st.button("🚀 مصادقة والدخول", use_container_width=True, type="primary")
-            st.markdown("<div style='margin-bottom: 15px;'></div>", unsafe_allow_html=True)
-            
-            if st.button("🔑 تغيير الرمز", use_container_width=True, type="secondary"):
+            username = st.text_input(
+                "👤 معرف المستخدم (ID)",
+                placeholder="أدخل اسم المستخدم",
+                key="login_user"
+            )
+            st.markdown("<div style='margin-bottom: 20px;'></div>",
+                        unsafe_allow_html=True)
+
+            password = st.text_input(
+                "🔒 رمز المرور السري",
+                type="password",
+                placeholder="••••••••",
+                key="login_pass"
+            )
+            st.markdown("<div style='margin-bottom: 45px;'></div>",
+                        unsafe_allow_html=True)
+
+            login_btn = st.button(
+                "🚀 مصادقة والدخول",
+                use_container_width=True,
+                type="primary"
+            )
+            st.markdown("<div style='margin-bottom: 15px;'></div>",
+                        unsafe_allow_html=True)
+
+            if st.button("🔑 تغيير الرمز", use_container_width=True,
+                         type="secondary"):
                 st.session_state.show_password_change = True
                 st.rerun()
-            
+
             if login_btn:
-                user = verify_user(username, password)
-                if user:
-                    st.session_state.logged_in = True
-                    st.session_state.user = user
-                    st.rerun()
+                # ✅ التحقق من المدخلات
+                if not username.strip() or not password:
+                    st.warning("⚠️ يرجى إدخال اسم المستخدم وكلمة المرور.")
                 else:
-                    st.error("❌ فشلت المصادقة المباشرة. يرجى مراجعة البيانات المدخلة.")
-    
+                    # ✅ تمرير IP + username منظّف
+                    user = verify_user(
+                        username.strip(),
+                        password,
+                        ip_address=_get_client_ip(),
+                    )
+                    if user:
+                        st.session_state.logged_in = True
+                        st.session_state.user = user
+                        st.rerun()
+                    else:
+                        st.error(
+                            "❌ فشلت المصادقة المباشرة. "
+                            "يرجى مراجعة البيانات المدخلة."
+                        )
+
     dev_html = """<div class="dev-signature">
 حوكمة ERP • نظام محاسبي متكامل<br>
 <div style="margin-top: 10px;">تطوير: <span class="dev-name">سالم التريمي</span></div>
@@ -291,24 +343,48 @@ def login_form():
 
 def password_change_form():
     render_premium_header(is_change_password=True)
-    
+
     spacer_left, main_col, spacer_right = st.columns([0.5, 3, 0.5])
-    
+
     with main_col:
         with st.container():
-            username = st.text_input("👤 اسم المستخدم", placeholder="أدخل اسم المستخدم الخاص بك", key="change_user")
-            st.markdown("<div style='margin-bottom: 15px;'></div>", unsafe_allow_html=True)
-            
-            old_password = st.text_input("🔓 رمز المرور السري الحالي", type="password", placeholder="الرمز الحالي", key="change_old")
-            st.markdown("<div style='margin-bottom: 15px;'></div>", unsafe_allow_html=True)
-            
-            new_password = st.text_input("✨ رمز المرور السري الجديد", type="password", placeholder="الرمز الجديد القوي", key="change_new")
-            st.markdown("<div style='margin-bottom: 15px;'></div>", unsafe_allow_html=True)
-            
-            confirm_password = st.text_input("✅ تأكيد الرمز الجديد", type="password", placeholder="إعادة كتابة الرمز", key="change_confirm")
-            st.markdown("<div style='margin-bottom: 40px;'></div>", unsafe_allow_html=True)
-            
-            if st.button("💾 حفظ البيانات وتحديث", use_container_width=True, type="primary"):
+            username = st.text_input(
+                "👤 اسم المستخدم",
+                placeholder="أدخل اسم المستخدم الخاص بك",
+                key="change_user"
+            )
+            st.markdown("<div style='margin-bottom: 15px;'></div>",
+                        unsafe_allow_html=True)
+
+            old_password = st.text_input(
+                "🔓 رمز المرور السري الحالي",
+                type="password",
+                placeholder="الرمز الحالي",
+                key="change_old"
+            )
+            st.markdown("<div style='margin-bottom: 15px;'></div>",
+                        unsafe_allow_html=True)
+
+            new_password = st.text_input(
+                "✨ رمز المرور السري الجديد",
+                type="password",
+                placeholder="الرمز الجديد القوي",
+                key="change_new"
+            )
+            st.markdown("<div style='margin-bottom: 15px;'></div>",
+                        unsafe_allow_html=True)
+
+            confirm_password = st.text_input(
+                "✅ تأكيد الرمز الجديد",
+                type="password",
+                placeholder="إعادة كتابة الرمز",
+                key="change_confirm"
+            )
+            st.markdown("<div style='margin-bottom: 40px;'></div>",
+                        unsafe_allow_html=True)
+
+            if st.button("💾 حفظ البيانات وتحديث",
+                         use_container_width=True, type="primary"):
                 if not username or not old_password or not new_password:
                     st.warning("⚠️ جميع الحقول مطلوبة.")
                 elif new_password != confirm_password:
@@ -316,20 +392,32 @@ def password_change_form():
                 elif len(new_password) < 4:
                     st.error("⚠️ رمز المرور ضعيف (يجب ألا يقل عن 4 خانات).")
                 else:
-                    success, message = change_password(username, old_password, new_password)
+                    # ✅ تمرير changed_by
+                    current_user = (
+                        st.session_state.user.get('username')
+                        if st.session_state.get('user') else username
+                    )
+                    success, message = change_password(
+                        username,
+                        old_password,
+                        new_password,
+                        changed_by=current_user,
+                    )
                     if success:
                         st.success(f"✨ {message}")
                         st.session_state.show_password_change = False
                         st.rerun()
                     else:
                         st.error(f"❌ {message}")
-                        
-            st.markdown("<div style='margin-bottom: 15px;'></div>", unsafe_allow_html=True)
-            
-            if st.button("↩️ تراجع", use_container_width=True, type="secondary"):
+
+            st.markdown("<div style='margin-bottom: 15px;'></div>",
+                        unsafe_allow_html=True)
+
+            if st.button("↩️ تراجع", use_container_width=True,
+                         type="secondary"):
                 st.session_state.show_password_change = False
                 st.rerun()
-                    
+
     dev_html = """<div class="dev-signature">
 <div style="margin-top: 10px;">تطوير: <span class="dev-name">سالم التريمي</span></div>
 </div>"""
@@ -338,12 +426,12 @@ def password_change_form():
 
 def show():
     init_db()
-    
+
     if 'show_password_change' not in st.session_state:
         st.session_state.show_password_change = False
-    
+
     apply_ultra_premium_css()
-    
+
     if st.session_state.show_password_change:
         password_change_form()
     else:
