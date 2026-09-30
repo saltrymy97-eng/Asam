@@ -1,5 +1,5 @@
-# ui/payroll_ui.py – واجهة كشف الرواتب (v2.0)
-# ✅ قائمة موحّدة للدفع + فحص الرصيد + عرض فوري
+# ui/payroll_ui.py – واجهة كشف الرواتب (v3.0)
+# ✅ الحماية: منع تكرار راتب نفس الموظف في نفس الشهر
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -11,6 +11,7 @@ from services.payroll_service import (
     calculate_net,
     run_payroll,
     get_payroll_history,
+    check_employee_payroll_exists,   # ✅ جديد
 )
 from services.expenses_service import get_payment_accounts
 from services.audit_service import log_action
@@ -33,6 +34,45 @@ def _format_account_label(acc):
         f"{icon} {acc['name']} "
         f"({acc['currency']}) — الرصيد: {acc['balance']:,.2f}"
     )
+
+
+def _render_existing_payroll_card(existing):
+    """بطاقة تفاصيل الراتب السابق"""
+    month = existing.get("month", "—")
+    emp_name = existing.get("employee_name", "—")
+    net = float(existing.get("net_salary") or 0)
+    basic = float(existing.get("basic_salary") or 0)
+    allowances = float(existing.get("total_allowances") or 0)
+    deductions = float(existing.get("deductions") or 0)
+    entry_id = existing.get("journal_entry_id") or "—"
+
+    st.markdown(
+        f"""
+        <div style="
+            background: linear-gradient(135deg, rgba(239,68,68,0.15), rgba(245,158,11,0.08));
+            border-right: 5px solid {ACCENT_RED};
+            border-radius: 12px; padding: 1.5rem;
+            margin: 1rem 0; text-align: right; direction: rtl;
+        ">
+            <div style="color:{ACCENT_RED}; font-size:1.3rem; font-weight:800;">
+                🔒 تم صرف راتب هذا الشهر مسبقاً
+            </div>
+            <div style="color:{TEXT_SECONDARY}; margin-top:10px; font-size:0.95rem;">
+                الموظف: <b style="color:{TEXT_PRIMARY};">{emp_name}</b>
+                &nbsp;|&nbsp; الشهر: <b style="color:{TEXT_PRIMARY};">{month}</b>
+                &nbsp;|&nbsp; رقم القيد: <b style="color:{TEXT_PRIMARY};">#{entry_id}</b>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # تفاصيل الراتب
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("الراتب الأساسي", f"{basic:,.2f}")
+    c2.metric("البدلات", f"{allowances:,.2f}")
+    c3.metric("الخصومات", f"{deductions:,.2f}")
+    c4.metric("صافي الراتب", f"{net:,.2f}")
 
 
 def show():
@@ -123,9 +163,38 @@ def show():
         emp_names = [e["name"] for e in employees]
         selected = st.selectbox("اختر الموظف", emp_names, key="sal_run_emp")
         emp_id = next(e["id"] for e in employees if e["name"] == selected)
-        month = st.text_input("الشهر (YYYY-MM)",
-                              value=date.today().strftime("%Y-%m"))
 
+        # ✅ الشهر (نص حر)
+        month = st.text_input(
+            "الشهر (YYYY-MM)",
+            value=date.today().strftime("%Y-%m"),
+            key="payroll_month"
+        )
+
+        # ============================================================
+        # ✅ الحماية: فحص وجود راتب مُسجَّل
+        # ============================================================
+        existing = None
+        if emp_id and month and len(month.strip()) >= 6:
+            try:
+                existing = check_employee_payroll_exists(emp_id, month.strip())
+            except Exception:
+                existing = None
+
+        if existing:
+            # ✅ عرض بطاقة الراتب السابق + تعطيل الإدخال
+            _render_existing_payroll_card(existing)
+            st.info(
+                "ℹ️ **لا يمكن تشغيل نفس الراتب مرتين في نفس الشهر.**\n\n"
+                "إذا أردت تعديله — احذف الراتب السابق من سجل الرواتب أولاً، "
+                "ثم أعد التشغيل."
+            )
+            # 🔒 لا نعرض النموذج
+            return
+
+        # ============================================================
+        # لا يوجد راتب سابق → النموذج عادي
+        # ============================================================
         conf = get_salary_config(emp_id)
         if not conf:
             st.warning("⚠️ يرجى إعداد الراتب من التبويب الأول أولاً.")
@@ -148,7 +217,7 @@ def show():
         col4.metric("الصافي", f"{net:,.2f}")
 
         # ============================================================
-        # ✅ اختيار حساب الدفع + فحص الرصيد
+        # اختيار حساب الدفع + فحص الرصيد
         # ============================================================
         st.markdown("---")
         st.markdown(f"<h4 style='color:{ACCENT_ORANGE};'>حساب الدفع</h4>",
@@ -159,7 +228,6 @@ def show():
             st.error("⚠️ لا يوجد صندوق أو بنك نشط. أضف واحداً أولاً.")
             return
 
-        # قائمة موحّدة
         labels = [_format_account_label(a) for a in payment_accounts]
         selected_label = st.selectbox(
             "من أي حساب سيتم صرف الرواتب؟",
@@ -195,6 +263,7 @@ def show():
             not st.session_state.saving_payroll
             and balance_ok
             and net > 0
+            and month.strip() != ""
         )
 
         if st.button(
@@ -207,7 +276,7 @@ def show():
             st.session_state.payroll_args = {
                 "emp_id": emp_id,
                 "emp_name": selected,
-                "month": month,
+                "month": month.strip(),
                 "account_code": selected_acc["code"],
                 "payment_method": selected_acc["type"],
             }
@@ -216,30 +285,43 @@ def show():
         if st.session_state.saving_payroll:
             try:
                 args = st.session_state.get("payroll_args", {})
-                net_amount, error = run_payroll(
+
+                # ✅ فحص أخير قبل التشغيل
+                re_check = check_employee_payroll_exists(
                     args.get("emp_id"),
                     args.get("month"),
-                    payment_account_code=args.get("account_code"),
-                    payment_method=args.get("payment_method"),
                 )
-                if error:
-                    st.error(f"❌ {error}")
+                if re_check:
+                    st.error(
+                        f"⚠️ تم صرف راتب هذا الشهر مسبقاً (رقم القيد: "
+                        f"#{re_check.get('journal_entry_id')}). "
+                        f"أعد تحميل الصفحة."
+                    )
                 else:
-                    log_action(
-                        username=st.session_state.user.get('username', 'admin'),
-                        action="تشغيل كشف راتب",
-                        table_name="payroll_runs",
-                        new_value=(
-                            f"الموظف: {args.get('emp_name')}, "
-                            f"الشهر: {args.get('month')}, "
-                            f"الصافي: {net_amount:,.2f}"
+                    net_amount, error = run_payroll(
+                        args.get("emp_id"),
+                        args.get("month"),
+                        payment_account_code=args.get("account_code"),
+                        payment_method=args.get("payment_method"),
+                    )
+                    if error:
+                        st.error(f"❌ {error}")
+                    else:
+                        log_action(
+                            username=st.session_state.user.get('username', 'admin'),
+                            action="تشغيل كشف راتب",
+                            table_name="payroll_runs",
+                            new_value=(
+                                f"الموظف: {args.get('emp_name')}, "
+                                f"الشهر: {args.get('month')}, "
+                                f"الصافي: {net_amount:,.2f}"
+                            )
                         )
-                    )
-                    st.success(
-                        f"✅ تم تشغيل كشف راتب **{args.get('month')}** "
-                        f"للموظف **{args.get('emp_name')}** "
-                        f"— الصافي: **{net_amount:,.2f}**"
-                    )
+                        st.success(
+                            f"✅ تم تشغيل كشف راتب **{args.get('month')}** "
+                            f"للموظف **{args.get('emp_name')}** "
+                            f"— الصافي: **{net_amount:,.2f}**"
+                        )
             except Exception as e:
                 st.error(f"❌ خطأ غير متوقع: {e}")
             finally:
@@ -271,7 +353,6 @@ def show():
                     "البدلات", "الخصومات", "الصافي", "رقم القيد"]
             cols = [c for c in cols if c in df_display.columns]
 
-            # ✅ إجمالي
             total = df["net_salary"].sum()
             st.markdown(
                 f"<div style='background:rgba(16,185,129,0.15); "
