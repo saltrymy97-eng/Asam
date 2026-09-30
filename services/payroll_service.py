@@ -1,5 +1,6 @@
-# services/payroll_service.py – منطق كشوف الرواتب (v2.0)
+# services/payroll_service.py – منطق كشوف الرواتب (v3.0)
 # ✅ Registry + فحص الرصيد + دعم البنك والصندوق + تسجيل الحركة
+# ✅ إضافة: check_employee_payroll_exists (فحص الراتب المُسجَّل)
 import sqlite3
 from datetime import date
 from database import get_connection, close_connection
@@ -130,6 +131,60 @@ def calculate_net(basic, housing, transport, other, deductions):
     return total_allowances, net
 
 
+# ============================================================
+# ✅ جديد: فحص وجود راتب مُسجَّل
+# ============================================================
+def check_employee_payroll_exists(employee_id, month, conn=None):
+    """
+    فحص: هل يوجد راتب مُسجَّل لهذا الموظف في هذا الشهر؟
+    
+    Args:
+        employee_id: معرف الموظف
+        month:       الشهر (YYYY-MM)
+    
+    Returns:
+        dict — تفاصيل الراتب إذا وُجد (id, month, net_salary, ...)
+        None — إذا لم يوجد
+    """
+    if not employee_id or not month:
+        return None
+
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
+    try:
+        row = conn.execute("""
+            SELECT 
+                pr.id,
+                pr.month,
+                pr.net_salary,
+                pr.basic_salary,
+                pr.housing_allowance,
+                pr.transport_allowance,
+                pr.other_allowances,
+                pr.total_allowances,
+                pr.deductions,
+                pr.journal_entry_id,
+                e.name AS employee_name
+            FROM payroll_runs pr
+            JOIN employees e ON pr.employee_id = e.id
+            WHERE pr.employee_id = ? AND pr.month = ?
+            ORDER BY pr.id DESC
+            LIMIT 1
+        """, (employee_id, month)).fetchone()
+        return dict(row) if row else None
+    except Exception as e:
+        print(f"check_employee_payroll_exists error: {e}")
+        return None
+    finally:
+        if own_conn:
+            close_connection(conn)
+
+
+# ============================================================
+# ✅ تشغيل الراتب
+# ============================================================
 def run_payroll(employee_id, month, payment_account_code=None,
                 payment_method="bank", conn=None):
     """
