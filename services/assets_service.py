@@ -1,5 +1,6 @@
-# services/assets_service.py – منطق الأصول الثابتة والإهلاكات (v2.0)
+# services/assets_service.py – منطق الأصول الثابتة والإهلاكات (v2.1)
 # ✅ Registry + conn=None + شراء من صندوق/بنك مع فحص الرصيد
+# ✅ v2.1: نسبة الإهلاك قابلة للتحكم + إصلاح الإهلاك الزائد + منع التكرار
 import sqlite3
 from datetime import date, datetime
 from database import get_connection, close_connection
@@ -33,6 +34,11 @@ def create_assets_tables(conn=None):
                 created_at TEXT DEFAULT (datetime('now','localtime'))
             )
         """)
+        # ✅ ترقية الجداول القديمة (آمنة)
+        _safe_add_column(conn, "fixed_assets", "annual_depreciation_rate", "REAL DEFAULT 0")
+        _safe_add_column(conn, "fixed_assets", "manual_monthly_depreciation", "REAL DEFAULT 0")
+        _safe_add_column(conn, "fixed_assets", "last_depreciation_date", "TEXT")
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS depreciation_entries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -51,23 +57,84 @@ def create_assets_tables(conn=None):
             close_connection(conn)
 
 
+def _safe_add_column(conn, table, column, definition):
+    """إضافة عمود بأمان إذا لم يكن موجوداً (SQLite)"""
+    try:
+        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+        if column not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+    except Exception as e:
+        print(f"⚠️ تعذر إضافة العمود {column} إلى {table}: {e}")
+
+
+# ============================================================
+# 💡 دالة مساعدة: حساب الإهلاك الشهري حسب الأولوية
+# ============================================================
+def _compute_monthly_depreciation(purchase_cost, salvage_value,
+                                  useful_life_years,
+                                  annual_rate=0.0,
+                                  manual_monthly=0.0):
+    """
+    حساب الإهلاك الشهري حسب الأولوية:
+    1) قيمة شهرية يدوية (manual_monthly)  ← الأعلى أولوية
+    2) نسبة سنوية (annual_rate %)
+    3) العمر الإنتاجي (طريقة القسط الثابت التقليدية)
+    
+    Returns:
+        (monthly_dep, error_message_or_None)
+    """
+    purchase_cost = float(purchase_cost or 0)
+    salvage_value = float(salvage_value or 0)
+    annual_rate = float(annual_rate or 0)
+    manual_monthly = float(manual_monthly or 0)
+
+    depreciable = purchase_cost - salvage_value
+    if depreciable <= 0:
+        return 0.0, "القيمة القابلة للإهلاك صفر أو سالبة"
+
+    # 1) القيمة اليدوية
+    if manual_monthly > 0:
+        if manual_monthly > depreciable:
+            return 0.0, "الإهلاك الشهري اليدوي يتجاوز القيمة القابلة للإهلاك"
+        return round(manual_monthly, 2), None
+
+    # 2) النسبة السنوية
+    if annual_rate > 0:
+        if annual_rate > 100:
+            return 0.0, "النسبة السنوية يجب أن تكون ≤ 100%"
+        monthly = (depreciable * (annual_rate / 100.0)) / 12.0
+        return round(monthly, 2), None
+
+    # 3) العمر الإنتاجي (افتراضي)
+    total_months = max(1, int(useful_life_years or 5) * 12)
+    return round(depreciable / total_months, 2), None
+
+
 # ============================================================
 # إضافة أصل ثابت (مع قيد شراء اختياري)
 # ============================================================
 def add_asset(name, category, purchase_date, purchase_cost,
               salvage_value=0, useful_life_years=5, method="قسط ثابت",
               notes="", payment_account_code=None, payment_method="cash",
-              created_by="admin", conn=None):
+              created_by="admin", conn=None,
+              annual_depreciation_rate=0.0,
+              manual_monthly_depreciation=0.0):
     """
-    إضافة أصل ثابت جديد مع حساب الإهلاك الشهري تلقائياً.
+    إضافة أصل ثابت جديد.
+    
+    نسبة الإهلاك قابلة للتحكم عبر 3 طرق (بالأولوية):
+        1) manual_monthly_depreciation  → قيمة شهرية ثابتة
+        2) annual_depreciation_rate     → نسبة سنوية %
+        3) useful_life_years            → العمر الإنتاجي (الطريقة التقليدية)
     
     Args:
-        payment_account_code: كود الصندوق/البنك (اختياري)
-        payment_method:       'cash' | 'bank' | None (بدون شراء نقدي)
+        annual_depreciation_rate:    نسبة الإهلاك السنوية % (0 = غير مستخدم)
+        manual_monthly_depreciation: قيمة إهلاك شهرية يدوية (0 = غير مستخدم)
+        payment_account_code:        كود الصندوق/البنك (اختياري)
+        payment_method:              'cash' | 'bank' | None
     
     Returns:
-        (asset_id, None) عند النجاح
-        (None, "رسالة")  عند الفشل
+        (asset_id, None) عند النجاح | (None, "رسالة") عند الفشل
     """
     create_assets_tables(conn=conn)
 
@@ -76,12 +143,25 @@ def add_asset(name, category, purchase_date, purchase_cost,
 
     if purchase_cost <= 0:
         return None, "تكلفة الشراء يجب أن تكون أكبر من صفر"
+    if salvage_value < 0:
+        return None, "القيمة التخريدية لا يمكن أن تكون سالبة"
+    if salvage_value >= purchase_cost:
+        return None, "القيمة التخريدية يجب أن تكون أقل من تكلفة الشراء"
 
-    depreciable_amount = purchase_cost - salvage_value
-    total_months = max(1, useful_life_years * 12)
-    monthly_dep = round(depreciable_amount / total_months, 2)
+    # ✅ حساب الإهلاك الشهري حسب الأولوية
+    monthly_dep, dep_error = _compute_monthly_depreciation(
+        purchase_cost=purchase_cost,
+        salvage_value=salvage_value,
+        useful_life_years=useful_life_years,
+        annual_rate=annual_depreciation_rate,
+        manual_monthly=manual_monthly_depreciation,
+    )
+    if dep_error:
+        return None, dep_error
+    if monthly_dep <= 0:
+        return None, "الإهلاك الشهري المحسوب صفر"
 
-    # ✅ فحص الرصيد قبل الشراء (إذا فيه دفع)
+    # ✅ فحص الرصيد قبل الشراء
     if payment_account_code and payment_method in ('cash', 'bank'):
         from services.cash_service import check_sufficient_balance
         ok, err = check_sufficient_balance(
@@ -104,35 +184,27 @@ def add_asset(name, category, purchase_date, purchase_cost,
             """INSERT INTO fixed_assets 
                (name, category, purchase_date, purchase_cost, salvage_value,
                 useful_life_years, depreciation_method, monthly_depreciation,
-                book_value, notes)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                book_value, notes, annual_depreciation_rate,
+                manual_monthly_depreciation)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (name, category, purchase_date, purchase_cost, salvage_value,
-             useful_life_years, method, monthly_dep, purchase_cost, notes)
+             useful_life_years, method, monthly_dep, purchase_cost, notes,
+             float(annual_depreciation_rate or 0),
+             float(manual_monthly_depreciation or 0))
         )
         asset_id = cur.lastrowid
 
-        # 2. ✅ قيد الشراء (إذا فيه دفع)
+        # 2. ✅ قيد الشراء (إن وجد دفع)
         if payment_account_code and payment_method in ('cash', 'bank'):
-            acc_fixed_assets = get_functional_account("fixed_assets")
-            if not acc_fixed_assets:
-                # fallback: نستخدم حساب الأصول الثابتة الافتراضي
-                acc_fixed_assets = get_functional_account("Asset") or "1401"
+            acc_fixed_assets = get_functional_account("fixed_assets") \
+                or get_functional_account("Asset") or "1401"
 
             lines = [
-                {
-                    "account": acc_fixed_assets,
-                    "debit": purchase_cost,
-                    "credit": 0,
-                    "currency_code": "YER",
-                    "exchange_rate": 1.0,
-                },
-                {
-                    "account": payment_account_code,
-                    "debit": 0,
-                    "credit": purchase_cost,
-                    "currency_code": "YER",
-                    "exchange_rate": 1.0,
-                },
+                {"account": acc_fixed_assets, "debit": purchase_cost,
+                 "credit": 0, "currency_code": "YER", "exchange_rate": 1.0},
+                {"account": payment_account_code, "debit": 0,
+                 "credit": purchase_cost, "currency_code": "YER",
+                 "exchange_rate": 1.0},
             ]
 
             entry_id, entry_error = save_journal_entry(
@@ -144,24 +216,21 @@ def add_asset(name, category, purchase_date, purchase_cost,
             if entry_error:
                 raise Exception(f"فشل إنشاء قيد الشراء: {entry_error}")
 
-            # ✅ تسجيل الحركة في الصندوق/البنك
+            # تسجيل الحركة في الصندوق/البنك
             if payment_method == 'cash':
                 try:
                     from services.cash_service import add_cash_transaction
                     acc_row = conn.execute(
-                        "SELECT id FROM cash_accounts WHERE account_code=? AND is_active=1 LIMIT 1",
+                        "SELECT id FROM cash_accounts WHERE account_code=? "
+                        "AND is_active=1 LIMIT 1",
                         (payment_account_code,)
                     ).fetchone()
                     if acc_row:
                         add_cash_transaction(
-                            acc_row['id'],
-                            purchase_date,
-                            f"شراء أصل: {name}",
-                            'withdrawal',
-                            purchase_cost,
+                            acc_row['id'], purchase_date,
+                            f"شراء أصل: {name}", 'withdrawal', purchase_cost,
                             reference=f"asset#{asset_id}",
-                            create_journal=False,
-                            conn=conn,
+                            create_journal=False, conn=conn,
                             skip_balance_check=True,
                         )
                 except Exception as e:
@@ -170,18 +239,15 @@ def add_asset(name, category, purchase_date, purchase_cost,
                 try:
                     from services.bank_service import add_bank_transaction
                     acc_row = conn.execute(
-                        "SELECT id FROM bank_accounts WHERE account_code=? AND is_active=1 LIMIT 1",
+                        "SELECT id FROM bank_accounts WHERE account_code=? "
+                        "AND is_active=1 LIMIT 1",
                         (payment_account_code,)
                     ).fetchone()
                     if acc_row:
                         add_bank_transaction(
-                            acc_row['id'],
-                            purchase_date,
-                            f"شراء أصل: {name}",
-                            'withdrawal',
-                            purchase_cost,
-                            reference=f"asset#{asset_id}",
-                            conn=conn,
+                            acc_row['id'], purchase_date,
+                            f"شراء أصل: {name}", 'withdrawal', purchase_cost,
+                            reference=f"asset#{asset_id}", conn=conn,
                             skip_balance_check=True,
                         )
                 except Exception as e:
@@ -191,21 +257,17 @@ def add_asset(name, category, purchase_date, purchase_cost,
             conn.commit()
 
         log_action(
-            username=created_by,
-            action="إضافة أصل ثابت",
-            table_name="fixed_assets",
-            record_id=asset_id,
-            new_value=f"{name}, التكلفة: {purchase_cost:,.2f}"
+            username=created_by, action="إضافة أصل ثابت",
+            table_name="fixed_assets", record_id=asset_id,
+            new_value=f"{name}, التكلفة: {purchase_cost:,.2f}, "
+                      f"الإهلاك الشهري: {monthly_dep:,.2f}"
         )
-
         return asset_id, None
 
     except Exception as e:
         if own_conn:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
+            try: conn.rollback()
+            except Exception: pass
         return None, str(e)
     finally:
         if own_conn:
@@ -229,12 +291,107 @@ def get_all_assets(conn=None):
 
 
 # ============================================================
+# ✅ دالة جديدة: تحديث نسبة إهلاك أصل موجود
+# ============================================================
+def update_asset_depreciation(asset_id, annual_depreciation_rate=None,
+                              manual_monthly_depreciation=None,
+                              useful_life_years=None,
+                              updated_by="admin", conn=None):
+    """
+    تحديث طريقة/نسبة إهلاك أصل موجود.
+    يمكن تمرير أي معامل (None = تجاهل).
+    
+    Returns:
+        (True, "رسالة") | (False, "خطأ")
+    """
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
+    try:
+        if own_conn:
+            conn.execute("BEGIN")
+
+        asset = conn.execute(
+            "SELECT * FROM fixed_assets WHERE id=?", (asset_id,)
+        ).fetchone()
+        if not asset:
+            if own_conn: conn.rollback()
+            return False, "الأصل غير موجود"
+
+        asset = dict(asset)
+
+        # القيم الجديدة
+        new_rate = (float(annual_depreciation_rate)
+                    if annual_depreciation_rate is not None
+                    else float(asset.get("annual_depreciation_rate") or 0))
+        new_manual = (float(manual_monthly_depreciation)
+                      if manual_monthly_depreciation is not None
+                      else float(asset.get("manual_monthly_depreciation") or 0))
+        new_life = (int(useful_life_years)
+                    if useful_life_years is not None
+                    else int(asset.get("useful_life_years") or 5))
+
+        # إعادة حساب الإهلاك الشهري
+        monthly_dep, dep_error = _compute_monthly_depreciation(
+            purchase_cost=asset["purchase_cost"],
+            salvage_value=asset["salvage_value"],
+            useful_life_years=new_life,
+            annual_rate=new_rate,
+            manual_monthly=new_manual,
+        )
+        if dep_error:
+            if own_conn: conn.rollback()
+            return False, dep_error
+
+        # ⚠️ تحذير: تغيير الإهلاك لا يعيد حساب الإهلاك الماضي (مقصود)
+        conn.execute(
+            """UPDATE fixed_assets 
+               SET annual_depreciation_rate=?,
+                   manual_monthly_depreciation=?,
+                   useful_life_years=?,
+                   monthly_depreciation=?
+               WHERE id=?""",
+            (new_rate, new_manual, new_life, monthly_dep, asset_id)
+        )
+
+        if own_conn:
+            conn.commit()
+
+        log_action(
+            username=updated_by, action="تعديل نسبة إهلاك",
+            table_name="fixed_assets", record_id=asset_id,
+            old_value=f"rate={asset.get('annual_depreciation_rate')}, "
+                      f"manual={asset.get('manual_monthly_depreciation')}, "
+                      f"life={asset.get('useful_life_years')}",
+            new_value=f"rate={new_rate}, manual={new_manual}, "
+                      f"life={new_life}, monthly={monthly_dep}"
+        )
+        return True, f"تم تحديث الإهلاك الشهري إلى {monthly_dep:,.2f}"
+
+    except Exception as e:
+        if own_conn:
+            try: conn.rollback()
+            except Exception: pass
+        return False, f"فشل التحديث: {e}"
+    finally:
+        if own_conn:
+            close_connection(conn)
+
+
+# ============================================================
 # تشغيل الإهلاك الشهري
 # ============================================================
 def run_depreciation(asset_id, entry_date=None, notes="",
-                     created_by="admin", conn=None):
+                     created_by="admin", conn=None,
+                     force=False):
     """
     تشغيل إهلاك شهري لأصل محدد.
+    
+    ✅ v2.1:
+      - يمنع تجاوز القيمة التخريدية (إصلاح خطأ محاسبي)
+      - يمنع تكرار الإهلاك في نفس الشهر (إلا مع force=True)
+      - يحسب القيد بالفرق الفعلي عند الاقتراب من القيمة التخريدية
     
     ⚠️ الإهلاك لا يمسّ الصندوق/البنك.
     """
@@ -254,21 +411,50 @@ def run_depreciation(asset_id, entry_date=None, notes="",
             "SELECT * FROM fixed_assets WHERE id=?", (asset_id,)
         ).fetchone()
         if not asset:
-            if own_conn:
-                conn.rollback()
+            if own_conn: conn.rollback()
             return False, "الأصل غير موجود"
         if asset["status"] != "نشط":
-            if own_conn:
-                conn.rollback()
+            if own_conn: conn.rollback()
             return False, "الأصل غير نشط"
 
         monthly_dep = float(asset["monthly_depreciation"] or 0)
         if monthly_dep <= 0:
-            if own_conn:
-                conn.rollback()
+            if own_conn: conn.rollback()
             return False, "قيمة الإهلاك صفر"
 
-        # رقم تسلسلي
+        # ✅ 1) منع تكرار الإهلاك في نفس الشهر
+        if not force:
+            existing = conn.execute(
+                """SELECT id FROM depreciation_entries 
+                   WHERE asset_id=? 
+                     AND substr(entry_date,1,7) = substr(?,1,7)
+                   LIMIT 1""",
+                (asset_id, entry_date)
+            ).fetchone()
+            if existing:
+                if own_conn: conn.rollback()
+                return False, ("تم إهلاك هذا الأصل مسبقاً في نفس الشهر. "
+                               "استخدم force=True للتجاوز.")
+
+        # ✅ 2) احتساب المتبقي حتى القيمة التخريدية
+        purchase_cost = float(asset["purchase_cost"] or 0)
+        salvage = float(asset["salvage_value"] or 0)
+        accumulated = float(asset["accumulated_depreciation"] or 0)
+        remaining = round(purchase_cost - salvage - accumulated, 2)
+
+        if remaining <= 0:
+            # لا يوجد متبقي → نُحدّث الحالة ونخرج
+            conn.execute(
+                "UPDATE fixed_assets SET status='مستنفذ', book_value=? "
+                "WHERE id=?",
+                (round(purchase_cost - accumulated, 2), asset_id)
+            )
+            if own_conn: conn.commit()
+            return False, "الأصل مستنفذ بالكامل (وصل للقيمة التخريدية)"
+
+        # ✅ 3) القيمة الفعلية للإهلاك = الأصغر بين الشهري والمتبقي
+        actual_dep = round(min(monthly_dep, remaining), 2)
+
         count = conn.execute(
             "SELECT COUNT(*) FROM depreciation_entries WHERE asset_id=?",
             (asset_id,)
@@ -276,81 +462,64 @@ def run_depreciation(asset_id, entry_date=None, notes="",
 
         desc = f"إهلاك {asset['name']} - الشهر {count} - {entry_date}"
 
-        # الحسابات الوظيفية
         acc_dep_exp = get_functional_account("depreciation_expense")
         acc_accum_dep = get_functional_account("accumulated_depreciation")
-
         if not acc_dep_exp or not acc_accum_dep:
             raise Exception("حسابات الإهلاك الوظيفية غير معرفة")
 
         lines = [
-            {
-                "account": acc_dep_exp,
-                "debit": monthly_dep,
-                "credit": 0,
-                "currency_code": "YER",
-                "exchange_rate": 1.0,
-            },
-            {
-                "account": acc_accum_dep,
-                "debit": 0,
-                "credit": monthly_dep,
-                "currency_code": "YER",
-                "exchange_rate": 1.0,
-            },
+            {"account": acc_dep_exp, "debit": actual_dep, "credit": 0,
+             "currency_code": "YER", "exchange_rate": 1.0},
+            {"account": acc_accum_dep, "debit": 0, "credit": actual_dep,
+             "currency_code": "YER", "exchange_rate": 1.0},
         ]
 
         entry_id, entry_error = save_journal_entry(
-            description=desc,
-            lines=lines,
-            entry_date=entry_date,
-            conn=conn,
+            description=desc, lines=lines, entry_date=entry_date, conn=conn,
         )
         if entry_error:
             raise Exception(f"فشل إنشاء قيد الإهلاك: {entry_error}")
 
         # تحديث قيم الأصل
-        new_accumulated = round(
-            float(asset["accumulated_depreciation"] or 0) + monthly_dep, 2
-        )
-        new_book_value = round(
-            float(asset["purchase_cost"]) - new_accumulated, 2
-        )
-        salvage = float(asset["salvage_value"] or 0)
+        new_accumulated = round(accumulated + actual_dep, 2)
+        new_book_value = round(purchase_cost - new_accumulated, 2)
         new_status = "نشط" if new_book_value > salvage else "مستنفذ"
 
         conn.execute(
-            "UPDATE fixed_assets SET accumulated_depreciation=?, "
-            "book_value=?, status=? WHERE id=?",
-            (new_accumulated, new_book_value, new_status, asset_id)
+            """UPDATE fixed_assets 
+               SET accumulated_depreciation=?, book_value=?, status=?,
+                   last_depreciation_date=?
+               WHERE id=?""",
+            (new_accumulated, new_book_value, new_status,
+             entry_date, asset_id)
         )
 
         conn.execute(
             "INSERT INTO depreciation_entries "
             "(asset_id, entry_date, amount, journal_entry_id, notes) "
             "VALUES (?, ?, ?, ?, ?)",
-            (asset_id, entry_date, monthly_dep, entry_id, notes)
+            (asset_id, entry_date, actual_dep, entry_id, notes)
         )
 
         if own_conn:
             conn.commit()
 
         log_action(
-            username=created_by,
-            action="إصدار إهلاك",
-            table_name="depreciation_entries",
-            record_id=entry_id,
-            new_value=f"الأصل: {asset['name']}, القيمة: {monthly_dep:,.2f}"
+            username=created_by, action="إصدار إهلاك",
+            table_name="depreciation_entries", record_id=entry_id,
+            new_value=f"الأصل: {asset['name']}, القيمة: {actual_dep:,.2f}"
         )
 
-        return True, f"تم تسجيل إهلاك {monthly_dep:.2f} للأصل {asset['name']} (شهر {count})"
+        suffix = ""
+        if actual_dep < monthly_dep:
+            suffix = f" ⚠️ (إهلاك أخير - المتبقي كان {remaining:,.2f})"
+        return True, (f"تم تسجيل إهلاك {actual_dep:.2f} "
+                      f"للأصل {asset['name']} (شهر {count}){suffix}")
 
     except Exception as e:
         if own_conn:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
+            try: conn.rollback()
+            except Exception: pass
         return False, f"فشل تسجيل الإهلاك: {str(e)}"
     finally:
         if own_conn:
