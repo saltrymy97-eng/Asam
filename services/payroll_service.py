@@ -1,12 +1,28 @@
-# services/payroll_service.py – منطق كشوف الرواتب (v3.0)
+# services/payroll_service.py – منطق كشوف الرواتب (v3.1)
 # ✅ Registry + فحص الرصيد + دعم البنك والصندوق + تسجيل الحركة
-# ✅ إضافة: check_employee_payroll_exists (فحص الراتب المُسجَّل)
+# ✅ v3.1: تسجيل تدقيق كامل (username + record_id + dict + old_value)
 import sqlite3
 from datetime import date
 from database import get_connection, close_connection
 from services.audit_service import log_action
 from services.chart_service import get_functional_account
 from services.accounting_service import save_journal_entry
+
+
+# ============================================================
+# ✅ دالة مساعدة: جلب اسم المستخدم الحالي
+# ============================================================
+def _get_current_user(default="system"):
+    """جلب اسم المستخدم الحالي من session_state بأمان"""
+    try:
+        import streamlit as st
+        user = st.session_state.get('user') or {}
+        username = user.get('username')
+        if username:
+            return username
+    except Exception:
+        pass
+    return default
 
 
 def create_payroll_tables(conn=None):
@@ -83,34 +99,81 @@ def get_salary_config(employee_id, conn=None):
 
 
 def save_salary_config(employee_id, basic, housing, transport, other,
-                       deductions, conn=None):
-    """حفظ أو تحديث إعدادات الراتب للموظف"""
+                       deductions, conn=None, updated_by=None):
+    """
+    حفظ أو تحديث إعدادات الراتب للموظف.
+    ✅ v3.1: يسجّل في سجل التدقيق (مع old_value عند التعديل).
+    """
+    if updated_by is None:
+        updated_by = _get_current_user()
+
     own_conn = False
     if conn is None:
         conn = get_connection()
         own_conn = True
     try:
-        if own_conn:
-            conn.execute("BEGIN")
-        exists = conn.execute(
-            "SELECT id FROM employee_salaries WHERE employee_id=?",
+        # ✅ جلب الإعدادات القديمة (إن وُجدت)
+        old_conf = conn.execute(
+            "SELECT * FROM employee_salaries WHERE employee_id=?",
             (employee_id,)
         ).fetchone()
-        if exists:
+        old_data = dict(old_conf) if old_conf else None
+
+        # ✅ جلب اسم الموظف
+        emp = conn.execute(
+            "SELECT name FROM employees WHERE id=?", (employee_id,)
+        ).fetchone()
+        emp_name = emp["name"] if emp else f"موظف #{employee_id}"
+
+        if own_conn:
+            conn.execute("BEGIN")
+
+        if old_conf:
+            # تعديل
             conn.execute("""
                 UPDATE employee_salaries SET basic_salary=?,
                 housing_allowance=?, transport_allowance=?,
                 other_allowances=?, deductions=? WHERE employee_id=?
             """, (basic, housing, transport, other, deductions, employee_id))
+            action_type = "✏️ تعديل إعدادات راتب"
         else:
+            # إنشاء
             conn.execute("""
                 INSERT INTO employee_salaries 
                 (employee_id, basic_salary, housing_allowance, transport_allowance,
                  other_allowances, deductions)
                 VALUES (?,?,?,?,?,?)
             """, (employee_id, basic, housing, transport, other, deductions))
+            action_type = "💰 إعداد راتب جديد"
+
         if own_conn:
             conn.commit()
+
+        # ✅ تسجيل في سجل التدقيق
+        new_data = {
+            "employee_id": employee_id,
+            "employee_name": emp_name,
+            "basic_salary": basic,
+            "housing_allowance": housing,
+            "transport_allowance": transport,
+            "other_allowances": other,
+            "deductions": deductions,
+            "total_allowances": housing + transport + other,
+            "net_salary": basic + housing + transport + other - deductions,
+        }
+
+        try:
+            log_action(
+                username=updated_by,
+                action=action_type,
+                table_name="employee_salaries",
+                record_id=employee_id,
+                old_value=old_data,
+                new_value=new_data,
+            )
+        except Exception as e:
+            print(f"⚠️ فشل تسجيل إعدادات الراتب: {e}")
+
         return True, None
     except Exception as e:
         if own_conn:
@@ -132,18 +195,14 @@ def calculate_net(basic, housing, transport, other, deductions):
 
 
 # ============================================================
-# ✅ جديد: فحص وجود راتب مُسجَّل
+# فحص وجود راتب مُسجَّل
 # ============================================================
 def check_employee_payroll_exists(employee_id, month, conn=None):
     """
     فحص: هل يوجد راتب مُسجَّل لهذا الموظف في هذا الشهر؟
     
-    Args:
-        employee_id: معرف الموظف
-        month:       الشهر (YYYY-MM)
-    
     Returns:
-        dict — تفاصيل الراتب إذا وُجد (id, month, net_salary, ...)
+        dict — تفاصيل الراتب إذا وُجد
         None — إذا لم يوجد
     """
     if not employee_id or not month:
@@ -183,23 +242,29 @@ def check_employee_payroll_exists(employee_id, month, conn=None):
 
 
 # ============================================================
-# ✅ تشغيل الراتب
+# تشغيل الراتب
 # ============================================================
 def run_payroll(employee_id, month, payment_account_code=None,
-                payment_method="bank", conn=None):
+                payment_method="bank", conn=None, created_by=None):
     """
     تشغيل كشف الراتب لشهر محدد.
+    ✅ v3.1: يسجّل في سجل التدقيق مع كل التفاصيل.
     
     Args:
         employee_id:           معرف الموظف
         month:                 الشهر (YYYY-MM)
-        payment_account_code:  كود الصندوق/البنك (يُختار في الواجهة)
+        payment_account_code:  كود الصندوق/البنك
         payment_method:        'cash' | 'bank'
+        created_by:            اسم المستخدم (تلقائي من session)
     
     Returns:
         (net, None)         عند النجاح
         (None, "رسالة")     عند الفشل
     """
+    # ✅ قراءة تلقائية للمستخدم
+    if created_by is None:
+        created_by = _get_current_user()
+
     conf = get_salary_config(employee_id, conn=conn)
     if not conf:
         return None, "لا توجد إعدادات راتب للموظف"
@@ -243,16 +308,14 @@ def run_payroll(employee_id, month, payment_account_code=None,
         # 1. الحسابات الوظيفية
         acc_salaries_exp = get_functional_account("salaries_expense")
         acc_accrued = get_functional_account("accrued_expenses")
-        acc_payment = payment_account_code  # الصندوق أو البنك
+        acc_payment = payment_account_code
 
         if not acc_salaries_exp:
             raise Exception("لم يتم العثور على حساب مصروف الرواتب (salaries_expense)")
         if not acc_accrued:
             acc_accrued = get_functional_account("accounts_payable")
 
-        # 2. بناء القيد:
-        #    مدين: مصروف الرواتب (الإجمالي)
-        #    دائن: حساب الدفع (الصافي) + مستحقات (الاستقطاعات)
+        # 2. بناء القيد
         lines = [
             {
                 "account": acc_salaries_exp,
@@ -280,6 +343,7 @@ def run_payroll(employee_id, month, payment_account_code=None,
             })
 
         # 3. حفظ القيد
+        # ✅ created_by يُمرَّر ضمناً عبر session_state في accounting_service
         entry_id, entry_error = save_journal_entry(
             description=f"راتب شهر {month} - الموظف: {emp_name}",
             lines=lines,
@@ -290,7 +354,7 @@ def run_payroll(employee_id, month, payment_account_code=None,
             raise Exception(f"فشل إنشاء القيد المحاسبي: {entry_error}")
 
         # 4. تسجيل مسير الراتب
-        conn.execute("""
+        cur = conn.execute("""
             INSERT INTO payroll_runs 
                 (employee_id, month, basic_salary, housing_allowance,
                  transport_allowance, other_allowances, total_allowances,
@@ -298,8 +362,9 @@ def run_payroll(employee_id, month, payment_account_code=None,
             VALUES (?,?,?,?,?,?,?,?,?,?)
         """, (employee_id, month, basic, housing, transport, other,
               total_allowances, deductions, net, entry_id))
+        payroll_run_id = cur.lastrowid
 
-        # 5. ✅ تسجيل حركة الصندوق/البنك
+        # 5. تسجيل حركة الصندوق/البنك
         if payment_method == 'cash':
             try:
                 from services.cash_service import add_cash_transaction
@@ -346,13 +411,33 @@ def run_payroll(employee_id, month, payment_account_code=None,
         if own_conn:
             conn.commit()
 
-        log_action(
-            username="admin",
-            action="تشغيل راتب",
-            table_name="payroll_runs",
-            record_id=entry_id,
-            new_value=f"الموظف: {emp_name}, الشهر: {month}, الصافي: {net:,.2f}"
-        )
+        # ✅ تسجيل في سجل التدقيق (خارج Transaction)
+        try:
+            log_action(
+                username=created_by,
+                action="💰 تشغيل راتب",
+                table_name="payroll_runs",
+                record_id=payroll_run_id,
+                new_value={
+                    "payroll_run_id": payroll_run_id,
+                    "employee_id": employee_id,
+                    "employee_name": emp_name,
+                    "month": month,
+                    "basic_salary": basic,
+                    "housing_allowance": housing,
+                    "transport_allowance": transport,
+                    "other_allowances": other,
+                    "total_allowances": total_allowances,
+                    "gross_salary": gross_salary,
+                    "deductions": deductions,
+                    "net_salary": net,
+                    "journal_entry_id": entry_id,
+                    "payment_method": payment_method,
+                    "payment_account": payment_account_code,
+                },
+            )
+        except Exception as e:
+            print(f"⚠️ فشل تسجيل تشغيل الراتب في audit_log: {e}")
 
         return net, None
 
