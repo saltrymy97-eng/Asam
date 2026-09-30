@@ -1,6 +1,7 @@
-# services/bank_service.py – منطق التعاملات البنكية (v5.0)
+# services/bank_service.py – منطق التعاملات البنكية (v6.0)
 # ✅ Connection Registry + حماية الرصيد + إصلاح Deadlock + التحقق قبل الإضافة
 # ✅ إصلاح: conn.commit() بدل conn.execute("COMMIT")
+# ✅ إضافة: دعم notes في create_bank_reconciliation
 import sqlite3
 from datetime import date, datetime
 from database import get_connection, close_connection
@@ -616,8 +617,11 @@ def get_unreconciled_transactions(bank_account_id, conn=None):
 # ===================== المصالحة البنكية =====================
 
 def create_bank_reconciliation(bank_account_id, reconciliation_date,
-                                statement_balance, conn=None):
-    """إنشاء تسوية بنكية جديدة"""
+                                statement_balance, notes="", conn=None):
+    """
+    إنشاء تسوية بنكية جديدة.
+    ✅ يقبل notes (نص حر) لتوضيح أسباب الفرق.
+    """
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -636,10 +640,10 @@ def create_bank_reconciliation(bank_account_id, reconciliation_date,
         conn.execute(
             """INSERT INTO bank_reconciliations 
                (bank_account_id, reconciliation_date, statement_balance, 
-                book_balance, difference, status)
-               VALUES (?, ?, ?, ?, ?, 'completed')""",
+                book_balance, difference, status, notes)
+               VALUES (?, ?, ?, ?, ?, 'completed', ?)""",
             (bank_account_id, reconciliation_date, statement_balance,
-             book_balance, difference)
+             book_balance, difference, notes or "")
         )
         if own_conn:
             conn.commit()
