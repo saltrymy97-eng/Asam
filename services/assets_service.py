@@ -67,21 +67,15 @@ def _safe_add_column(conn, table, column, definition):
         print(f"⚠️ تعذر إضافة العمود {column} إلى {table}: {e}")
 
 
-# ============================================================
-# 💡 دالة مساعدة: حساب الإهلاك الشهري حسب الأولوية
-# ============================================================
 def _compute_monthly_depreciation(purchase_cost, salvage_value,
                                   useful_life_years,
                                   annual_rate=0.0,
                                   manual_monthly=0.0):
     """
     حساب الإهلاك الشهري حسب الأولوية:
-    1) قيمة شهرية يدوية (manual_monthly)  ← الأعلى أولوية
-    2) نسبة سنوية (annual_rate %)
-    3) العمر الإنتاجي (طريقة القسط الثابت التقليدية)
-    
-    Returns:
-        (monthly_dep, error_message_or_None)
+    1) قيمة شهرية يدوية  ← الأعلى أولوية
+    2) نسبة سنوية %
+    3) العمر الإنتاجي (الطريقة التقليدية)
     """
     purchase_cost = float(purchase_cost or 0)
     salvage_value = float(salvage_value or 0)
@@ -92,50 +86,28 @@ def _compute_monthly_depreciation(purchase_cost, salvage_value,
     if depreciable <= 0:
         return 0.0, "القيمة القابلة للإهلاك صفر أو سالبة"
 
-    # 1) القيمة اليدوية
     if manual_monthly > 0:
         if manual_monthly > depreciable:
             return 0.0, "الإهلاك الشهري اليدوي يتجاوز القيمة القابلة للإهلاك"
         return round(manual_monthly, 2), None
 
-    # 2) النسبة السنوية
     if annual_rate > 0:
         if annual_rate > 100:
             return 0.0, "النسبة السنوية يجب أن تكون ≤ 100%"
         monthly = (depreciable * (annual_rate / 100.0)) / 12.0
         return round(monthly, 2), None
 
-    # 3) العمر الإنتاجي (افتراضي)
     total_months = max(1, int(useful_life_years or 5) * 12)
     return round(depreciable / total_months, 2), None
 
 
-# ============================================================
-# إضافة أصل ثابت (مع قيد شراء اختياري)
-# ============================================================
 def add_asset(name, category, purchase_date, purchase_cost,
               salvage_value=0, useful_life_years=5, method="قسط ثابت",
               notes="", payment_account_code=None, payment_method="cash",
               created_by="admin", conn=None,
               annual_depreciation_rate=0.0,
               manual_monthly_depreciation=0.0):
-    """
-    إضافة أصل ثابت جديد.
-    
-    نسبة الإهلاك قابلة للتحكم عبر 3 طرق (بالأولوية):
-        1) manual_monthly_depreciation  → قيمة شهرية ثابتة
-        2) annual_depreciation_rate     → نسبة سنوية %
-        3) useful_life_years            → العمر الإنتاجي (الطريقة التقليدية)
-    
-    Args:
-        annual_depreciation_rate:    نسبة الإهلاك السنوية % (0 = غير مستخدم)
-        manual_monthly_depreciation: قيمة إهلاك شهرية يدوية (0 = غير مستخدم)
-        payment_account_code:        كود الصندوق/البنك (اختياري)
-        payment_method:              'cash' | 'bank' | None
-    
-    Returns:
-        (asset_id, None) عند النجاح | (None, "رسالة") عند الفشل
-    """
+    """إضافة أصل ثابت جديد (نسبة الإهلاك قابلة للتحكم)"""
     create_assets_tables(conn=conn)
 
     purchase_cost = float(purchase_cost)
@@ -148,7 +120,6 @@ def add_asset(name, category, purchase_date, purchase_cost,
     if salvage_value >= purchase_cost:
         return None, "القيمة التخريدية يجب أن تكون أقل من تكلفة الشراء"
 
-    # ✅ حساب الإهلاك الشهري حسب الأولوية
     monthly_dep, dep_error = _compute_monthly_depreciation(
         purchase_cost=purchase_cost,
         salvage_value=salvage_value,
@@ -161,7 +132,6 @@ def add_asset(name, category, purchase_date, purchase_cost,
     if monthly_dep <= 0:
         return None, "الإهلاك الشهري المحسوب صفر"
 
-    # ✅ فحص الرصيد قبل الشراء
     if payment_account_code and payment_method in ('cash', 'bank'):
         from services.cash_service import check_sufficient_balance
         ok, err = check_sufficient_balance(
@@ -179,7 +149,6 @@ def add_asset(name, category, purchase_date, purchase_cost,
         if own_conn:
             conn.execute("BEGIN")
 
-        # 1. إدراج الأصل
         cur = conn.execute(
             """INSERT INTO fixed_assets 
                (name, category, purchase_date, purchase_cost, salvage_value,
@@ -194,7 +163,6 @@ def add_asset(name, category, purchase_date, purchase_cost,
         )
         asset_id = cur.lastrowid
 
-        # 2. ✅ قيد الشراء (إن وجد دفع)
         if payment_account_code and payment_method in ('cash', 'bank'):
             acc_fixed_assets = get_functional_account("fixed_assets") \
                 or get_functional_account("Asset") or "1401"
@@ -216,7 +184,6 @@ def add_asset(name, category, purchase_date, purchase_cost,
             if entry_error:
                 raise Exception(f"فشل إنشاء قيد الشراء: {entry_error}")
 
-            # تسجيل الحركة في الصندوق/البنك
             if payment_method == 'cash':
                 try:
                     from services.cash_service import add_cash_transaction
@@ -290,20 +257,11 @@ def get_all_assets(conn=None):
             close_connection(conn)
 
 
-# ============================================================
-# ✅ دالة جديدة: تحديث نسبة إهلاك أصل موجود
-# ============================================================
 def update_asset_depreciation(asset_id, annual_depreciation_rate=None,
                               manual_monthly_depreciation=None,
                               useful_life_years=None,
                               updated_by="admin", conn=None):
-    """
-    تحديث طريقة/نسبة إهلاك أصل موجود.
-    يمكن تمرير أي معامل (None = تجاهل).
-    
-    Returns:
-        (True, "رسالة") | (False, "خطأ")
-    """
+    """تحديث طريقة/نسبة إهلاك أصل موجود"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -321,7 +279,6 @@ def update_asset_depreciation(asset_id, annual_depreciation_rate=None,
 
         asset = dict(asset)
 
-        # القيم الجديدة
         new_rate = (float(annual_depreciation_rate)
                     if annual_depreciation_rate is not None
                     else float(asset.get("annual_depreciation_rate") or 0))
@@ -332,7 +289,6 @@ def update_asset_depreciation(asset_id, annual_depreciation_rate=None,
                     if useful_life_years is not None
                     else int(asset.get("useful_life_years") or 5))
 
-        # إعادة حساب الإهلاك الشهري
         monthly_dep, dep_error = _compute_monthly_depreciation(
             purchase_cost=asset["purchase_cost"],
             salvage_value=asset["salvage_value"],
@@ -344,7 +300,6 @@ def update_asset_depreciation(asset_id, annual_depreciation_rate=None,
             if own_conn: conn.rollback()
             return False, dep_error
 
-        # ⚠️ تحذير: تغيير الإهلاك لا يعيد حساب الإهلاك الماضي (مقصود)
         conn.execute(
             """UPDATE fixed_assets 
                SET annual_depreciation_rate=?,
@@ -379,22 +334,9 @@ def update_asset_depreciation(asset_id, annual_depreciation_rate=None,
             close_connection(conn)
 
 
-# ============================================================
-# تشغيل الإهلاك الشهري
-# ============================================================
 def run_depreciation(asset_id, entry_date=None, notes="",
-                     created_by="admin", conn=None,
-                     force=False):
-    """
-    تشغيل إهلاك شهري لأصل محدد.
-    
-    ✅ v2.1:
-      - يمنع تجاوز القيمة التخريدية (إصلاح خطأ محاسبي)
-      - يمنع تكرار الإهلاك في نفس الشهر (إلا مع force=True)
-      - يحسب القيد بالفرق الفعلي عند الاقتراب من القيمة التخريدية
-    
-    ⚠️ الإهلاك لا يمسّ الصندوق/البنك.
-    """
+                     created_by="admin", conn=None, force=False):
+    """تشغيل إهلاك شهري لأصل محدد (مع حماية من الإهلاك الزائد والتكرار)"""
     if entry_date is None:
         entry_date = date.today().strftime("%Y-%m-%d")
 
@@ -422,7 +364,6 @@ def run_depreciation(asset_id, entry_date=None, notes="",
             if own_conn: conn.rollback()
             return False, "قيمة الإهلاك صفر"
 
-        # ✅ 1) منع تكرار الإهلاك في نفس الشهر
         if not force:
             existing = conn.execute(
                 """SELECT id FROM depreciation_entries 
@@ -436,14 +377,12 @@ def run_depreciation(asset_id, entry_date=None, notes="",
                 return False, ("تم إهلاك هذا الأصل مسبقاً في نفس الشهر. "
                                "استخدم force=True للتجاوز.")
 
-        # ✅ 2) احتساب المتبقي حتى القيمة التخريدية
         purchase_cost = float(asset["purchase_cost"] or 0)
         salvage = float(asset["salvage_value"] or 0)
         accumulated = float(asset["accumulated_depreciation"] or 0)
         remaining = round(purchase_cost - salvage - accumulated, 2)
 
         if remaining <= 0:
-            # لا يوجد متبقي → نُحدّث الحالة ونخرج
             conn.execute(
                 "UPDATE fixed_assets SET status='مستنفذ', book_value=? "
                 "WHERE id=?",
@@ -452,7 +391,6 @@ def run_depreciation(asset_id, entry_date=None, notes="",
             if own_conn: conn.commit()
             return False, "الأصل مستنفذ بالكامل (وصل للقيمة التخريدية)"
 
-        # ✅ 3) القيمة الفعلية للإهلاك = الأصغر بين الشهري والمتبقي
         actual_dep = round(min(monthly_dep, remaining), 2)
 
         count = conn.execute(
@@ -480,7 +418,6 @@ def run_depreciation(asset_id, entry_date=None, notes="",
         if entry_error:
             raise Exception(f"فشل إنشاء قيد الإهلاك: {entry_error}")
 
-        # تحديث قيم الأصل
         new_accumulated = round(accumulated + actual_dep, 2)
         new_book_value = round(purchase_cost - new_accumulated, 2)
         new_status = "نشط" if new_book_value > salvage else "مستنفذ"
