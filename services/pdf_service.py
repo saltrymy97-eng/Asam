@@ -1,12 +1,14 @@
-# services/pdf_service.py – خدمة تقارير احترافية (v4.0)
+# services/pdf_service.py – خدمة تقارير احترافية (v4.1)
 # ✅ توحيد: يستخدم financial_service كمرجع واحد
 # ✅ إضافة: فلترة السنة + الشهر + مركز التكلفة
 # ✅ Registry + مسار مطلق
+# ✅ v4.1: إصلاح استيراد calendar (كان خطأ — Python 3.14 صارم)
 import sqlite3
 import os
 import sys
+import calendar
 import xml.etree.ElementTree as ET
-from datetime import datetime, date, timedelta, calendar
+from datetime import datetime, date, timedelta
 
 # ============================================================
 # المسار المطلق
@@ -70,6 +72,7 @@ def _build_period(year=None, month=None, from_date=None, to_date=None):
         if month:
             try:
                 m = int(month)
+                # ✅ calendar.monthrange تعمل الآن
                 last_day = calendar.monthrange(y, m)[1]
                 return f"{y}-{m:02d}-01", f"{y}-{m:02d}-{last_day:02d}"
             except (TypeError, ValueError):
@@ -228,7 +231,6 @@ def generate_income_statement(year=None, month=None, cost_center_id=None,
         if count == 0:
             return None
 
-        # ✅ استخدام financial_service — مصدر واحد للحقيقة
         try:
             from services.financial_service import get_income_statement
             income_data = get_income_statement(
@@ -242,7 +244,6 @@ def generate_income_statement(year=None, month=None, cost_center_id=None,
             net = float(income_data.get('net_income', 0))
         except Exception as e:
             print(f"⚠️ فشل financial_service: {e}")
-            # fallback — حساب بسيط
             revenue, expenses, net = 0.0, 0.0, 0.0
 
         body = _filter_badge(year, month, cost_center_id,
@@ -280,7 +281,6 @@ def generate_balance_sheet(year=None, month=None, cost_center_id=None,
         if count == 0:
             return None
 
-        # ✅ استخدام financial_service
         try:
             from services.financial_service import get_balance_sheet
             bs = get_balance_sheet(
