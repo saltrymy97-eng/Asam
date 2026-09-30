@@ -1,4 +1,5 @@
-# ui/bank_ui.py – واجهة التعاملات البنكية (تصميم زجاجي فخم)
+# ui/bank_ui.py – واجهة التعاملات البنكية (v2.0)
+# ✅ إضافة: حقل ملاحظات المصالحة (نص حر)
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -16,6 +17,7 @@ ACCENT_GREEN = "#10B981"
 ACCENT_ORANGE = "#F59E0B"
 ACCENT_RED = "#EF4444"
 ACCENT_PURPLE = "#8B5CF6"
+
 
 def show():
     st.markdown(f"""
@@ -42,15 +44,27 @@ def show():
                 currencies = get_all_currencies()
                 base = get_base_currency()
                 currency_list = {f"{c['code']} - {c['name']}": c['code'] for c in currencies}
-                def_label = next((k for k, v in currency_list.items() if v == (base['code'] if base else 'YER')), list(currency_list.keys())[0])
-                currency_choice = st.selectbox("العملة", list(currency_list.keys()), index=list(currency_list.keys()).index(def_label))
-                opening_balance = st.number_input("الرصيد الافتتاحي", min_value=0.0, step=100.0, value=0.0)
+                def_label = next(
+                    (k for k, v in currency_list.items() if v == (base['code'] if base else 'YER')),
+                    list(currency_list.keys())[0]
+                )
+                currency_choice = st.selectbox(
+                    "العملة",
+                    list(currency_list.keys()),
+                    index=list(currency_list.keys()).index(def_label)
+                )
+                opening_balance = st.number_input(
+                    "الرصيد الافتتاحي", min_value=0.0, step=100.0, value=0.0
+                )
                 if st.form_submit_button("✅ إضافة"):
                     if not bank_name or not account_number:
                         st.error("اسم البنك ورقم الحساب مطلوبان")
                     else:
                         try:
-                            bank.create_bank_account(bank_name, account_number, account_name, currency_list[currency_choice], opening_balance)
+                            bank.create_bank_account(
+                                bank_name, account_number, account_name,
+                                currency_list[currency_choice], opening_balance
+                            )
                             st.success("تمت إضافة الحساب البنكي")
                             st.rerun()
                         except Exception as e:
@@ -78,7 +92,7 @@ def show():
 
     # ---------- تبويب 2: الحركات البنكية ----------
     with tab2:
-        st.markdown(f"<h3 style='color:{ACCENT_GREEN};\">تسجيل حركة بنكية</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:{ACCENT_GREEN};'>تسجيل حركة بنكية</h3>", unsafe_allow_html=True)
         accounts = bank.get_all_bank_accounts()
         if not accounts:
             st.warning("أضف حساباً بنكياً أولاً")
@@ -91,8 +105,16 @@ def show():
                 col1, col2 = st.columns(2)
                 with col1:
                     trans_date = st.date_input("التاريخ", value=date.today())
-                    trans_type = st.selectbox("نوع الحركة", ["deposit", "withdrawal", "transfer_in", "transfer_out"],
-                                              format_func=lambda x: {"deposit": "إيداع", "withdrawal": "سحب", "transfer_in": "تحويل وارد", "transfer_out": "تحويل صادر"}[x])
+                    trans_type = st.selectbox(
+                        "نوع الحركة",
+                        ["deposit", "withdrawal", "transfer_in", "transfer_out"],
+                        format_func=lambda x: {
+                            "deposit": "إيداع",
+                            "withdrawal": "سحب",
+                            "transfer_in": "تحويل وارد",
+                            "transfer_out": "تحويل صادر"
+                        }[x]
+                    )
                 with col2:
                     amount = st.number_input("المبلغ", min_value=0.01, step=0.01)
                     reference = st.text_input("المرجع (اختياري)")
@@ -102,34 +124,52 @@ def show():
                         st.error("البيان مطلوب")
                     else:
                         try:
-                            bank.add_bank_transaction(acc_id, trans_date.strftime("%Y-%m-%d"), description, trans_type, amount, reference)
+                            bank.add_bank_transaction(
+                                acc_id, trans_date.strftime("%Y-%m-%d"),
+                                description, trans_type, amount, reference
+                            )
                             st.success("تم تسجيل الحركة")
                             st.rerun()
                         except Exception as e:
                             st.error(str(e))
 
         st.markdown("---")
-        st.markdown(f"<h3 style='color:{TEXT_PRIMARY};\">📋 الحركات البنكية</h3>", unsafe_allow_html=True)
-        selected_filter = st.selectbox("تصفية حسب الحساب", ["الكل"] + [f"{a['bank_name']} - {a['account_number']}" for a in accounts])
+        st.markdown(f"<h3 style='color:{TEXT_PRIMARY};'>📋 الحركات البنكية</h3>", unsafe_allow_html=True)
+        selected_filter = st.selectbox(
+            "تصفية حسب الحساب",
+            ["الكل"] + [f"{a['bank_name']} - {a['account_number']}" for a in accounts]
+        )
         if selected_filter == "الكل":
             transactions = bank.get_bank_transactions()
         else:
-            sel_id = next(a['id'] for a in accounts if f"{a['bank_name']} - {a['account_number']}" == selected_filter)
+            sel_id = next(
+                a['id'] for a in accounts
+                if f"{a['bank_name']} - {a['account_number']}" == selected_filter
+            )
             transactions = bank.get_bank_transactions(bank_account_id=sel_id)
         if transactions:
             df = pd.DataFrame(transactions)
-            df['type'] = df['type'].map({"deposit": "إيداع", "withdrawal": "سحب", "transfer_in": "تحويل وارد", "transfer_out": "تحويل صادر"})
+            df['type'] = df['type'].map({
+                "deposit": "إيداع",
+                "withdrawal": "سحب",
+                "transfer_in": "تحويل وارد",
+                "transfer_out": "تحويل صادر"
+            })
             st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.info("لا توجد حركات")
 
     # ---------- تبويب 3: المصالحة البنكية ----------
     with tab3:
-        st.markdown(f"<h3 style='color:{ACCENT_ORANGE};\">⚖️ المصالحة البنكية</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:{ACCENT_ORANGE};'>⚖️ المصالحة البنكية</h3>", unsafe_allow_html=True)
         accounts = bank.get_all_bank_accounts()
         if accounts:
             acc_options2 = {f"{a['bank_name']} - {a['account_number']}": a['id'] for a in accounts}
-            sel_acc2_label = st.selectbox("اختر الحساب", list(acc_options2.keys()), key="reconcile_acc")
+            sel_acc2_label = st.selectbox(
+                "اختر الحساب",
+                list(acc_options2.keys()),
+                key="reconcile_acc"
+            )
             acc_id2 = acc_options2[sel_acc2_label]
             acc_info = next(a for a in accounts if a['id'] == acc_id2)
             st.write(f"رصيد الدفاتر الحالي: **{acc_info['current_balance']:,.2f} {acc_info['currency_code']}**")
@@ -137,11 +177,25 @@ def show():
             with st.form("reconciliation_form"):
                 stmt_date = st.date_input("تاريخ كشف البنك", value=date.today())
                 stmt_balance = st.number_input("رصيد كشف البنك", min_value=0.0, step=0.01)
+
+                # ✅ حقل ملاحظات — نص حر
+                notes = st.text_area(
+                    "ملاحظات المصالحة (اختياري)",
+                    placeholder="اكتب أي ملاحظات تفسر الفرق بين رصيد الدفاتر وكشف البنك...",
+                    height=100,
+                    key="reconciliation_notes"
+                )
+
                 if st.form_submit_button("🔍 تنفيذ المصالحة"):
                     try:
-                        success, diff = bank.create_bank_reconciliation(acc_id2, stmt_date.strftime("%Y-%m-%d"), stmt_balance)
+                        success, diff = bank.create_bank_reconciliation(
+                            acc_id2,
+                            stmt_date.strftime("%Y-%m-%d"),
+                            stmt_balance,
+                            notes=notes
+                        )
                         if success:
-                            st.success(f"تمت المصالحة. الفرق: {diff:,.2f}")
+                            st.success(f"✅ تمت المصالحة. الفرق: {diff:,.2f}")
                             st.rerun()
                     except Exception as e:
                         st.error(str(e))
@@ -156,7 +210,7 @@ def show():
 
     # ---------- تبويب 4: ملخص الأرصدة ----------
     with tab4:
-        st.markdown(f"<h3 style='color:{ACCENT_PURPLE};\">📊 ملخص الأرصدة البنكية</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:{ACCENT_PURPLE};'>📊 ملخص الأرصدة البنكية</h3>", unsafe_allow_html=True)
         summary, total_base = bank.get_bank_balance_summary()
         if summary:
             df = pd.DataFrame(summary)
@@ -164,12 +218,17 @@ def show():
             base_cur = get_base_currency()
             base_code = base_cur['code'] if base_cur else 'YER'
             st.markdown(f"### إجمالي الأرصدة بالعملة الأساسية ({base_code}): {total_base:,.2f}")
-            
+
             st.markdown("---")
-            st.markdown(f"<h3 style='color:{TEXT_PRIMARY};\">📋 سجل المصالحات</h3>", unsafe_allow_html=True)
+            st.markdown(f"<h3 style='color:{TEXT_PRIMARY};'>📋 سجل المصالحات</h3>", unsafe_allow_html=True)
             reconciliations = bank.get_reconciliation_history()
             if reconciliations:
-                st.dataframe(pd.DataFrame(reconciliations), use_container_width=True, hide_index=True)
+                df_rec = pd.DataFrame(reconciliations)
+                # ✅ إعادة ترتيب الأعمدة لإظهار الملاحظات
+                display_cols = ['id', 'reconciliation_date', 'statement_balance',
+                                'book_balance', 'difference', 'notes']
+                display_cols = [c for c in display_cols if c in df_rec.columns]
+                st.dataframe(df_rec[display_cols], use_container_width=True, hide_index=True)
             else:
                 st.info("لا توجد مصالحات سابقة")
         else:
