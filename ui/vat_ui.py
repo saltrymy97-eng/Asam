@@ -1,5 +1,5 @@
-# ui/vat_ui.py – واجهة إدارة ضريبة القيمة المضافة (v2.0)
-# ✅ تبويب دفع الضريبة من صندوق/بنك + حماية الرصيد
+# ui/vat_ui.py – واجهة إدارة ضريبة القيمة المضافة (v3.0)
+# ✅ إضافة: سجل المدفوعات + عرض الملاحظات
 import streamlit as st
 from datetime import date
 import pandas as pd
@@ -12,9 +12,10 @@ from services.vat_service import (
     get_vat_report,
     get_tax_return_report,
     get_vat_history,
-    pay_vat,                       # ✅ جديد
+    pay_vat,
 )
 from services.expenses_service import get_payment_accounts
+from database import get_connection
 
 
 # ========== ألوان ==========
@@ -69,6 +70,59 @@ def _format_account_label(acc):
     )
 
 
+# ============================================================
+# ✅ دالة جديدة: جلب سجل مدفوعات الضريبة
+# ============================================================
+def _get_vat_payments(limit=50):
+    """
+    جلب سجل مدفوعات الضريبة من جدول vouchers
+    المدفوعات المسجلة بـ reference يحتوي على 'ضريبة'
+    """
+    conn = get_connection()
+    try:
+        rows = conn.execute("""
+            SELECT 
+                v.id,
+                v.date,
+                v.amount,
+                v.account,
+                v.reference,
+                v.notes,
+                v.created_by,
+                v.created_at,
+                je.description AS entry_description,
+                CASE 
+                    WHEN ba.id IS NOT NULL THEN ba.bank_name
+                    WHEN ca.id IS NOT NULL THEN ca.name
+                    ELSE v.account
+                END AS payment_source,
+                CASE
+                    WHEN ba.id IS NOT NULL THEN 'bank'
+                    WHEN ca.id IS NOT NULL THEN 'cash'
+                    ELSE 'other'
+                END AS source_type
+            FROM vouchers v
+            LEFT JOIN journal_entries je ON v.journal_entry_id = je.id
+            LEFT JOIN bank_accounts ba ON ba.account_code = v.account AND ba.is_active = 1
+            LEFT JOIN cash_accounts ca ON ca.account_code = v.account AND ca.is_active = 1
+            WHERE v.type = 'payment'
+              AND (
+                v.reference LIKE '%ضريب%'
+                OR v.notes LIKE '%ضريب%'
+                OR je.description LIKE '%ضريب%'
+              )
+            ORDER BY v.id DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        print(f"Error fetching VAT payments: {e}")
+        return []
+    finally:
+        from database import close_connection
+        close_connection(conn)
+
+
 def show():
     create_vat_table()
     h1("🧾 ضريبة القيمة المضافة (VAT)")
@@ -77,7 +131,7 @@ def show():
         "⚙️ الإعدادات",
         "🧮 حاسبة الضريبة",
         "🔄 الضريبة العكسية",
-        "💳 دفع الضريبة",            # ✅ جديد
+        "💳 دفع الضريبة",
         "📊 التقارير",
     ])
 
@@ -168,9 +222,7 @@ def show():
     with tab4:
         h3("💳 دفع الضريبة لجهة الضرائب", OR)
 
-        # ============================================================
-        # ملخص الضريبة الصافية من التقارير
-        # ============================================================
+        # ملخص الضريبة الصافية
         st.markdown("### 📊 ملخص الضريبة المستحقة")
 
         col_a, col_b = st.columns(2)
@@ -207,12 +259,9 @@ def show():
 
         st.markdown("---")
 
-        # ============================================================
         # نموذج الدفع
-        # ============================================================
         st.markdown("### 📝 تسجيل دفع الضريبة")
 
-        # ✅ تحديد طريقة الدفع
         payment_choice = st.radio(
             "من أي حساب سيتم الدفع؟",
             ["بنكي (تحويل)", "نقدي (من صندوق)"],
@@ -245,7 +294,6 @@ def show():
         selected_acc = filtered[idx]
         payment_account_code = selected_acc["code"]
 
-        # ✅ حقل المبلغ
         default_amount = max(0.0, float(net_vat))
         amount_to_pay = st.number_input(
             "المبلغ المراد دفعه",
@@ -268,7 +316,7 @@ def show():
 
         notes = st.text_area("ملاحظات", key="vat_pay_notes")
 
-        # ✅ فحص فوري للرصيد
+        # فحص فوري للرصيد
         balance_ok = True
         if amount_to_pay > 0:
             if amount_to_pay > selected_acc["balance"]:
@@ -287,7 +335,7 @@ def show():
                     f"{selected_acc['currency']}"
                 )
 
-        # ✅ زر الدفع
+        # زر الدفع
         if "saving_vat_payment" not in st.session_state:
             st.session_state.saving_vat_payment = False
 
@@ -330,6 +378,83 @@ def show():
             finally:
                 st.session_state.saving_vat_payment = False
                 st.rerun()
+
+        # ============================================================
+        # ✅ جديد: سجل المدفوعات
+        # ============================================================
+        st.markdown("---")
+        st.markdown("### 📋 سجل مدفوعات الضريبة")
+
+        payments = _get_vat_payments(limit=100)
+
+        if payments:
+            df_pay = pd.DataFrame(payments)
+
+            # تجهيز العرض
+            df_pay["source_icon"] = df_pay["source_type"].apply(
+                lambda x: "💵" if x == "cash" else ("🏦" if x == "bank" else "📌")
+            )
+            df_pay["المصدر"] = df_pay["source_icon"] + " " + df_pay["payment_source"].fillna("—")
+            df_pay["النوع"] = df_pay["source_type"].apply(
+                lambda x: "نقدي" if x == "cash" else ("بنكي" if x == "bank" else "أخرى")
+            )
+
+            df_display = df_pay.rename(columns={
+                "id": "الرقم",
+                "date": "التاريخ",
+                "amount": "المبلغ",
+                "reference": "المرجع",
+                "notes": "الملاحظات",
+                "created_by": "بواسطة",
+                "created_at": "تاريخ الإنشاء",
+            })
+
+            # عرض الإجمالي
+            total_paid = df_pay["amount"].sum()
+            st.markdown(
+                f"<div style='background:rgba(16,185,129,0.15); "
+                f"padding:0.75rem; border-radius:8px; text-align:right; "
+                f"color:{T};'>"
+                f"💰 **إجمالي المدفوعات:** {total_paid:,.2f} "
+                f"| **عدد الدفعات:** {len(payments)}"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+
+            cols = ["الرقم", "التاريخ", "المبلغ", "النوع",
+                    "المصدر", "المرجع", "الملاحظات", "بواسطة"]
+            cols = [c for c in cols if c in df_display.columns]
+
+            st.dataframe(
+                df_display[cols],
+                use_container_width=True,
+                hide_index=True
+            )
+
+            # ✅ عرض الملاحظات في expander منفصل — لسهولة القراءة
+            notes_payments = df_pay[df_pay["notes"].notna() & (df_pay["notes"] != "")]
+            if not notes_payments.empty:
+                with st.expander(f"📝 عرض الملاحظات التفصيلية ({len(notes_payments)} دفعة)"):
+                    for _, row in notes_payments.iterrows():
+                        st.markdown(f"""
+                        <div style="background:rgba(255,255,255,0.05);
+                                    border-right:3px solid {CY};
+                                    border-radius:8px; padding:10px 15px;
+                                    margin:8px 0; text-align:right;">
+                            <div style="color:{S}; font-size:0.85rem;">
+                                💳 دفعة #{row['id']} — {row['date']}
+                            </div>
+                            <div style="color:{T}; margin-top:5px;">
+                                <b>المبلغ:</b> {row['amount']:,.2f} |
+                                <b>المرجع:</b> {row['reference'] or '—'}
+                            </div>
+                            <div style="color:{CY}; margin-top:8px; font-size:1rem;">
+                                📝 {row['notes']}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+        else:
+            st.info("لا توجد مدفوعات ضريبية مسجلة بعد")
 
     # ============================================================
     # تبويب 5: التقارير
