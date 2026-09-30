@@ -1,6 +1,7 @@
-# services/inventory_service.py – منطق إدارة المخزون (v2.0)
+# services/inventory_service.py – منطق إدارة المخزون (v2.1)
 # ✅ conn=None + Registry + BEGIN IMMEDIATE (منع Race Condition)
 # ✅ حماية صارمة من الصرف الزائد + تسجيل username
+# ✅ إصلاح: _normalize_move_type يقبل "داخل (إضافة)" و"خارج (صرف)"
 import sqlite3
 from database import get_connection, close_connection
 from services.audit_service import log_action
@@ -22,15 +23,24 @@ def _release_conn(conn, owns_conn):
         close_connection(conn)
 
 
-def _normalize_move_type(move_type: str) -> str:
-    """توحيد نوع الحركة إلى 'in' أو 'out'"""
+def _normalize_move_type(move_type) -> str:
+    """
+    توحيد نوع الحركة إلى 'in' أو 'out'.
+    ✅ يقبل كل الصيغ:
+       - "داخل" / "داخل (إضافة)" / "إضافة" / "in" / "add" / "+"
+       - "خارج" / "خارج (صرف)" / "صرف" / "out" / "remove" / "-"
+    """
     if move_type is None:
         raise ValueError("نوع الحركة مطلوب")
+
     mt = str(move_type).strip().lower()
-    if mt in ("داخل", "in", "إدخال", "ادخال", "add", "+"):
+
+    # ✅ مطابقة جزئية — تقبل "داخل (إضافة)"
+    if any(k in mt for k in ("داخل", "إضاف", "إدخال", "ادخال", "in", "add", "+")):
         return "in"
-    if mt in ("خارج", "out", "صرف", "إخراج", "اخراج", "remove", "-"):
+    if any(k in mt for k in ("خارج", "صرف", "إخراج", "اخراج", "out", "remove", "-")):
         return "out"
+
     raise ValueError(f"نوع حركة غير معروف: {move_type}")
 
 
@@ -202,6 +212,7 @@ def record_stock_movement(product_id, product_name, move_type, quantity,
     ✅ BEGIN IMMEDIATE — يمنع Race Condition
     ✅ فحص الكمية داخل Transaction
     ✅ رفض الكميات السالبة أو الصفرية
+    ✅ يقبل "داخل (إضافة)" و"خارج (صرف)"
     """
     # --- validation أولي ---
     try:
