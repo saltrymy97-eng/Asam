@@ -1,7 +1,8 @@
-# ui/pdf_reports.py – واجهة تقارير احترافية (تصميم ذهبي فاخر)
-# v2.0 — إضافة تقارير أعمار الذمم + كشوف الحسابات + الفواتير غير المدفوعة
+# ui/pdf_reports.py – واجهة تقارير احترافية (v3.0)
+# ✅ إضافة: فلترة السنة + الشهر + مركز التكلفة
 import streamlit as st
 import os
+from datetime import date, timedelta, datetime
 from services.pdf_service import (
     generate_income_statement,
     generate_balance_sheet,
@@ -12,7 +13,6 @@ from services.pdf_service import (
     generate_vat_report,
     generate_xbrl_income,
     generate_xbrl_balance,
-    # ✅ تقارير جديدة
     generate_aging_report,
     generate_party_statement,
     generate_unpaid_invoices_report,
@@ -21,6 +21,7 @@ from services.pdf_service import (
 )
 from services.sales_service import get_all_customers
 from services.purchases_service import get_all_suppliers
+from services import cost_center_service as ccs
 
 
 # ========== ألوان التصميم الذهبي الفاخر ==========
@@ -56,9 +57,9 @@ def glass_card(icon, title, desc, color):
 
 
 def _render_download(path, key_suffix=""):
-    """عرض زر تحميل لملف تقرير (مع مساعدة لإعادة الاستخدام)"""
+    """عرض زر تحميل لملف تقرير"""
     if not path:
-        st.warning("لا توجد بيانات كافية لإنشاء هذا التقرير")
+        st.warning("⚠️ لا توجد بيانات كافية لإنشاء هذا التقرير")
         return
     filename = os.path.basename(path)
     with open(path, "r", encoding="utf-8") as f:
@@ -73,6 +74,90 @@ def _render_download(path, key_suffix=""):
         type="primary",
         key=f"dl_{filename}_{key_suffix}"
     )
+
+
+# ============================================================
+# ✅ مكون الفلترة الموحّد
+# ============================================================
+def _render_filters(key_prefix="", default_full_year=True):
+    """
+    يعرض فلاتر: السنة + الشهر + مركز التكلفة.
+    
+    Returns:
+        dict: {"year": int|None, "month": int|None, "cost_center_id": int|None}
+    """
+    current_year = date.today().year
+    years = list(range(current_year - 5, current_year + 3))
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        year_choice = st.selectbox(
+            "📅 السنة",
+            ["الكل"] + [str(y) for y in years],
+            index=([str(y) for y in years].index(str(current_year)) + 1
+                   if str(current_year) in [str(y) for y in years] else 0),
+            key=f"{key_prefix}_year_filter"
+        )
+        year = None if year_choice == "الكل" else int(year_choice)
+
+    with col2:
+        months = ["الكل", "01", "02", "03", "04", "05", "06",
+                  "07", "08", "09", "10", "11", "12"]
+        month_choice = st.selectbox(
+            "📅 الشهر",
+            months,
+            index=0,
+            key=f"{key_prefix}_month_filter",
+            disabled=(year is None)
+        )
+        if year is None:
+            month = None
+        else:
+            month = None if month_choice == "الكل" else int(month_choice)
+
+    with col3:
+        try:
+            centers = ccs.get_all_cost_centers(active_only=True)
+        except Exception:
+            centers = []
+
+        center_options = {"كل الشركة (بدون تصفية)": None}
+        for c in centers:
+            center_options[f"{c['code']} - {c['name']}"] = c['id']
+
+        center_choice = st.selectbox(
+            "🏢 مركز التكلفة",
+            list(center_options.keys()),
+            index=0,
+            key=f"{key_prefix}_cc_filter"
+        )
+        cost_center_id = center_options[center_choice]
+
+    return {
+        "year": year,
+        "month": month,
+        "cost_center_id": cost_center_id,
+    }
+
+
+def _filter_summary(filters):
+    """ملخص الفلاتر المُطبَّقة"""
+    parts = []
+    if filters.get("year"):
+        if filters.get("month"):
+            parts.append(f"📅 {filters['year']}/{filters['month']:02d}")
+        else:
+            parts.append(f"📅 السنة: {filters['year']}")
+    else:
+        parts.append("📅 كل الفترات")
+
+    if filters.get("cost_center_id"):
+        parts.append("🏢 مركز تكلفة محدد")
+    else:
+        parts.append("🏢 كل الشركة")
+
+    return " | ".join(parts)
 
 
 def show():
@@ -94,14 +179,15 @@ def show():
         transform: translateY(-2px);
         box-shadow: 0 10px 25px rgba(212,175,55,0.4) !important;
     }
-    .report-download-btn > button {
-        background: rgba(16, 185, 129, 0.2) !important;
-        border: 1px solid rgba(16, 185, 129, 0.5) !important;
-        color: #10B981 !important;
-    }
-    .report-download-btn > button:hover {
-        background: #10B981 !important;
-        color: #fff !important;
+    .filter-summary {
+        background: rgba(59,130,246,0.10);
+        border-right: 4px solid #3B82F6;
+        border-radius: 8px;
+        padding: 8px 16px;
+        margin: 10px 0;
+        text-align: right;
+        color: #93C5FD;
+        font-size: 0.9rem;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -111,33 +197,37 @@ def show():
     st.markdown(f"""
     <div style="margin-bottom:2rem; text-align:right;">
         <h1 style="color:{GOLD}; font-size:2.8rem; margin:0; text-shadow:0 0 20px rgba(212,175,55,0.3);">📄 التقارير المالية</h1>
-        <p style="color:{TEXT_SECONDARY}; font-size:1.2rem;">تقارير HTML و XBRL احترافية بضغطة زر</p>
+        <p style="color:{TEXT_SECONDARY}; font-size:1.2rem;">تقارير HTML و XBRL احترافية مع فلترة كاملة</p>
     </div>
     """, unsafe_allow_html=True)
 
     # ========== 5 تبويبات ==========
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📊 تقارير مالية",
-        "💰 الذمم والعملاء",     # ✅ جديد
+        "💰 الذمم والعملاء",
         "🏢 تقارير إدارية",
         "🌐 تقارير XBRL",
         "📋 التقارير السابقة"
     ])
 
     # ============================================================
-    # تبويب 1: تقارير مالية
+    # تبويب 1: تقارير مالية — ✅ مع الفلاتر
     # ============================================================
     with tab1:
         st.markdown(f"<h3 style='color:{GOLD};'>التقارير المالية</h3>", unsafe_allow_html=True)
+
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.markdown(glass_card("📊", "قائمة الدخل", "الإيرادات والمصروفات وصافي الدخل", ACCENT_GREEN),
+            st.markdown(glass_card("📊", "قائمة الدخل",
+                                    "الإيرادات والمصروفات وصافي الدخل", ACCENT_GREEN),
                         unsafe_allow_html=True)
         with col2:
-            st.markdown(glass_card("⚖️", "الميزانية العمومية", "الأصول والخصوم وحقوق الملكية", ACCENT_CYAN),
+            st.markdown(glass_card("⚖️", "الميزانية العمومية",
+                                    "الأصول والخصوم وحقوق الملكية", ACCENT_CYAN),
                         unsafe_allow_html=True)
         with col3:
-            st.markdown(glass_card("🧾", "تقرير الضريبة", "ضريبة القيمة المضافة", ACCENT_RED),
+            st.markdown(glass_card("🧾", "تقرير الضريبة",
+                                    "ضريبة القيمة المضافة", ACCENT_RED),
                         unsafe_allow_html=True)
 
         report_type = st.selectbox(
@@ -146,15 +236,35 @@ def show():
             key="financial_report"
         )
 
+        # ✅ عرض الفلاتر للتقرير المالي
+        if "قائمة الدخل" in report_type or "الميزانية" in report_type:
+            st.markdown(f"<h4 style='color:{ACCENT_BLUE};'>🎯 فلترة التقرير</h4>",
+                        unsafe_allow_html=True)
+            filters = _render_filters(key_prefix="fin")
+            st.markdown(
+                f"<div class='filter-summary'>📌 {_filter_summary(filters)}</div>",
+                unsafe_allow_html=True
+            )
+        else:
+            filters = {"year": None, "month": None, "cost_center_id": None}
+
         if st.button("🚀 توليد التقرير المالي", type="primary",
                      use_container_width=True, key="gen_fin"):
             with st.spinner("📄 جاري إنشاء التقرير..."):
                 try:
                     path = None
                     if "قائمة الدخل" in report_type:
-                        path = generate_income_statement()
+                        path = generate_income_statement(
+                            year=filters.get("year"),
+                            month=filters.get("month"),
+                            cost_center_id=filters.get("cost_center_id"),
+                        )
                     elif "الميزانية" in report_type:
-                        path = generate_balance_sheet()
+                        path = generate_balance_sheet(
+                            year=filters.get("year"),
+                            month=filters.get("month"),
+                            cost_center_id=filters.get("cost_center_id"),
+                        )
                     elif "الضريبة" in report_type:
                         path = generate_vat_report()
                     _render_download(path, key_suffix="fin")
@@ -162,7 +272,7 @@ def show():
                     st.error(f"❌ فشل إنشاء التقرير: {e}")
 
     # ============================================================
-    # تبويب 2: الذمم والعملاء (✅ جديد)
+    # تبويب 2: الذمم والعملاء
     # ============================================================
     with tab2:
         st.markdown(f"<h3 style='color:{ACCENT_RED};'>تقارير الذمم والمتابعة المالية</h3>",
@@ -223,7 +333,6 @@ def show():
             )
             selected_party = party_options[selected_label]
 
-            from datetime import date, timedelta
             col_d1, col_d2 = st.columns(2)
             with col_d1:
                 from_date = st.date_input(
@@ -335,7 +444,7 @@ def show():
                     st.error(f"❌ فشل إنشاء التقرير: {e}")
 
     # ============================================================
-    # تبويب 4: XBRL
+    # تبويب 4: XBRL — ✅ مع الفلاتر
     # ============================================================
     with tab4:
         st.markdown(f"<h3 style='color:{GOLD};'>تقارير XBRL (لغة تقارير الأعمال الموسعة)</h3>",
@@ -349,6 +458,15 @@ def show():
         </div>
         """, unsafe_allow_html=True)
 
+        # ✅ فلترة XBRL
+        st.markdown(f"<h4 style='color:{ACCENT_BLUE};'>🎯 فلترة XBRL</h4>",
+                    unsafe_allow_html=True)
+        xbrl_filters = _render_filters(key_prefix="xbrl")
+        st.markdown(
+            f"<div class='filter-summary'>📌 {_filter_summary(xbrl_filters)}</div>",
+            unsafe_allow_html=True
+        )
+
         col1, col2 = st.columns(2)
         with col1:
             st.markdown(glass_card("📊", "XBRL قائمة الدخل",
@@ -356,15 +474,24 @@ def show():
                         unsafe_allow_html=True)
             if st.button("توليد XBRL للدخل", type="primary",
                          use_container_width=True, key="gen_xbrl_i"):
-                path = generate_xbrl_income()
+                path = generate_xbrl_income(
+                    year=xbrl_filters.get("year"),
+                    month=xbrl_filters.get("month"),
+                    cost_center_id=xbrl_filters.get("cost_center_id"),
+                )
                 _render_download(path, key_suffix="xbrl_i")
+
         with col2:
             st.markdown(glass_card("⚖️", "XBRL الميزانية",
                                     "Assets, Liabilities, Equity", ACCENT_CYAN),
                         unsafe_allow_html=True)
             if st.button("توليد XBRL للميزانية", type="primary",
                          use_container_width=True, key="gen_xbrl_b"):
-                path = generate_xbrl_balance()
+                path = generate_xbrl_balance(
+                    year=xbrl_filters.get("year"),
+                    month=xbrl_filters.get("month"),
+                    cost_center_id=xbrl_filters.get("cost_center_id"),
+                )
                 _render_download(path, key_suffix="xbrl_b")
 
     # ============================================================
