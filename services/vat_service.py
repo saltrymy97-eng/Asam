@@ -1,5 +1,5 @@
-# services/vat_service.py – وحدة إدارة ضريبة القيمة المضافة (v2.0)
-# ✅ Registry + conn=None + إصلاح account_name + دفع الضريبة
+# services/vat_service.py – وحدة إدارة ضريبة القيمة المضافة (v3.0)
+# ✅ Registry + conn=None + إصلاح account_name + دفع الضريبة مع vouchers
 import sqlite3
 from datetime import date
 from database import get_connection, close_connection
@@ -257,7 +257,7 @@ def get_tax_return_report(start_date=None, end_date=None, conn=None):
 
 
 # ============================================================
-# ✅ إصلاح: post_vat_settlement_entry — استخدم "account" بدل "account_name"
+# ✅ إصلاح: post_vat_settlement_entry
 # ============================================================
 def post_vat_settlement_entry(settlement_date, start_date, end_date,
                                description="تسوية وإقفال ضريبة القيمة المضافة للفترة",
@@ -276,17 +276,15 @@ def post_vat_settlement_entry(settlement_date, start_date, end_date,
     vat_payable_acc = get_functional_account("sales_tax")
 
     lines = [
-        # إقفال ضريبة المخرجات
         {
-            "account": vat_output_acc,          # ✅ صحيح
+            "account": vat_output_acc,
             "debit": output_vat,
             "credit": 0.0,
             "currency_code": "YER",
             "exchange_rate": 1.0,
         },
-        # إقفال ضريبة المدخلات
         {
-            "account": vat_input_acc,           # ✅ صحيح
+            "account": vat_input_acc,
             "debit": 0.0,
             "credit": input_vat,
             "currency_code": "YER",
@@ -350,22 +348,13 @@ def post_vat_settlement_entry(settlement_date, start_date, end_date,
 
 
 # ============================================================
-# ✅ جديد: دفع الضريبة من بنك/صندوق
+# ✅ v3.0: دفع الضريبة من بنك/صندوق مع تسجيل voucher كامل
 # ============================================================
 def pay_vat(amount, payment_date, payment_account_code, payment_method="bank",
             reference="", notes="", created_by="admin", conn=None):
     """
     تسجيل دفع الضريبة لجهة الضرائب.
-    
-    Args:
-        amount:               المبلغ المدفوع
-        payment_date:         تاريخ الدفع (YYYY-MM-DD)
-        payment_account_code: كود الصندوق أو البنك
-        payment_method:       'cash' | 'bank'
-    
-    Returns:
-        (journal_id, None)      عند النجاح
-        (None, "رسالة")         عند الفشل
+    ✅ v3.0: يُسجّل voucher كامل مع notes + reference
     """
     amount = float(amount)
     if amount <= 0:
@@ -390,7 +379,6 @@ def pay_vat(amount, payment_date, payment_account_code, payment_method="bank",
             conn.execute("BEGIN")
 
         vat_payable_acc = get_functional_account("sales_tax")
-
         if not vat_payable_acc:
             raise Exception("حساب ضريبة المخرجات (sales_tax) غير معرف")
 
@@ -421,7 +409,52 @@ def pay_vat(amount, payment_date, payment_account_code, payment_method="bank",
         if err:
             raise Exception(f"فشل القيد: {err}")
 
-        # ✅ تسجيل الحركة في الصندوق/البنك
+        # ============================================================
+        # ✅ v3.0: تسجيل سند صرف كامل مع notes
+        # ============================================================
+        voucher_id = None
+        try:
+            # إنشاء الجدول إذا لم يكن موجوداً
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS vouchers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    type TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    party_type TEXT NOT NULL,
+                    party_id INTEGER,
+                    amount REAL NOT NULL,
+                    account TEXT NOT NULL,
+                    invoice_id INTEGER,
+                    journal_entry_id INTEGER,
+                    reference TEXT,
+                    notes TEXT,
+                    created_by TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cur = conn.execute("""
+                INSERT INTO vouchers
+                (type, date, party_type, party_id, amount, account,
+                 journal_entry_id, reference, notes, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                'payment',
+                payment_date,
+                'tax_authority',
+                None,
+                amount,
+                payment_account_code,
+                journal_id,
+                reference or "دفع ضريبة القيمة المضافة",
+                notes or "",
+                created_by,
+            ))
+            voucher_id = cur.lastrowid
+        except Exception as e:
+            print(f"⚠️ فشل تسجيل سند الضريبة: {e}")
+
+        # ✅ تسجيل الحركة في الصندوق
         if payment_method == 'cash':
             try:
                 from services.cash_service import add_cash_transaction
@@ -436,12 +469,14 @@ def pay_vat(amount, payment_date, payment_account_code, payment_method="bank",
                         'withdrawal', amount,
                         reference=f"vat_payment#{journal_id}",
                         create_journal=False,
+                        voucher_id=voucher_id,
                         conn=conn,
                         skip_balance_check=True,
                     )
             except Exception as e:
                 print(f"⚠️ فشل تسجيل حركة الصندوق: {e}")
 
+        # ✅ تسجيل الحركة في البنك
         elif payment_method == 'bank':
             try:
                 from services.bank_service import add_bank_transaction
@@ -469,7 +504,10 @@ def pay_vat(amount, payment_date, payment_account_code, payment_method="bank",
             action="دفع ضريبة القيمة المضافة",
             table_name="journal_entries",
             record_id=journal_id,
-            new_value=f"المبلغ: {amount:,.2f} من {payment_account_code}"
+            new_value=(
+                f"المبلغ: {amount:,.2f} من {payment_account_code} | "
+                f"ملاحظات: {notes or '—'}"
+            )
         )
 
         return journal_id, None
