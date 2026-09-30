@@ -1,9 +1,10 @@
-# services/cash_service.py – وحدة الصندوق متعدد العملات (v5.0)
+# services/cash_service.py – وحدة الصندوق متعدد العملات (v6.0)
 # ✅ متوافق مع Connection Registry
 # ✅ حماية صارمة من الرصيد السالب
 # ✅ BEGIN IMMEDIATE — منع Race Condition
 # ✅ update_cash_balance ذرّي (Atomic)
 # ✅ check_sufficient_balance صارمة
+# ✅ جديد: قيد افتتاحي تلقائي عند إنشاء الصندوق
 import sqlite3
 from datetime import date
 from database import get_connection, close_connection
@@ -163,10 +164,19 @@ def create_cash_tables():
 
 
 # ============================================================
-# إدارة حسابات الصندوق
+# ✅ إنشاء حساب صندوق — مع قيد افتتاحي تلقائي
 # ============================================================
-def create_cash_account(name, currency_code="YER", opening_balance=0.0, account_code=None):
-    """إنشاء حساب صندوق جديد مع ربطه بشجرة الحسابات"""
+def create_cash_account(name, currency_code="YER", opening_balance=0.0,
+                         account_code=None, created_by="admin"):
+    """
+    إنشاء حساب صندوق جديد مع ربطه بشجرة الحسابات + قيد افتتاحي تلقائي.
+
+    ✅ v6.0:
+       - التحقق من الحسابات المطلوبة أولاً
+       - إنشاء قيد افتتاحي تلقائياً (مدين صندوق / دائن رأس مال)
+       - BEGIN IMMEDIATE — كل شيء في Transaction واحدة
+    """
+    # --- validation ---
     if not name or not str(name).strip():
         return False, "اسم الصندوق مطلوب"
 
@@ -182,20 +192,96 @@ def create_cash_account(name, currency_code="YER", opening_balance=0.0, account_
     try:
         conn.execute("BEGIN IMMEDIATE")
 
+        # ✅ 1) تحديد كود الصندوق
         if account_code:
             final_account_code = account_code
         else:
             final_account_code = _read_functional_code(conn, "cash")
 
-        conn.execute(
+        if not final_account_code:
+            raise ValueError(
+                "حساب الصندوق مفقود في شجرة الحسابات. "
+                "أضف حساباً بالنوع الوظيفي 'cash' أولاً."
+            )
+
+        # ✅ 2) التحقق من حساب رأس المال (قبل الإضافة)
+        capital_account_code = None
+        if opening_balance > 0:
+            capital_account_code = _read_functional_code(conn, "capital")
+            if not capital_account_code:
+                raise ValueError(
+                    "حساب رأس المال مفقود في شجرة الحسابات. "
+                    "أضف حساباً بالنوع الوظيفي 'capital' أولاً."
+                )
+
+        # ✅ 3) إدراج الصندوق
+        cur = conn.execute(
             """INSERT INTO cash_accounts
                (name, currency_code, opening_balance, current_balance, account_code)
                VALUES (?, ?, ?, ?, ?)""",
             (str(name).strip(), currency_code, opening_balance,
              opening_balance, final_account_code)
         )
+        cash_account_id = cur.lastrowid
+
+        # ✅ 4) قيد افتتاحي تلقائي — بنفس الاتصال
+        entry_id = None
+        if opening_balance > 0:
+            lines = [
+                {
+                    "account": final_account_code,
+                    "debit": opening_balance,
+                    "credit": 0.0,
+                    "currency_code": currency_code,
+                    "exchange_rate": 1.0,
+                },
+                {
+                    "account": capital_account_code,
+                    "debit": 0.0,
+                    "credit": opening_balance,
+                    "currency_code": currency_code,
+                    "exchange_rate": 1.0,
+                },
+            ]
+
+            _journal_result = save_journal_entry(
+                description=f"رصيد افتتاحي لصندوق {name}",
+                lines=lines,
+                entry_date=date.today().strftime("%Y-%m-%d"),
+                conn=conn,
+                skip_period_check=True,
+            )
+
+            if isinstance(_journal_result, tuple):
+                entry_id, jerr = _journal_result
+                if jerr:
+                    raise ValueError(f"فشل القيد الافتتاحي: {jerr}")
+
         conn.commit()
+
+        # ✅ 5) تسجيل التدقيق
+        try:
+            log_action(
+                username=created_by,
+                action="إنشاء صندوق",
+                table_name="cash_accounts",
+                record_id=cash_account_id,
+                new_value=(
+                    f"صندوق: {name}, العملة: {currency_code}, "
+                    f"الرصيد الافتتاحي: {opening_balance:,.2f}, "
+                    f"كود الحساب: {final_account_code}"
+                )
+            )
+        except Exception:
+            pass
+
+        if opening_balance > 0:
+            return True, (
+                f"تم إنشاء الصندوق بنجاح مع قيد افتتاحي رقم {entry_id} "
+                f"برصيد {opening_balance:,.2f} {currency_code}"
+            )
         return True, "تم إنشاء حساب الصندوق بنجاح"
+
     except Exception as e:
         try:
             conn.rollback()
@@ -258,7 +344,6 @@ def update_cash_balance(account_id, conn=None):
         if own_conn:
             conn.execute("BEGIN IMMEDIATE")
 
-        # ✅ حساب + تحديث في استعلام واحد
         conn.execute("""
             UPDATE cash_accounts
             SET current_balance = opening_balance + COALESCE((
@@ -271,14 +356,12 @@ def update_cash_balance(account_id, conn=None):
             WHERE id = ?
         """, (account_id, account_id))
 
-        # قراءة الرصيد الجديد
         row = conn.execute(
             "SELECT current_balance FROM cash_accounts WHERE id = ?",
             (account_id,)
         ).fetchone()
         new_balance = float(row['current_balance'] or 0) if row else 0.0
 
-        # ⚠️ تحذير إذا أصبح الرصيد سالباً
         if new_balance < -0.01:
             try:
                 log_action(
@@ -332,7 +415,6 @@ def add_cash_transaction(
     ✅ BEGIN IMMEDIATE — منع Race Condition.
     ✅ validation صارم للمبلغ قبل أي شيء.
     """
-    # ✅ validation قبل أي شيء
     if trans_type not in ('deposit', 'withdrawal'):
         return False, "نوع الحركة غير صالح"
 
@@ -350,7 +432,6 @@ def add_cash_transaction(
         own_conn = True
 
     try:
-        # ✅ BEGIN IMMEDIATE
         if own_conn:
             conn.execute("BEGIN IMMEDIATE")
 
@@ -363,9 +444,7 @@ def add_cash_transaction(
         cash_code = account.get('account_code') or _read_functional_code(conn, "cash")
         currency = account.get('currency_code', 'YER')
 
-        # ============================================================
         # ✅ فحص الرصيد قبل السحب
-        # ============================================================
         if trans_type == 'withdrawal' and not skip_balance_check:
             ok, err = check_sufficient_balance(
                 cash_code, amount, conn=conn, strict=True
@@ -444,15 +523,12 @@ def add_cash_transaction(
              amount, reference, journal_id, journal_line_id, voucher_id)
         )
 
-        # ✅ تحديث الرصيد بنفس الاتصال (Atomic)
         new_balance = update_cash_balance(cash_account_id, conn=conn)
 
         if own_conn:
             conn.commit()
 
-        # ✅ فحص نهائي: إذا أصبح الرصيد سالباً بعد الحركة → تراجع
         if new_balance < -0.01:
-            # هذا لا يجب أن يحدث بسبب الفحص المسبق، لكنه خط دفاع أخير
             try:
                 log_action(
                     username=created_by,
@@ -496,10 +572,7 @@ def add_cash_transaction(
 def transfer_between_cashes(from_account_id, to_account_id, amount, transfer_date,
                              description="تحويل بين الصناديق", reference="",
                              created_by="admin"):
-    """
-    تحويل بين صندوقين — مع فحص الرصيد.
-    ✅ BEGIN IMMEDIATE — كل التحويل في Transaction واحدة.
-    """
+    """تحويل بين صندوقين — مع فحص الرصيد."""
     try:
         amount = float(amount)
     except (TypeError, ValueError):
@@ -525,7 +598,6 @@ def transfer_between_cashes(from_account_id, to_account_id, amount, transfer_dat
         from_code = from_acc.get('account_code') or _read_functional_code(conn, "cash")
         to_code = to_acc.get('account_code') or _read_functional_code(conn, "cash")
 
-        # ✅ فحص الرصيد في الصندوق المصدر
         ok, err = check_sufficient_balance(
             from_code, amount, conn=conn, strict=True
         )
@@ -574,14 +646,13 @@ def transfer_between_cashes(from_account_id, to_account_id, amount, transfer_dat
         else:
             journal_id = result
 
-        # ✅ الحركتان بنفس الاتصال (لا فحص مكرر)
         ok1, msg1 = add_cash_transaction(
             from_account_id, transfer_date,
             f"تحويل إلى {to_acc['name']}",
             'withdrawal', amount, reference,
             create_journal=False,
             conn=conn,
-            skip_balance_check=True,   # ✅ تم الفحص بالفعل
+            skip_balance_check=True,
             created_by=created_by
         )
         if not ok1:
@@ -594,7 +665,7 @@ def transfer_between_cashes(from_account_id, to_account_id, amount, transfer_dat
             'deposit', converted_to_amount, reference,
             create_journal=False,
             conn=conn,
-            skip_balance_check=True,   # ✅ إيداع لا يحتاج فحص
+            skip_balance_check=True,
             created_by=created_by
         )
         if not ok2:
