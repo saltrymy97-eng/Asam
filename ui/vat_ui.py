@@ -1,5 +1,5 @@
 # ui/vat_ui.py – واجهة إدارة ضريبة القيمة المضافة (v3.0)
-# ✅ إضافة: سجل المدفوعات + عرض الملاحظات
+# ✅ تبويب دفع الضريبة + سجل المدفوعات مع الملاحظات
 import streamlit as st
 from datetime import date
 import pandas as pd
@@ -15,7 +15,7 @@ from services.vat_service import (
     pay_vat,
 )
 from services.expenses_service import get_payment_accounts
-from database import get_connection
+from database import get_connection, close_connection
 
 
 # ========== ألوان ==========
@@ -71,13 +71,10 @@ def _format_account_label(acc):
 
 
 # ============================================================
-# ✅ دالة جديدة: جلب سجل مدفوعات الضريبة
+# جلب سجل مدفوعات الضريبة
 # ============================================================
 def _get_vat_payments(limit=50):
-    """
-    جلب سجل مدفوعات الضريبة من جدول vouchers
-    المدفوعات المسجلة بـ reference يحتوي على 'ضريبة'
-    """
+    """جلب سجل مدفوعات الضريبة من جدول vouchers"""
     conn = get_connection()
     try:
         rows = conn.execute("""
@@ -106,11 +103,7 @@ def _get_vat_payments(limit=50):
             LEFT JOIN bank_accounts ba ON ba.account_code = v.account AND ba.is_active = 1
             LEFT JOIN cash_accounts ca ON ca.account_code = v.account AND ca.is_active = 1
             WHERE v.type = 'payment'
-              AND (
-                v.reference LIKE '%ضريب%'
-                OR v.notes LIKE '%ضريب%'
-                OR je.description LIKE '%ضريب%'
-              )
+              AND v.party_type = 'tax_authority'
             ORDER BY v.id DESC
             LIMIT ?
         """, (limit,)).fetchall()
@@ -119,7 +112,6 @@ def _get_vat_payments(limit=50):
         print(f"Error fetching VAT payments: {e}")
         return []
     finally:
-        from database import close_connection
         close_connection(conn)
 
 
@@ -380,7 +372,7 @@ def show():
                 st.rerun()
 
         # ============================================================
-        # ✅ جديد: سجل المدفوعات
+        # سجل المدفوعات
         # ============================================================
         st.markdown("---")
         st.markdown("### 📋 سجل مدفوعات الضريبة")
@@ -390,7 +382,6 @@ def show():
         if payments:
             df_pay = pd.DataFrame(payments)
 
-            # تجهيز العرض
             df_pay["source_icon"] = df_pay["source_type"].apply(
                 lambda x: "💵" if x == "cash" else ("🏦" if x == "bank" else "📌")
             )
@@ -406,10 +397,8 @@ def show():
                 "reference": "المرجع",
                 "notes": "الملاحظات",
                 "created_by": "بواسطة",
-                "created_at": "تاريخ الإنشاء",
             })
 
-            # عرض الإجمالي
             total_paid = df_pay["amount"].sum()
             st.markdown(
                 f"<div style='background:rgba(16,185,129,0.15); "
@@ -431,114 +420,6 @@ def show():
                 hide_index=True
             )
 
-            # ✅ عرض الملاحظات في expander منفصل — لسهولة القراءة
-            notes_payments = df_pay[df_pay["notes"].notna() & (df_pay["notes"] != "")]
-            if not notes_payments.empty:
-                with st.expander(f"📝 عرض الملاحظات التفصيلية ({len(notes_payments)} دفعة)"):
-                    for _, row in notes_payments.iterrows():
-                        st.markdown(f"""
-                        <div style="background:rgba(255,255,255,0.05);
-                                    border-right:3px solid {CY};
-                                    border-radius:8px; padding:10px 15px;
-                                    margin:8px 0; text-align:right;">
-                            <div style="color:{S}; font-size:0.85rem;">
-                                💳 دفعة #{row['id']} — {row['date']}
-                            </div>
-                            <div style="color:{T}; margin-top:5px;">
-                                <b>المبلغ:</b> {row['amount']:,.2f} |
-                                <b>المرجع:</b> {row['reference'] or '—'}
-                            </div>
-                            <div style="color:{CY}; margin-top:8px; font-size:1rem;">
-                                📝 {row['notes']}
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-        else:
-            st.info("لا توجد مدفوعات ضريبية مسجلة بعد")
-
-    # ============================================================
-    # تبويب 5: التقارير
-    # ============================================================
-    with tab5:
-        h3("تقارير الضريبة", PR)
-        col1, col2 = st.columns(2)
-        with col1:
-            start_date = st.date_input("من تاريخ", value=date.today().replace(day=1))
-        with col2:
-            end_date = st.date_input("إلى تاريخ", value=date.today())
-
-        colA, colB = st.columns(2)
-        with colA:
-            if st.button("📊 عرض تقرير الملخص"):
-                report = get_vat_report(
-                    start_date.strftime("%Y-%m-%d") if start_date else None,
-                    end_date.strftime("%Y-%m-%d") if end_date else None,
-                )
-                glass(
-                    f'نسبة الضريبة المعتمدة: '
-                    f'<span style="color:{GR};font-weight:800;">'
-                    f'{report["rate"] * 100:.0f}%</span>'
-                )
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.markdown(kpi_card("🛒", "إجمالي المبيعات",
-                                          f"{report['total_sales']:,.2f}", BL),
-                                unsafe_allow_html=True)
-                with col2:
-                    st.markdown(kpi_card("📤", "ضريبة المخرجات",
-                                          f"{report['output_vat']:,.2f}", RD),
-                                unsafe_allow_html=True)
-                with col3:
-                    st.markdown(kpi_card("📥", "ضريبة المدخلات",
-                                          f"{report['input_vat']:,.2f}", OR),
-                                unsafe_allow_html=True)
-                with col4:
-                    st.markdown(kpi_card("💎", "صافي الضريبة",
-                                          f"{report['net_vat']:,.2f}", GR),
-                                unsafe_allow_html=True)
-
-        with colB:
-            if st.button("📋 عرض تقرير الإقرار الضريبي"):
-                tax_return = get_tax_return_report(
-                    start_date.strftime("%Y-%m-%d") if start_date else None,
-                    end_date.strftime("%Y-%m-%d") if end_date else None,
-                )
-                glass(
-                    f'نسبة الضريبة المعتمدة: '
-                    f'<span style="color:{GR};font-weight:800;">'
-                    f'{tax_return["rate"] * 100:.0f}%</span>'
-                )
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.markdown(kpi_card("📤", "إجمالي ضريبة المخرجات",
-                                          f"{tax_return['total_output_vat']:,.2f}", RD),
-                                unsafe_allow_html=True)
-                with col2:
-                    st.markdown(kpi_card("📥", "إجمالي ضريبة المدخلات",
-                                          f"{tax_return['total_input_vat']:,.2f}", OR),
-                                unsafe_allow_html=True)
-                with col3:
-                    st.markdown(kpi_card("💎", "صافي الضريبة المستحقة",
-                                          f"{tax_return['net_vat']:,.2f}", GR),
-                                unsafe_allow_html=True)
-
-                if tax_return["invoices"]:
-                    st.markdown("---")
-                    st.markdown("**📋 تفاصيل الفواتير**")
-                    df_inv = pd.DataFrame(tax_return["invoices"])
-                    df_inv = df_inv.rename(columns={
-                        "id": "رقم الفاتورة", "type": "النوع",
-                        "invoice_date": "التاريخ", "total": "الإجمالي",
-                        "vat_amount": "الضريبة", "vat_rate": "النسبة",
-                    })
-                    df_inv["النوع"] = df_inv["النوع"].apply(
-                        lambda x: "بيع" if x == "sale" else "شراء"
-                    )
-                    df_inv["النسبة"] = df_inv["النسبة"].apply(lambda x: f"{x*100:.0f}%")
-                    st.dataframe(
-                        df_inv[["رقم الفاتورة", "النوع", "التاريخ",
-                                "الإجمالي", "الضريبة", "النسبة"]],
-                        use_container_width=True, hide_index=True
-                    )
-                else:
-                    st.info("لا توجد فواتير في الفترة المحددة.")
+            # عرض الملاحظات التفصيلية
+            notes_payments = df_pay[
+                df_pay["notes"].notna() & (df_pay["notes"] != "")
