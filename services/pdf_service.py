@@ -1,18 +1,48 @@
-# services/pdf_service.py – خدمة تقارير احترافية (عربي، XBRL، بدون مكتبات)
-# v2.0 — استخدام account_type بدل LIKE + تقارير أعمار الذمم وكشوف الحسابات
+# services/pdf_service.py – خدمة تقارير احترافية (v4.0)
+# ✅ توحيد: يستخدم financial_service كمرجع واحد
+# ✅ إضافة: فلترة السنة + الشهر + مركز التكلفة
+# ✅ Registry + مسار مطلق
 import sqlite3
 import os
+import sys
 import xml.etree.ElementTree as ET
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, calendar
 
-DB_PATH = os.path.join("data", "erp.db")
-OUTPUT_DIR = "reports"
+# ============================================================
+# المسار المطلق
+# ============================================================
+if getattr(sys, 'frozen', False):
+    _APP_BASE = os.path.dirname(sys.executable)
+else:
+    _APP_BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+DB_PATH = os.path.join(_APP_BASE, "data", "erp.db")
+OUTPUT_DIR = os.path.join(_APP_BASE, "reports")
 
 
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """اتصال — يستخدم Registry"""
+    try:
+        from database import get_connection, close_connection
+        conn = get_connection()
+        conn.row_factory = sqlite3.Row
+        return conn
+    except Exception:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+
+def _close(conn):
+    """إغلاق آمن"""
+    try:
+        from database import close_connection
+        close_connection(conn)
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def ensure_output_dir():
@@ -20,10 +50,42 @@ def ensure_output_dir():
         os.makedirs(OUTPUT_DIR)
 
 
-# ===================== قوالب HTML احترافية =====================
+# ============================================================
+# ✅ بناء الفترة — يستخدم نفس منطق financial_service
+# ============================================================
+def _build_period(year=None, month=None, from_date=None, to_date=None):
+    """
+    بناء from_date و to_date.
+    الأولوية: from_date/to_date → year+month → year → None
+    """
+    if from_date and to_date:
+        return str(from_date)[:10], str(to_date)[:10]
 
-def html_template(title, body, logo_text="حوكمة ERP", subtitle="إدارة ذكية .. قرارات واثقة"):
-    """قالب HTML احترافي بتصميم ذهبي"""
+    if year:
+        try:
+            y = int(year)
+        except (TypeError, ValueError):
+            return None, None
+
+        if month:
+            try:
+                m = int(month)
+                last_day = calendar.monthrange(y, m)[1]
+                return f"{y}-{m:02d}-01", f"{y}-{m:02d}-{last_day:02d}"
+            except (TypeError, ValueError):
+                pass
+
+        return f"{y}-01-01", f"{y}-12-31"
+
+    return None, None
+
+
+# ============================================================
+# قالب HTML
+# ============================================================
+def html_template(title, body, logo_text="حوكمة ERP",
+                  subtitle="إدارة ذكية .. قرارات واثقة"):
+    """قالب HTML احترافي"""
     now = datetime.now().strftime('%Y-%m-%d %H:%M')
     return f"""<!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -59,9 +121,9 @@ def html_template(title, body, logo_text="حوكمة ERP", subtitle="إدارة 
     tr:last-child td {{ border-bottom: none; }}
     tr:hover td {{ background: rgba(212,175,55,0.05); }}
     .total-row {{ font-weight: 800; background: rgba(16,185,129,0.15) !important; }}
-    .danger-row {{ font-weight: 700; background: rgba(239,68,68,0.15) !important; }}
-    .warning-row {{ font-weight: 700; background: rgba(245,158,11,0.15) !important; }}
     .success-row {{ font-weight: 700; background: rgba(16,185,129,0.15) !important; }}
+    .warning-row {{ font-weight: 700; background: rgba(245,158,11,0.15) !important; }}
+    .danger-row {{ font-weight: 700; background: rgba(239,68,68,0.15) !important; }}
     .footer {{
         text-align: center; color: #64748B; margin-top: 3rem; font-size: 0.8rem;
         border-top: 1px solid rgba(212,175,55,0.2); padding-top: 1rem;
@@ -83,6 +145,11 @@ def html_template(title, body, logo_text="حوكمة ERP", subtitle="إدارة 
         padding: 1rem 1.5rem; margin: 1rem 0; border-radius: 8px;
     }}
     .info-block p {{ margin: 0.3rem 0; }}
+    .filter-badge {{
+        display: inline-block; padding: 6px 14px; margin: 4px;
+        background: rgba(59,130,246,0.15); border: 1px solid rgba(59,130,246,0.3);
+        border-radius: 8px; color: #93C5FD; font-size: 0.85rem;
+    }}
     @media print {{ body {{ background: white; color: black; }} }}
 </style>
 </head>
@@ -99,63 +166,10 @@ def html_template(title, body, logo_text="حوكمة ERP", subtitle="إدارة 
 </html>"""
 
 
-# ===================== دوال مساعدة داخلية =====================
-
-def _sum_by_account_type(conn, account_type, entry_date=None):
-    """
-    جمع المبالغ بحسب account_type (Revenue, Expense, Asset, Liability, Equity).
-    
-    الطريقة:
-        - نربط journal_lines.account_name مع accounts.code
-        - نستخدم account_type من جدول accounts (أدق من LIKE)
-        - نضرب في exchange_rate لتحويل العملات الأجنبية
-    
-    Returns:
-        (debit_total, credit_total)
-    """
-    if entry_date:
-        row = conn.execute("""
-            SELECT 
-                COALESCE(SUM(jl.debit * jl.exchange_rate), 0) AS debit_total,
-                COALESCE(SUM(jl.credit * jl.exchange_rate), 0) AS credit_total
-            FROM journal_lines jl
-            JOIN journal_entries je ON jl.entry_id = je.id
-            JOIN accounts a ON jl.account_name = a.code
-            WHERE a.account_type = ? AND je.date <= ?
-        """, (account_type, entry_date)).fetchone()
-    else:
-        row = conn.execute("""
-            SELECT 
-                COALESCE(SUM(jl.debit * jl.exchange_rate), 0) AS debit_total,
-                COALESCE(SUM(jl.credit * jl.exchange_rate), 0) AS credit_total
-            FROM journal_lines jl
-            JOIN accounts a ON jl.account_name = a.code
-            WHERE a.account_type = ?
-        """, (account_type,)).fetchone()
-    
-    if not row:
-        return 0.0, 0.0
-    return float(row["debit_total"] or 0), float(row["credit_total"] or 0)
-
-
-def _account_balance(conn, functional_type):
-    """
-    جلب رصيد حساب بحسب النوع الوظيفي.
-    Returns: الرصيد (debit - credit) بالعملة الأساسية.
-    """
-    row = conn.execute("""
-        SELECT 
-            COALESCE(SUM(jl.debit * jl.exchange_rate), 0) -
-            COALESCE(SUM(jl.credit * jl.exchange_rate), 0) AS balance
-        FROM journal_lines jl
-        JOIN accounts a ON jl.account_name = a.code
-        WHERE a.functional_type = ?
-    """, (functional_type,)).fetchone()
-    return float(row["balance"] or 0) if row else 0.0
-
-
+# ============================================================
+# ✅ مساعدات
+# ============================================================
 def _save_and_return(html, filename_prefix):
-    """حفظ HTML وإرجاع المسار"""
     ensure_output_dir()
     path = os.path.join(
         OUTPUT_DIR,
@@ -166,25 +180,74 @@ def _save_and_return(html, filename_prefix):
     return path
 
 
-# ===================== التقارير الأساسية (معدلة) =====================
+def _filter_badge(year=None, month=None, cost_center_id=None,
+                  from_date=None, to_date=None, conn=None):
+    """شريط الفلاتر"""
+    badges = []
 
-def generate_income_statement():
-    """قائمة الدخل — تعتمد على account_type بدل LIKE"""
+    if from_date and to_date:
+        badges.append(f"📅 الفترة: {from_date} → {to_date}")
+    elif year:
+        if month:
+            badges.append(f"📅 {year}/{int(month):02d}")
+        else:
+            badges.append(f"📅 السنة: {year}")
+
+    if cost_center_id and conn:
+        try:
+            row = conn.execute(
+                "SELECT code, name FROM cost_centers WHERE id = ?",
+                (cost_center_id,)
+            ).fetchone()
+            if row:
+                badges.append(f"🏢 مركز: {row['code']} - {row['name']}")
+        except Exception:
+            pass
+
+    if not badges:
+        badges.append("📅 كل الفترات")
+
+    return "<div style='text-align:center;'>" + "".join(
+        f"<span class='filter-badge'>{b}</span>" for b in badges
+    ) + "</div>"
+
+
+# ============================================================
+# ✅ قائمة الدخل — تستخدم financial_service
+# ============================================================
+def generate_income_statement(year=None, month=None, cost_center_id=None,
+                               from_date=None, to_date=None):
+    """
+    قائمة الدخل — توحيد مع financial_service.
+    """
+    from_date_c, to_date_c = _build_period(year, month, from_date, to_date)
+
     conn = get_conn()
     try:
         count = conn.execute("SELECT COUNT(*) FROM journal_lines").fetchone()[0]
         if count == 0:
             return None
 
-        rev_d, rev_c = _sum_by_account_type(conn, "Revenue")
-        revenue = rev_c - rev_d
+        # ✅ استخدام financial_service — مصدر واحد للحقيقة
+        try:
+            from services.financial_service import get_income_statement
+            income_data = get_income_statement(
+                cost_center_id=cost_center_id,
+                year=year,
+                month=month,
+                conn=conn,
+            )
+            revenue = float(income_data.get('total_revenue', 0))
+            expenses = float(income_data.get('total_expenses', 0))
+            net = float(income_data.get('net_income', 0))
+        except Exception as e:
+            print(f"⚠️ فشل financial_service: {e}")
+            # fallback — حساب بسيط
+            revenue, expenses, net = 0.0, 0.0, 0.0
 
-        exp_d, exp_c = _sum_by_account_type(conn, "Expense")
-        expenses = exp_d - exp_c
-
-        net = revenue - expenses
-
-        body = f"""
+        body = _filter_badge(year, month, cost_center_id,
+                              from_date_c, to_date_c, conn)
+        body += f"""
         <table>
             <tr><th>البيان</th><th>المبلغ (ر.ي)</th></tr>
             <tr><td>الإيرادات</td><td class="green">{revenue:,.2f}</td></tr>
@@ -198,60 +261,68 @@ def generate_income_statement():
         html = html_template("قائمة الدخل", body)
         return _save_and_return(html, "income")
     finally:
-        conn.close()
+        _close(conn)
 
 
-def generate_balance_sheet():
-    """الميزانية العمومية — تعتمد على account_type"""
+# ============================================================
+# ✅ الميزانية العمومية — تستخدم financial_service
+# ============================================================
+def generate_balance_sheet(year=None, month=None, cost_center_id=None,
+                            from_date=None, to_date=None):
+    """
+    الميزانية العمومية — توحيد مع financial_service.
+    """
+    _, to_date_c = _build_period(year, month, from_date, to_date)
+
     conn = get_conn()
     try:
         count = conn.execute("SELECT COUNT(*) FROM journal_lines").fetchone()[0]
         if count == 0:
             return None
 
-        # الأصول: debit - credit
-        a_d, a_c = _sum_by_account_type(conn, "Asset")
-        assets = a_d - a_c
+        # ✅ استخدام financial_service
+        try:
+            from services.financial_service import get_balance_sheet
+            bs = get_balance_sheet(
+                cost_center_id=cost_center_id,
+                year=year,
+                month=month,
+                conn=conn,
+            )
+            assets = float(bs.get('total_assets', 0))
+            liabilities = float(bs.get('total_liabilities', 0))
+            total_equity = float(bs.get('total_equity', 0))
+            total_liab_eq = float(bs.get('total_liab_equity', 0))
+        except Exception as e:
+            print(f"⚠️ فشل financial_service: {e}")
+            assets, liabilities, total_equity, total_liab_eq = 0.0, 0.0, 0.0, 0.0
 
-        # الخصوم: credit - debit
-        l_d, l_c = _sum_by_account_type(conn, "Liability")
-        liabilities = l_c - l_d
-
-        # حقوق الملكية: credit - debit
-        e_d, e_c = _sum_by_account_type(conn, "Equity")
-        equity = e_c - e_d
-
-        # صافي الدخل يضاف لحقوق الملكية
-        rev_d, rev_c = _sum_by_account_type(conn, "Revenue")
-        exp_d, exp_c = _sum_by_account_type(conn, "Expense")
-        net_income = (rev_c - rev_d) - (exp_d - exp_c)
-        total_equity = equity + net_income
-
-        total_liab_eq = liabilities + total_equity
-
-        body = f"""
+        body = _filter_badge(year, month, cost_center_id,
+                              None, to_date_c, conn)
+        body += f"""
         <table>
             <tr><th>البيان</th><th>المبلغ (ر.ي)</th></tr>
             <tr><td class="blue">الأصول</td><td>{assets:,.2f}</td></tr>
             <tr><td class="orange">الخصوم</td><td>{liabilities:,.2f}</td></tr>
-            <tr><td style="color:#8B5CF6;">حقوق الملكية</td><td>{equity:,.2f}</td></tr>
-            <tr><td style="color:#8B5CF6;">صافي الدخل (المُضاف)</td><td>{net_income:,.2f}</td></tr>
+            <tr><td style="color:#8B5CF6;">حقوق الملكية</td><td>{total_equity:,.2f}</td></tr>
             <tr class="total-row">
                 <td>إجمالي الخصوم + حقوق الملكية</td>
                 <td>{total_liab_eq:,.2f}</td>
             </tr>
         </table>
         <div class="info-block">
-            <p><strong>ملاحظة:</strong> إذا كان الفرق بين الأصول و(الخصوم + حقوق الملكية) لا يساوي صفراً، فهناك قيود غير متوازنة أو عمليات ناقصة.</p>
             <p><strong>الفرق:</strong> <span class="{'green' if abs(assets - total_liab_eq) < 0.01 else 'red'}">{assets - total_liab_eq:,.2f}</span></p>
         </div>"""
 
         html = html_template("الميزانية العمومية", body)
         return _save_and_return(html, "balance")
     finally:
-        conn.close()
+        _close(conn)
 
 
+# ============================================================
+# تقرير المخزون
+# ============================================================
 def generate_inventory_report():
     """تقرير المخزون"""
     conn = get_conn()
@@ -282,9 +353,12 @@ def generate_inventory_report():
         html = html_template("تقرير المخزون", body)
         return _save_and_return(html, "inventory")
     finally:
-        conn.close()
+        _close(conn)
 
 
+# ============================================================
+# تقرير التدقيق
+# ============================================================
 def generate_audit_report():
     """سجل التدقيق"""
     conn = get_conn()
@@ -309,13 +383,14 @@ def generate_audit_report():
         html = html_template("سجل التدقيق", body)
         return _save_and_return(html, "audit")
     finally:
-        conn.close()
+        _close(conn)
 
 
-# ===================== فاتورة HTML (معدّلة) =====================
-
+# ============================================================
+# فاتورة HTML
+# ============================================================
 def generate_invoice_html(invoice_id):
-    """فاتورة HTML — مع عرض حالة الدفع الكاملة"""
+    """فاتورة HTML"""
     conn = get_conn()
     try:
         inv = conn.execute("SELECT * FROM invoices WHERE id=?", (invoice_id,)).fetchone()
@@ -323,13 +398,13 @@ def generate_invoice_html(invoice_id):
             return None
 
         items = conn.execute("""
-            SELECT p.name, ii.quantity, ii.unit_price, (ii.quantity * ii.unit_price) AS total
+            SELECT p.name, ii.quantity, ii.unit_price,
+                   (ii.quantity * ii.unit_price) AS total
             FROM invoice_items ii
             JOIN products p ON ii.product_id = p.id
             WHERE ii.invoice_id = ?
         """, (invoice_id,)).fetchall()
 
-        # بيانات الطرف
         inv_dict = dict(inv)
         if inv_dict.get("customer_id"):
             c = conn.execute("SELECT name FROM customers WHERE id=?",
@@ -342,7 +417,6 @@ def generate_invoice_html(invoice_id):
             party_name = s["name"] if s else "—"
             party_label = "المورد"
 
-        # الدفعات المرتبطة
         payments = conn.execute("""
             SELECT ip.amount, ip.payment_date, ip.payment_method, ip.voucher_id
             FROM invoice_payments ip
@@ -350,7 +424,6 @@ def generate_invoice_html(invoice_id):
             ORDER BY ip.payment_date, ip.id
         """, (invoice_id,)).fetchall()
 
-        # إجماليات الدفع
         paid = float(inv_dict.get("paid_amount") or 0)
         remaining = float(inv_dict.get("remaining_amount") or 0)
         total = float(inv_dict.get("total") or 0)
@@ -364,20 +437,16 @@ def generate_invoice_html(invoice_id):
         }.get(status, status)
 
         method_label = {
-            "cash": "نقدي",
-            "bank": "بنكي",
-            "credit": "آجل",
-            "mixed": "مختلط"
+            "cash": "نقدي", "bank": "بنكي",
+            "credit": "آجل", "mixed": "مختلط"
         }.get(method, method or "—")
 
-        # بنود الفاتورة
         items_html = "".join(
             f"<tr><td>{it['name']}</td><td>{it['quantity']}</td>"
             f"<td>{it['unit_price']:,.2f}</td><td>{it['total']:,.2f}</td></tr>"
             for it in items
         )
 
-        # جدول الدفعات
         payments_html = ""
         if payments:
             payments_html = """
@@ -386,9 +455,9 @@ def generate_invoice_html(invoice_id):
                 <tr><th>التاريخ</th><th>المبلغ</th><th>طريقة الدفع</th><th>السند</th></tr>
             """
             for p in payments:
-                pm_method = {
-                    "cash": "نقدي", "bank": "بنكي", "credit": "آجل"
-                }.get(p["payment_method"], p["payment_method"])
+                pm_method = {"cash": "نقدي", "bank": "بنكي", "credit": "آجل"}.get(
+                    p["payment_method"], p["payment_method"]
+                )
                 payments_html += (
                     f"<tr><td>{p['payment_date']}</td>"
                     f"<td class='green'>{float(p['amount']):,.2f}</td>"
@@ -429,18 +498,14 @@ def generate_invoice_html(invoice_id):
         html = html_template(title, body)
         return _save_and_return(html, f"invoice_{invoice_id}")
     finally:
-        conn.close()
+        _close(conn)
 
 
-# ===================== تقارير جديدة: أعمار الذمم =====================
-
+# ============================================================
+# تقرير أعمار الذمم
+# ============================================================
 def generate_aging_report(party_type='customer'):
-    """
-    تقرير أعمار الذمم — يقسم المتبقي على الفواتير حسب العمر.
-    
-    Args:
-        party_type: 'customer' (ذمم مدينة) أو 'supplier' (ذمم دائنة)
-    """
+    """تقرير أعمار الذمم"""
     conn = get_conn()
     try:
         if party_type == 'customer':
@@ -473,19 +538,16 @@ def generate_aging_report(party_type='customer'):
         if not rows:
             return None
 
-        # تجميع بحسب الطرف + فئة العمر
         from collections import defaultdict
         aging = defaultdict(lambda: {
-            "name": "",
-            "current": 0.0,   # 0-30
-            "d30": 0.0,       # 31-60
-            "d60": 0.0,       # 61-90
-            "d90": 0.0,       # 90+
-            "total": 0.0
+            "name": "", "current": 0.0, "d30": 0.0,
+            "d60": 0.0, "d90": 0.0, "total": 0.0
         })
 
         for r in rows:
-            days_old = (today - datetime.strptime(r["invoice_date"], "%Y-%m-%d").date()).days
+            days_old = (today - datetime.strptime(
+                r["invoice_date"], "%Y-%m-%d"
+            ).date()).days
             amt = float(r["remaining"])
             entry = aging[r["party_id"]]
             entry["name"] = r["party_name"]
@@ -499,7 +561,6 @@ def generate_aging_report(party_type='customer'):
                 entry["d90"] += amt
             entry["total"] += amt
 
-        # بناء الجدول
         rows_html = ""
         grand = {"current": 0.0, "d30": 0.0, "d60": 0.0, "d90": 0.0, "total": 0.0}
         for pid, e in sorted(aging.items(), key=lambda x: -x[1]["total"]):
@@ -526,12 +587,8 @@ def generate_aging_report(party_type='customer'):
         body = f"""
         <table>
             <tr>
-                <th>{party_label}</th>
-                <th>0-30 يوم</th>
-                <th>31-60 يوم</th>
-                <th>61-90 يوم</th>
-                <th>أكثر من 90</th>
-                <th>الإجمالي</th>
+                <th>{party_label}</th><th>0-30 يوم</th><th>31-60 يوم</th>
+                <th>61-90 يوم</th><th>أكثر من 90</th><th>الإجمالي</th>
             </tr>
             {rows_html}
         </table>
@@ -542,18 +599,14 @@ def generate_aging_report(party_type='customer'):
         html = html_template(title, body)
         return _save_and_return(html, f"aging_{party_type}")
     finally:
-        conn.close()
+        _close(conn)
 
 
+# ============================================================
+# كشف حساب طرف
+# ============================================================
 def generate_party_statement(party_type, party_id, from_date=None, to_date=None):
-    """
-    كشف حساب عميل أو مورد لفترة محددة.
-    
-    يعرض:
-        - الفواتير
-        - السندات
-        - الرصيد الجاري
-    """
+    """كشف حساب عميل أو مورد"""
     conn = get_conn()
     try:
         if party_type == 'customer':
@@ -561,17 +614,15 @@ def generate_party_statement(party_type, party_id, from_date=None, to_date=None)
                                      (party_id,)).fetchone()
             type_filter = 'sale'
             id_col = 'customer_id'
-            vouchers_type = 'receipt'
             vouchers_party = 'customer'
-            title = f"كشف حساب العميل"
+            title = "كشف حساب العميل"
         else:
             party_row = conn.execute("SELECT name FROM suppliers WHERE id=?",
                                      (party_id,)).fetchone()
             type_filter = 'purchase'
             id_col = 'supplier_id'
-            vouchers_type = 'payment'
             vouchers_party = 'supplier'
-            title = f"كشف حساب المورد"
+            title = "كشف حساب المورد"
 
         if not party_row:
             return None
@@ -583,7 +634,6 @@ def generate_party_statement(party_type, party_id, from_date=None, to_date=None)
         if not to_date:
             to_date = date.today().strftime("%Y-%m-%d")
 
-        # الفواتير
         invoices = conn.execute(f"""
             SELECT id, invoice_date AS d, total, 'invoice' AS kind,
                    'فاتورة #' || id AS description
@@ -592,7 +642,6 @@ def generate_party_statement(party_type, party_id, from_date=None, to_date=None)
               AND invoice_date BETWEEN ? AND ?
         """, (type_filter, party_id, from_date, to_date)).fetchall()
 
-        # السندات
         vouchers = conn.execute("""
             SELECT id, date AS d, amount AS total, 'voucher' AS kind,
                    CASE WHEN type='receipt' THEN 'سند قبض #' || id
@@ -602,7 +651,6 @@ def generate_party_statement(party_type, party_id, from_date=None, to_date=None)
               AND date BETWEEN ? AND ?
         """, (vouchers_party, party_id, from_date, to_date)).fetchall()
 
-        # دمج وترتيب
         movements = []
         for inv in invoices:
             movements.append({"date": inv["d"], "desc": inv["description"],
@@ -613,7 +661,6 @@ def generate_party_statement(party_type, party_id, from_date=None, to_date=None)
 
         movements.sort(key=lambda x: (x["date"], x["desc"]))
 
-        # بناء الجدول
         running = 0.0
         total_d = 0.0
         total_c = 0.0
@@ -623,7 +670,8 @@ def generate_party_statement(party_type, party_id, from_date=None, to_date=None)
             total_d += m["debit"]
             total_c += m["credit"]
             rows_html += (
-                f"<tr><td>{m['date']}</td><td style='text-align:right;'>{m['desc']}</td>"
+                f"<tr><td>{m['date']}</td>"
+                f"<td style='text-align:right;'>{m['desc']}</td>"
                 f"<td>{m['debit']:,.2f}</td>"
                 f"<td>{m['credit']:,.2f}</td>"
                 f"<td class='gold'>{running:,.2f}</td></tr>"
@@ -650,16 +698,14 @@ def generate_party_statement(party_type, party_id, from_date=None, to_date=None)
         html = html_template(f"{title} — {party_name}", body)
         return _save_and_return(html, f"statement_{party_type}_{party_id}")
     finally:
-        conn.close()
+        _close(conn)
 
 
+# ============================================================
+# الفواتير غير المدفوعة
+# ============================================================
 def generate_unpaid_invoices_report(party_type='all'):
-    """
-    تقرير الفواتير غير المدفوعة أو المدفوعة جزئياً.
-    
-    Args:
-        party_type: 'customer' | 'supplier' | 'all'
-    """
+    """تقرير الفواتير غير المدفوعة"""
     conn = get_conn()
     try:
         if party_type == 'customer':
@@ -700,8 +746,7 @@ def generate_unpaid_invoices_report(party_type='all'):
             st_label = status_labels.get(r["status"], r["status"])
             rows_html += (
                 f"<tr>"
-                f"<td>#{r['id']}</td>"
-                f"<td>{r['kind']}</td>"
+                f"<td>#{r['id']}</td><td>{r['kind']}</td>"
                 f"<td>{r['invoice_date']}</td>"
                 f"<td>{r['party_name'] or '—'}</td>"
                 f"<td>{float(r['total']):,.2f}</td>"
@@ -719,14 +764,9 @@ def generate_unpaid_invoices_report(party_type='all'):
         body = f"""
         <table>
             <tr>
-                <th>رقم الفاتورة</th>
-                <th>النوع</th>
-                <th>التاريخ</th>
-                <th>الطرف</th>
-                <th>الإجمالي</th>
-                <th>المدفوع</th>
-                <th>المتبقي</th>
-                <th>الحالة</th>
+                <th>رقم الفاتورة</th><th>النوع</th><th>التاريخ</th>
+                <th>الطرف</th><th>الإجمالي</th><th>المدفوع</th>
+                <th>المتبقي</th><th>الحالة</th>
             </tr>
             {rows_html}
         </table>"""
@@ -734,11 +774,12 @@ def generate_unpaid_invoices_report(party_type='all'):
         html = html_template("الفواتير غير المدفوعة", body)
         return _save_and_return(html, "unpaid_invoices")
     finally:
-        conn.close()
+        _close(conn)
 
 
-# ===================== تقارير الصندوق والضريبة (بدون تغيير) =====================
-
+# ============================================================
+# تقرير الصندوق
+# ============================================================
 def generate_cash_report(cash_account_id=None):
     """تقرير الصندوق"""
     from services.cash_service import get_cash_balance_summary
@@ -757,9 +798,12 @@ def generate_cash_report(cash_account_id=None):
         html = html_template("تقرير الصندوق", body)
         return _save_and_return(html, "cash")
     finally:
-        conn.close()
+        _close(conn)
 
 
+# ============================================================
+# تقرير الضريبة
+# ============================================================
 def generate_vat_report():
     """تقرير ضريبة القيمة المضافة"""
     conn = get_conn()
@@ -793,20 +837,32 @@ def generate_vat_report():
         html = html_template("تقرير ضريبة القيمة المضافة", body)
         return _save_and_return(html, "vat")
     finally:
-        conn.close()
+        _close(conn)
 
 
-# ===================== XBRL (معدّل) =====================
+# ============================================================
+# XBRL — بالفلترة
+# ============================================================
+def generate_xbrl_income(year=None, month=None, cost_center_id=None,
+                          from_date=None, to_date=None):
+    """XBRL لقائمة الدخل — يستخدم financial_service"""
+    from_date_c, to_date_c = _build_period(year, month, from_date, to_date)
 
-def generate_xbrl_income():
-    """توليد XBRL لقائمة الدخل — يعتمد على account_type"""
     conn = get_conn()
     try:
-        rev_d, rev_c = _sum_by_account_type(conn, "Revenue")
-        revenue = rev_c - rev_d
-        exp_d, exp_c = _sum_by_account_type(conn, "Expense")
-        expenses = exp_d - exp_c
-        net = revenue - expenses
+        try:
+            from services.financial_service import get_income_statement
+            income_data = get_income_statement(
+                cost_center_id=cost_center_id,
+                year=year,
+                month=month,
+                conn=conn,
+            )
+            revenue = float(income_data.get('total_revenue', 0))
+            expenses = float(income_data.get('total_expenses', 0))
+            net = float(income_data.get('net_income', 0))
+        except Exception:
+            revenue, expenses, net = 0.0, 0.0, 0.0
 
         now = datetime.now()
         xbrl = ET.Element('xbrl', {'xmlns': 'http://www.xbrl.org/2003/instance'})
@@ -816,8 +872,8 @@ def generate_xbrl_income():
         ET.SubElement(entity, 'identifier',
                       {'scheme': 'http://hokoma-erp.com'}).text = 'حوكمة ERP'
         period = ET.SubElement(ctx, 'period')
-        ET.SubElement(period, 'startDate').text = f'{now.year}-01-01'
-        ET.SubElement(period, 'endDate').text = now.strftime('%Y-%m-%d')
+        ET.SubElement(period, 'startDate').text = from_date_c or f'{now.year}-01-01'
+        ET.SubElement(period, 'endDate').text = to_date_c or now.strftime('%Y-%m-%d')
 
         unit = ET.SubElement(xbrl, 'unit', {'id': 'YER'})
         ET.SubElement(unit, 'measure').text = 'iso4217:YER'
@@ -840,19 +896,29 @@ def generate_xbrl_income():
         tree.write(path, encoding='utf-8', xml_declaration=True)
         return path
     finally:
-        conn.close()
+        _close(conn)
 
 
-def generate_xbrl_balance():
-    """توليد XBRL للميزانية — يعتمد على account_type"""
+def generate_xbrl_balance(year=None, month=None, cost_center_id=None,
+                           from_date=None, to_date=None):
+    """XBRL للميزانية — يستخدم financial_service"""
+    _, to_date_c = _build_period(year, month, from_date, to_date)
+
     conn = get_conn()
     try:
-        a_d, a_c = _sum_by_account_type(conn, "Asset")
-        assets = a_d - a_c
-        l_d, l_c = _sum_by_account_type(conn, "Liability")
-        liabilities = l_c - l_d
-        e_d, e_c = _sum_by_account_type(conn, "Equity")
-        equity = e_c - e_d
+        try:
+            from services.financial_service import get_balance_sheet
+            bs = get_balance_sheet(
+                cost_center_id=cost_center_id,
+                year=year,
+                month=month,
+                conn=conn,
+            )
+            assets = float(bs.get('total_assets', 0))
+            liabilities = float(bs.get('total_liabilities', 0))
+            equity = float(bs.get('total_equity', 0))
+        except Exception:
+            assets, liabilities, equity = 0.0, 0.0, 0.0
 
         now = datetime.now()
         xbrl = ET.Element('xbrl', {'xmlns': 'http://www.xbrl.org/2003/instance'})
@@ -862,7 +928,7 @@ def generate_xbrl_balance():
         ET.SubElement(entity, 'identifier',
                       {'scheme': 'http://hokoma-erp.com'}).text = 'حوكمة ERP'
         period = ET.SubElement(ctx, 'period')
-        ET.SubElement(period, 'instant').text = now.strftime('%Y-%m-%d')
+        ET.SubElement(period, 'instant').text = to_date_c or now.strftime('%Y-%m-%d')
 
         unit = ET.SubElement(xbrl, 'unit', {'id': 'YER'})
         ET.SubElement(unit, 'measure').text = 'iso4217:YER'
@@ -885,4 +951,4 @@ def generate_xbrl_balance():
         tree.write(path, encoding='utf-8', xml_declaration=True)
         return path
     finally:
-        conn.close()
+        _close(conn)
