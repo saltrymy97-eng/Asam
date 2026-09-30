@@ -1,5 +1,7 @@
-# ui/opening_balances_ui.py – واجهة الأرصدة الافتتاحية (v4.1)
-# ✅ إصلاح: nan في مجاميع الأرصدة الافتتاحية
+# ui/opening_balances_ui.py – واجهة الأرصدة الافتتاحية (v4.2)
+# ✅ v4.2: إضافة أيقونة 📋 لعنوان الصفحة
+# ✅ v4.1: بناء HTML كنص واحد
+# ✅ v4.0: إصلاح nan في مجاميع الأرصدة
 import streamlit as st
 import pandas as pd
 import math
@@ -20,9 +22,6 @@ BL = "#3B82F6"
 OR = "#F59E0B"
 
 
-# ============================================================
-# ✅ دالة مساعدة: تحويل آمن لأي قيمة رقمية
-# ============================================================
 def _safe_float(value, default=0.0):
     """
     تحويل آمن لأي قيمة إلى float.
@@ -52,10 +51,11 @@ def _glass_card(content, color=BL):
 
 
 def show():
+    # ✅ إضافة الأيقونة 📋 للعنوان
     header_html = (
         f'<div style="margin-bottom:2rem; text-align:right;">'
         f'<h1 style="color:{T}; font-size:2.8rem; margin:0; text-shadow:0 0 20px {PR};">'
-        f'الأرصدة الافتتاحية</h1>'
+        f'📋 الأرصدة الافتتاحية</h1>'
         f'<p style="color:{S}; font-size:1.2rem;">تسجيل أرصدة بداية المدة للحسابات والمخزون</p>'
         f'</div>'
     )
@@ -104,7 +104,6 @@ def show():
             total_cr = 0.0
 
             for _, row in edited_df.iterrows():
-                # ✅ استخدام _safe_float بدلاً من float(... or 0)
                 dr = _safe_float(row['الرصيد مدين'])
                 cr = _safe_float(row['الرصيد دائن'])
                 if dr > 0 or cr > 0:
@@ -144,7 +143,6 @@ def show():
         else:
             df_prod = pd.DataFrame(products)
             df_prod['الكمية الافتتاحية'] = 0.0
-            # ✅ تعبئة آمنة لسعر الشراء
             df_prod['تكلفة الوحدة'] = df_prod['purchase_price'].apply(
                 lambda x: _safe_float(x, 0.0)
             )
@@ -174,7 +172,6 @@ def show():
             total_inv_cost = 0.0
 
             for _, row in edited_prod_df.iterrows():
-                # ✅ استخدام _safe_float
                 qty = _safe_float(row['الكمية الافتتاحية'])
                 if qty > 0:
                     cost = _safe_float(row['تكلفة الوحدة'])
@@ -197,7 +194,6 @@ def show():
     account_balances = st.session_state.get('account_balances', [])
     inventory_items = st.session_state.get('inventory_items', [])
 
-    # ✅ حساب آمن للمجاميع النهائية
     total_dr = sum(_safe_float(b.get('debit', 0)) for b in account_balances)
     total_cr = sum(_safe_float(b.get('credit', 0)) for b in account_balances)
     total_inv = sum(
@@ -212,7 +208,6 @@ def show():
     is_balanced = abs(diff_final) < 0.01
     color_status = GR if is_balanced else OR
 
-    # ✅ عرض المجاميع (مع fallback آمن)
     summary_html = (
         f'<div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:1rem;">'
         f'<span><b>إجمالي المدين</b> (مع المخزون): {total_dr_with_inv:,.2f}</span>'
@@ -222,7 +217,6 @@ def show():
     )
     _glass_card(summary_html, color=color_status)
 
-    # ✅ تنبيه: متوازن أم لا
     if not is_balanced and (total_dr_with_inv > 0 or total_cr > 0):
         st.warning(
             f"⚠️ الأرصدة غير متوازنة. الفرق: **{diff_final:,.2f}**\n\n"
