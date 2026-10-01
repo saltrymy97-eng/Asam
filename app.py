@@ -58,7 +58,181 @@ from ui.pdf_reports import show as pdf_show
 from ui.ai_ui import show as ai_show
 from ui.cash_ui import show as cash_show
 
-st.set_page_config(page_title="حوكمة ERP", layout="wide")
+# ============================================================
+# ✅ إعدادات الصفحة + إصلاح التمرير (v2.1)
+# ============================================================
+st.set_page_config(
+    page_title="حوكمة ERP",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ============================================================
+# ✅ CSS: إصلاح مشكلة التمرير (متوافق مع WebView2 للـ EXE)
+# ============================================================
+st.markdown("""
+<style>
+/* ============================================ */
+/* ✅ 1. إصلاح جذري لعناصر HTML الأساسية       */
+/* ============================================ */
+html, body {
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    height: auto !important;
+    min-height: 100vh !important;
+    max-height: none !important;
+}
+
+/* ============================================ */
+/* ✅ 2. حاويات Streamlit الرئيسية             */
+/* ============================================ */
+.stApp,
+[data-testid="stApp"],
+[data-testid="stAppViewContainer"] {
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    height: auto !important;
+    min-height: 100vh !important;
+    max-height: none !important;
+}
+
+/* ============================================ */
+/* ✅ 3. منطقة المحتوى الرئيسية                */
+/* ============================================ */
+[data-testid="stMain"],
+section.main,
+.main {
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    height: auto !important;
+    min-height: 100vh !important;
+    max-height: none !important;
+}
+
+/* ============================================ */
+/* ✅ 4. حاوية المحتوى الداخلي (block-container) */
+/* ============================================ */
+[data-testid="stAppViewBlockContainer"],
+.main .block-container,
+section.main > div.block-container,
+.stMainBlockContainer {
+    overflow-y: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    padding-bottom: 6rem !important;
+    padding-top: 2rem !important;
+}
+
+/* ============================================ */
+/* ✅ 5. الشريط الجانبي                        */
+/* ============================================ */
+[data-testid="stSidebar"] {
+    overflow-y: auto !important;
+    height: 100vh !important;
+    max-height: 100vh !important;
+}
+
+[data-testid="stSidebar"] > div:first-child {
+    overflow-y: auto !important;
+    height: 100vh !important;
+}
+
+[data-testid="stSidebarContent"] {
+    overflow-y: auto !important;
+    height: 100vh !important;
+    padding-bottom: 3rem !important;
+}
+
+/* ============================================ */
+/* ✅ 6. الجداول والرسوم البيانية               */
+/* ============================================ */
+.stDataFrame,
+[data-testid="stDataFrame"],
+[data-testid="stDataFrameResizable"],
+.stTable,
+[data-testid="stTable"] {
+    max-height: 75vh !important;
+    overflow-y: auto !important;
+}
+
+.js-plotly-plot,
+.stPlotlyChart,
+[data-testid="stPlotlyChart"] {
+    max-height: 80vh !important;
+}
+
+/* ============================================ */
+/* ✅ 7. منع أي عنصر من التسبب في تمرير أفقي   */
+/* ============================================ */
+* {
+    box-sizing: border-box !important;
+}
+
+p, h1, h2, h3, h4, h5, h6, span, div {
+    overflow-wrap: break-word !important;
+    word-wrap: break-word !important;
+    word-break: break-word !important;
+}
+
+/* ============================================ */
+/* ✅ 8. دعم صريح للشاشات الكبيرة (1080p+)     */
+/* ============================================ */
+@media (min-height: 900px) {
+    html, body, .stApp, [data-testid="stAppViewContainer"] {
+        height: auto !important;
+        min-height: 100vh !important;
+        overflow-y: auto !important;
+    }
+}
+
+@media (min-height: 1200px) {
+    html, body, .stApp, [data-testid="stAppViewContainer"],
+    [data-testid="stMain"] {
+        height: auto !important;
+        min-height: 100vh !important;
+        max-height: none !important;
+        overflow-y: auto !important;
+    }
+}
+
+/* ============================================ */
+/* ✅ 9. WebView2 (Edge) — دعم خاص              */
+/* ============================================ */
+@supports (-ms-ime-align: auto) {
+    html, body {
+        overflow-y: auto !important;
+        height: auto !important;
+    }
+    .stApp, [data-testid="stAppViewContainer"] {
+        overflow-y: auto !important;
+        height: auto !important;
+    }
+}
+
+/* ============================================ */
+/* ✅ 10. التمرير السلس + شريط تمرير أنيق      */
+/* ============================================ */
+* {
+    scroll-behavior: smooth;
+}
+
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+}
+::-webkit-scrollbar-thumb {
+    background: rgba(167, 139, 250, 0.5);
+    border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(167, 139, 250, 0.8);
+}
+</style>
+""", unsafe_allow_html=True)
+
 
 # ========== تصميم القائمة الجانبية الفاخرة ==========
 st.markdown("""
