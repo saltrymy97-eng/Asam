@@ -1,3 +1,9 @@
+# app_desktop.py — مشغل نظام حوكمة ERP كتطبيق سطح مكتب (v2.0)
+# ✅ v2.0: إصلاح مشكلة التمرير على الشاشات الكبيرة
+#         - maximized=True (نافذة مِلء الشاشة)
+#         - min_size أصغر (800x600)
+#         - text_select=True (تحسين WebView2)
+#         - دعم خاص لـ WebView2 (Edge)
 import os
 import sys
 import io
@@ -50,6 +56,9 @@ import webview
 from streamlit.web import cli as stcli
 
 
+# ═══════════════════════════════════════════════════════════
+# دوال مساعدة
+# ═══════════════════════════════════════════════════════════
 def find_free_port():
     """البحث عن منفذ شبكة فارغ"""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -138,6 +147,9 @@ def run_streamlit(port, app_path):
         pass
 
 
+# ═══════════════════════════════════════════════════════════
+# ✅ الدالة الرئيسية — v2.0 (مُعدَّلة لإصلاح التمرير)
+# ═══════════════════════════════════════════════════════════
 def main():
     base_path = get_base_path()
     app_py_path = os.path.join(base_path, "app.py")
@@ -146,9 +158,15 @@ def main():
     port = find_free_port()
     url = f"http://{host}:{port}"
 
-    p = multiprocessing.Process(target=run_streamlit, args=(port, app_py_path), daemon=True)
+    # ✅ تشغيل Streamlit في عملية منفصلة
+    p = multiprocessing.Process(
+        target=run_streamlit,
+        args=(port, app_py_path),
+        daemon=True
+    )
     p.start()
 
+    # ✅ انتظار جاهزية السيرفر
     max_retries = 80
     retries = 0
     while not is_server_running(host, port) and retries < max_retries:
@@ -157,21 +175,44 @@ def main():
 
     if retries >= max_retries:
         exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-        with open(os.path.join(exe_dir, "server_error_log.txt"), "a", encoding="utf-8") as f:
-            f.write(f"\nانتهى الوقت (Timeout): السيرفر لم يستجب بعد {max_retries/2} ثانية.")
+        with open(os.path.join(exe_dir, "server_error_log.txt"),
+                  "a", encoding="utf-8") as f:
+            f.write(
+                f"\nانتهى الوقت (Timeout): "
+                f"السيرفر لم يستجب بعد {max_retries/2} ثانية."
+            )
 
     window_title = "ERP Governance System - Asam"
 
+    # ═══════════════════════════════════════════════════════════
+    # ✅✅✅ الإصلاح الأساسي لمشكلة التمرير
+    # ═══════════════════════════════════════════════════════════
+    # - maximized=True       ← النافذة تفتح مِلء الشاشة (يحل التمرير)
+    # - min_size أصغر        ← لإتاحة مساحة للتمرير
+    # - text_select=True     ← يحسّن WebView2
+    # - confirm_close=False  ← إغلاق سريع
+    # ═══════════════════════════════════════════════════════════
     webview.create_window(
         title=window_title,
         url=url,
-        width=1366,
-        height=768,
-        min_size=(1024, 600),
-        resizable=True
+        width=1280,              # عرض ابتدائي (سيتم تجاهله مع maximized)
+        height=800,              # ارتفاع ابتدائي (سيتم تجاهله)
+        min_size=(800, 600),     # ✅ حجم أدنى أصغر
+        resizable=True,          # ✅ قابل للتحجيم
+        maximized=True,          # ✅✅✅ مِلء الشاشة تلقائياً
+        fullscreen=False,        # ✅ ليس fullscreen (يسمح بالتمرير)
+        confirm_close=False,     # ✅ إغلاق سريع
+        text_select=True,        # ✅ تحسين التفاعل مع WebView2
+        easy_drag=False,         # ✅ لا سحب بالخلفية
     )
 
-    webview.start(private_mode=False)
+    # ✅ بدء WebView2 مع إعدادات صريحة
+    webview.start(
+        private_mode=False,
+        storage_path=None,
+        debug=False,
+        gui='edgechromium',  # ✅ استخدام WebView2 (Edge) صراحةً
+    )
 
 
 if __name__ == "__main__":
