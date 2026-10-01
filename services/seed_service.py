@@ -1,9 +1,8 @@
 # services/seed_service.py
-# v1.0 — خدمة حقن البيانات التجريبية الشاملة (كل الوحدات الـ30)
-# ✅ SQL مباشر — لا يعتمد على توقيعات الخدمات (يتفادى التعارض مع التعديلات)
-# ✅ بيانات متسقة ومتوازنة محاسبياً
-# ✅ يشمل 30 وحدة (ما عدا الذكاء الاصطناعي)
-# ✅ يولّد سجل تدقيق حقيقي
+# v1.1 — خدمة حقن البيانات التجريبية الشاملة (30 وحدة)
+# ✅ SQL مباشر — لا يعتمد على توقيعات الخدمات
+# ✅ يشمل: إغلاق الفترات + إغلاق الحسابات + تقييم العملات
+# ✅         + أرصدة المخزون الافتتاحية + المرفقات
 import sqlite3
 import random
 import json
@@ -19,7 +18,6 @@ SEED_END_DATE = date(2026, 9, 30)
 RANDOM_SEED = 20260101
 CURRENCY = "YER"
 
-# أسماء واقعية
 CUSTOMER_NAMES = [
     "شركة الأمل التجارية", "مؤسسة النور للتجارة", "أحمد للتجارة العامة",
     "شركة الوفاء التجارية", "مؤسسة السلام", "شركة المستقبل",
@@ -99,8 +97,9 @@ EMPLOYEE_DATA = [
     ("بشير علي", "عامل نظافة", 200000),
 ]
 
+
 # ============================================================
-# دالة مساعدة
+# دوال مساعدة
 # ============================================================
 def _rand_date(start=SEED_START_DATE, end=SEED_END_DATE):
     days = (end - start).days
@@ -119,15 +118,10 @@ def _phone():
     return f"+9677{random.randint(10000000, 99999999)}"
 
 
-def _now_str():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
 # ============================================================
 # 1) حذف كل البيانات
 # ============================================================
 def delete_all_data(conn):
-    """حذف كل البيانات من جميع الجداول (مع الاحتفاظ بالبنية)"""
     conn.execute("PRAGMA foreign_keys = OFF")
 
     tables = [
@@ -152,13 +146,11 @@ def delete_all_data(conn):
         except Exception as e:
             print(f"⚠️ حذف {t}: {e}")
 
-    # إعادة تصفير AUTOINCREMENT
     try:
         conn.execute("DELETE FROM sqlite_sequence WHERE name != 'vat_config'")
     except Exception:
         pass
 
-    # الاحتفاظ بإعداد VAT فقط
     try:
         conn.execute("DELETE FROM vat_config WHERE id != 1")
         conn.execute(
@@ -175,7 +167,6 @@ def delete_all_data(conn):
 # 2) الأدوار والمستخدمون
 # ============================================================
 def seed_roles_users(conn):
-    """حقن الأدوار والمستخدمين"""
     import bcrypt
 
     roles = [
@@ -208,7 +199,6 @@ def seed_roles_users(conn):
 # 3) الصلاحيات
 # ============================================================
 def seed_role_permissions(conn):
-    """حقن صلاحيات الأدوار لكل الوحدات"""
     modules = [
         "لوحة المعلومات", "المبيعات", "المشتريات", "مرتجعات البضاعة",
         "سندات القبض والصرف", "المخزون", "التسويات المخزنية", "المصروفات",
@@ -221,29 +211,31 @@ def seed_role_permissions(conn):
     ]
 
     perms_map = {
-        1: (1, 1, 1, 1, 1),  # مدير: كل شيء
-        2: (1, 1, 1, 1, 1),  # مدير مالي: كل شيء
-        3: (1, 1, 1, 0, 0),  # محاسب
-        4: (1, 1, 0, 0, 0),  # أمين مخزن
-        5: (1, 1, 0, 0, 0),  # موظف مبيعات
+        1: "all",
+        2: "all",
+        3: "accountant",
+        4: "storekeeper",
+        5: "sales",
     }
 
     count = 0
-    for rid, (v, a, e, d, ap) in perms_map.items():
+    for rid, mode in perms_map.items():
         for module in modules:
-            if rid in (1, 2):
+            if mode == "all":
                 cv, ca, ce, cd, cap = 1, 1, 1, 1, 1
-            elif rid == 3:
-                if module in ("المبيعات", "المشتريات", "المخزون", "التسويات المخزنية"):
+            elif mode == "accountant":
+                if module in ("المبيعات", "المشتريات", "المخزون",
+                              "التسويات المخزنية"):
                     cv, ca, ce, cd, cap = 1, 0, 0, 0, 0
                 else:
                     cv, ca, ce, cd, cap = 1, 1, 1, 0, 0
-            elif rid == 4:
-                if module in ("المخزون", "FIFO المخزون", "التسويات المخزنية", "لوحة المعلومات"):
+            elif mode == "storekeeper":
+                if module in ("المخزون", "FIFO المخزون",
+                              "التسويات المخزنية", "لوحة المعلومات"):
                     cv, ca, ce, cd, cap = 1, 1, 1, 0, 0
                 else:
                     cv, ca, ce, cd, cap = 0, 0, 0, 0, 0
-            else:  # rid == 5
+            else:  # sales
                 if module in ("المبيعات", "إدارة العملاء", "لوحة المعلومات"):
                     cv, ca, ce, cd, cap = 1, 1, 0, 0, 0
                 else:
@@ -252,7 +244,8 @@ def seed_role_permissions(conn):
             try:
                 conn.execute("""
                     INSERT INTO role_permissions
-                    (role_id, module, can_view, can_add, can_edit, can_delete, can_approve)
+                    (role_id, module, can_view, can_add, can_edit,
+                     can_delete, can_approve)
                     VALUES (?,?,?,?,?,?,?)
                 """, (rid, module, cv, ca, ce, cd, cap))
                 count += 1
@@ -266,7 +259,6 @@ def seed_role_permissions(conn):
 # 4) شجرة الحسابات
 # ============================================================
 def seed_accounts(conn):
-    """حقن شجرة الحسابات (65 حساب)"""
     accounts = [
         # ===== الأصول =====
         ("1", "الأصول", None, 1, "debit", "Asset", None),
@@ -279,7 +271,8 @@ def seed_accounts(conn):
         ("1203", "مصروفات مدفوعة مقدماً", "11", 3, "debit", "Asset", None),
         ("1301", "المخزون", "11", 3, "debit", "Asset", "inventory"),
         ("1302", "ضريبة المدخلات", "11", 3, "debit", "Asset", "purchase_tax"),
-        ("1303", "مجمع إهلاك الأصول", "11", 3, "credit", "Asset", "accumulated_depreciation"),
+        ("1303", "مجمع إهلاك الأصول", "11", 3, "credit", "Asset",
+         "accumulated_depreciation"),
         ("14", "الأصول الثابتة", "1", 2, "debit", "Asset", None),
         ("1401", "أثاث ومعدات", "14", 3, "debit", "Asset", "fixed_assets"),
         ("1402", "سيارات", "14", 3, "debit", "Asset", "fixed_assets"),
@@ -288,48 +281,69 @@ def seed_accounts(conn):
         # ===== الخصوم =====
         ("2", "الخصوم", None, 1, "credit", "Liability", None),
         ("21", "الخصوم المتداولة", "2", 2, "credit", "Liability", None),
-        ("2101", "الموردون", "21", 3, "credit", "Liability", "accounts_payable"),
-        ("2102", "ضريبة المخرجات", "21", 3, "credit", "Liability", "sales_tax"),
-        ("2103", "رواتب مستحقة", "21", 3, "credit", "Liability", "accrued_expenses"),
-        ("2104", "مصروفات مستحقة", "21", 3, "credit", "Liability", "accrued_expenses"),
+        ("2101", "الموردون", "21", 3, "credit", "Liability",
+         "accounts_payable"),
+        ("2102", "ضريبة المخرجات", "21", 3, "credit", "Liability",
+         "sales_tax"),
+        ("2103", "رواتب مستحقة", "21", 3, "credit", "Liability",
+         "accrued_expenses"),
+        ("2104", "مصروفات مستحقة", "21", 3, "credit", "Liability",
+         "accrued_expenses"),
         ("2105", "قروض قصيرة الأجل", "21", 3, "credit", "Liability", None),
 
         # ===== حقوق الملكية =====
         ("3", "حقوق الملكية", None, 1, "credit", "Equity", None),
         ("3101", "رأس المال", "3", 2, "credit", "Equity", "capital"),
-        ("3102", "الأرباح المبقاة", "3", 2, "credit", "Equity", "retained_earnings"),
+        ("3102", "الأرباح المبقاة", "3", 2, "credit", "Equity",
+         "retained_earnings"),
         ("3103", "المسحوبات الشخصية", "3", 2, "debit", "Equity", None),
 
         # ===== الإيرادات =====
         ("4", "الإيرادات", None, 1, "credit", "Revenue", None),
         ("41", "إيرادات النشاط الرئيسي", "4", 2, "credit", "Revenue", None),
-        ("4101", "إيرادات المبيعات", "41", 3, "credit", "Revenue", "sales_revenue"),
+        ("4101", "إيرادات المبيعات", "41", 3, "credit", "Revenue",
+         "sales_revenue"),
         ("4102", "مردودات المبيعات", "41", 3, "debit", "Revenue", None),
         ("4103", "خصم مسموح به", "41", 3, "debit", "Revenue", None),
         ("42", "إيرادات أخرى", "4", 2, "credit", "Revenue", None),
         ("4201", "إيرادات متنوعة", "42", 3, "credit", "Revenue", None),
-        ("4202", "فروق أسعار الصرف", "42", 3, "credit", "Revenue", "exchange_difference"),
+        ("4202", "فروق أسعار الصرف", "42", 3, "credit", "Revenue",
+         "exchange_difference"),
 
         # ===== المصروفات =====
         ("5", "المصروفات", None, 1, "debit", "Expense", None),
         ("51", "تكلفة المبيعات", "5", 2, "debit", "Expense", None),
         ("5101", "تكلفة البضاعة المباعة", "51", 3, "debit", "Expense", "cogs"),
         ("52", "مصروفات تشغيلية", "5", 2, "debit", "Expense", None),
-        ("5201", "مصروف الرواتب", "52", 3, "debit", "Expense", "salaries_expense"),
-        ("5202", "مصروف الإيجار", "52", 3, "debit", "Expense", "operating_expense"),
-        ("5203", "مصروف الكهرباء والماء", "52", 3, "debit", "Expense", "operating_expense"),
-        ("5204", "مصروف الإهلاك", "52", 3, "debit", "Expense", "depreciation_expense"),
-        ("5205", "مصروف الاتصالات", "52", 3, "debit", "Expense", "operating_expense"),
-        ("5206", "مصروفات نظافة", "52", 3, "debit", "Expense", "operating_expense"),
-        ("5207", "مصروفات صيانة", "52", 3, "debit", "Expense", "operating_expense"),
-        ("5208", "مصروفات تسويق", "52", 3, "debit", "Expense", "operating_expense"),
-        ("5209", "مصروفات نقل", "52", 3, "debit", "Expense", "operating_expense"),
-        ("5210", "مصروفات بنكية", "52", 3, "debit", "Expense", "operating_expense"),
-        ("5211", "مصروفات حكومية", "52", 3, "debit", "Expense", "operating_expense"),
-        ("5212", "مصروفات متنوعة", "52", 3, "debit", "Expense", "operating_expense"),
+        ("5201", "مصروف الرواتب", "52", 3, "debit", "Expense",
+         "salaries_expense"),
+        ("5202", "مصروف الإيجار", "52", 3, "debit", "Expense",
+         "operating_expense"),
+        ("5203", "مصروف الكهرباء والماء", "52", 3, "debit", "Expense",
+         "operating_expense"),
+        ("5204", "مصروف الإهلاك", "52", 3, "debit", "Expense",
+         "depreciation_expense"),
+        ("5205", "مصروف الاتصالات", "52", 3, "debit", "Expense",
+         "operating_expense"),
+        ("5206", "مصروفات نظافة", "52", 3, "debit", "Expense",
+         "operating_expense"),
+        ("5207", "مصروفات صيانة", "52", 3, "debit", "Expense",
+         "operating_expense"),
+        ("5208", "مصروفات تسويق", "52", 3, "debit", "Expense",
+         "operating_expense"),
+        ("5209", "مصروفات نقل", "52", 3, "debit", "Expense",
+         "operating_expense"),
+        ("5210", "مصروفات بنكية", "52", 3, "debit", "Expense",
+         "operating_expense"),
+        ("5211", "مصروفات حكومية", "52", 3, "debit", "Expense",
+         "operating_expense"),
+        ("5212", "مصروفات متنوعة", "52", 3, "debit", "Expense",
+         "operating_expense"),
         ("53", "خسائر", "5", 2, "debit", "Expense", None),
-        ("5301", "خسائر جرد المخزون", "53", 3, "debit", "Expense", "inventory_loss"),
-        ("5302", "عجز/خسائر أخرى", "53", 3, "debit", "Expense", "inventory_loss"),
+        ("5301", "خسائر جرد المخزون", "53", 3, "debit", "Expense",
+         "inventory_loss"),
+        ("5302", "عجز/خسائر أخرى", "53", 3, "debit", "Expense",
+         "inventory_loss"),
     ]
 
     code_to_id = {}
@@ -347,7 +361,7 @@ def seed_accounts(conn):
 
 
 # ============================================================
-# 5) العملات وأسعار الصرف
+# 5) العملات
 # ============================================================
 def seed_currencies(conn):
     currencies = [
@@ -365,7 +379,6 @@ def seed_currencies(conn):
         except sqlite3.IntegrityError:
             pass
 
-    # أسعار صرف تاريخية
     rates = [
         ("USD", "YER", 530.0, "2026-01-01"),
         ("USD", "YER", 535.0, "2026-04-01"),
@@ -378,7 +391,8 @@ def seed_currencies(conn):
     for from_c, to_c, rate, d in rates:
         try:
             conn.execute("""
-                INSERT INTO exchange_rates (from_currency, to_currency, rate, date)
+                INSERT INTO exchange_rates
+                (from_currency, to_currency, rate, date)
                 VALUES (?, ?, ?, ?)
             """, (from_c, to_c, rate, d))
         except sqlite3.IntegrityError:
@@ -413,7 +427,6 @@ def seed_cost_centers(conn):
 # 7) الصناديق والبنوك
 # ============================================================
 def seed_cash_and_bank(conn):
-    # الصناديق
     cash_accounts = [
         ("الصندوق الرئيسي", "YER", 500000, "1101"),
         ("صندوق النقد الأجنبي", "USD", 2000, "1103"),
@@ -421,15 +434,18 @@ def seed_cash_and_bank(conn):
     for name, curr, bal, code in cash_accounts:
         conn.execute("""
             INSERT INTO cash_accounts
-            (name, currency_code, opening_balance, current_balance, account_code, is_active)
+            (name, currency_code, opening_balance, current_balance,
+             account_code, is_active)
             VALUES (?, ?, ?, ?, ?, 1)
         """, (name, curr, bal, bal, code))
 
-    # البنوك
     bank_accounts = [
-        ("بنك اليمن الدولي", "1001234567", "1102", "الحساب الجاري - YER", "YER", 5000000),
-        ("بنك التضامن", "2004567890", "1102", "حساب التوفير - YER", "YER", 2000000),
-        ("بنك الكريمي", "3009876543", "1102", "حساب بالدولار", "USD", 15000),
+        ("بنك اليمن الدولي", "1001234567", "1102",
+         "الحساب الجاري - YER", "YER", 5000000),
+        ("بنك التضامن", "2004567890", "1102",
+         "حساب التوفير - YER", "YER", 2000000),
+        ("بنك الكريمي", "3009876543", "1102",
+         "حساب بالدولار", "USD", 15000),
     ]
     for bn, acc, code, name, curr, bal in bank_accounts:
         conn.execute("""
@@ -446,14 +462,12 @@ def seed_cash_and_bank(conn):
 # 8) العملاء والموردون
 # ============================================================
 def seed_parties(conn):
-    # العملاء
     for name in CUSTOMER_NAMES:
         conn.execute("""
             INSERT INTO customers (name, phone, address)
             VALUES (?, ?, ?)
         """, (name, _phone(), f"اليمن - صنعاء - شارع {random.randint(1, 50)}"))
 
-    # الموردون
     for name in SUPPLIER_NAMES:
         conn.execute("""
             INSERT INTO suppliers (name, phone, address)
@@ -484,20 +498,20 @@ def seed_products(conn):
 
 
 # ============================================================
-# 10) الموظفون والرواتب والحضور
+# 10) الموظفون + إعدادات الرواتب + الحضور
 # ============================================================
 def seed_employees(conn):
     employee_ids = []
     for name, position, salary in EMPLOYEE_DATA:
-        join_date = _fmt(_rand_date(SEED_START_DATE - timedelta(days=365),
-                                     SEED_START_DATE))
+        join_date = _fmt(_rand_date(
+            SEED_START_DATE - timedelta(days=365), SEED_START_DATE
+        ))
         cur = conn.execute("""
             INSERT INTO employees (name, position, salary, join_date)
             VALUES (?, ?, ?, ?)
         """, (name, position, salary, join_date))
         employee_ids.append(cur.lastrowid)
 
-        # إعدادات الراتب
         basic = salary
         housing = round(basic * 0.10)
         transport = round(basic * 0.05)
@@ -505,12 +519,11 @@ def seed_employees(conn):
         deductions = round(basic * 0.02)
         conn.execute("""
             INSERT INTO employee_salaries
-            (employee_id, basic_salary, housing_allowance, transport_allowance,
-             other_allowances, deductions)
+            (employee_id, basic_salary, housing_allowance,
+             transport_allowance, other_allowances, deductions)
             VALUES (?, ?, ?, ?, ?, ?)
         """, (cur.lastrowid, basic, housing, transport, other, deductions))
 
-    # الحضور (200 سجل)
     attendance_count = 0
     for _ in range(200):
         emp_id = random.choice(employee_ids)
@@ -593,9 +606,9 @@ def seed_fixed_assets(conn):
     count = 0
     for name, cat, cost, salvage, life, method in assets:
         monthly = round((cost - salvage) / (life * 12), 2)
-        purchase_date = _fmt(_rand_date(SEED_START_DATE - timedelta(days=180),
-                                         SEED_START_DATE))
-        # حساب الإهلاك المتراكم حتى الآن
+        purchase_date = _fmt(_rand_date(
+            SEED_START_DATE - timedelta(days=180), SEED_START_DATE
+        ))
         months_passed = random.randint(1, 9)
         accum = round(monthly * months_passed, 2)
         if accum > (cost - salvage):
@@ -607,14 +620,15 @@ def seed_fixed_assets(conn):
             (name, category, purchase_date, purchase_cost, salvage_value,
              useful_life_years, depreciation_method, monthly_depreciation,
              accumulated_depreciation, book_value, status,
-             annual_depreciation_rate)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'نشط', 0)
+             annual_depreciation_rate, manual_monthly_depreciation)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'نشط', 0, 0)
         """, (name, cat, purchase_date, cost, salvage, life, method,
               monthly, accum, book))
 
-        asset_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        asset_id = conn.execute(
+            "SELECT last_insert_rowid()"
+        ).fetchone()[0]
 
-        # قيود الإهلاك
         for i in range(months_passed):
             d = SEED_START_DATE + timedelta(days=30 * i)
             conn.execute("""
@@ -663,7 +677,6 @@ def seed_crm(conn):
               source, status, f"عميل محتمل من {source}", d))
         lead_ids.append(cur.lastrowid)
 
-    # الفرص البيعية
     stages = ["مؤهل", "تقديم عرض", "تفاوض", "مغلق - فاز", "مغلق - خسر"]
     opp_count = 0
     for i in range(20):
@@ -671,15 +684,17 @@ def seed_crm(conn):
         stage = random.choice(stages)
         amount = random.randint(500000, 10000000)
         probability = random.choice([20, 40, 60, 80, 100])
-        d = _fmt(_rand_date(date.today(), date.today() + timedelta(days=60)))
+        d = _fmt(_rand_date(
+            date.today(), date.today() + timedelta(days=60)
+        ))
         conn.execute("""
             INSERT INTO crm_opportunities
-            (lead_id, title, amount, stage, probability, expected_close_date, notes)
+            (lead_id, title, amount, stage, probability,
+             expected_close_date, notes)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (lead_id, f"فرصة #{i+1}", amount, stage, probability, d, ""))
         opp_count += 1
 
-    # التفاعلات
     types = ["اتصال", "بريد", "اجتماع", "زيارة", "واتساب"]
     int_count = 0
     for _ in range(40):
@@ -692,7 +707,7 @@ def seed_crm(conn):
         """, (lead_id, t, d, f"تفاعل من نوع {t}"))
         int_count += 1
 
-    print(f"✅ CRM: {len(leads_data)} عميل محتمل | {opp_count} فرصة | {int_count} تفاعل")
+    print(f"✅ CRM: {len(leads_data)} عميل | {opp_count} فرصة | {int_count} تفاعل")
 
 
 # ============================================================
@@ -707,7 +722,6 @@ def seed_inventory(conn):
     movement_count = 0
 
     for p in products:
-        # 3 دفعات شراء لكل منتج
         for _ in range(3):
             qty = random.randint(100, 500)
             cost = p[1] * random.uniform(0.9, 1.1)
@@ -723,7 +737,6 @@ def seed_inventory(conn):
             except Exception:
                 pass
 
-        # حركات المخزون
         for _ in range(random.randint(3, 8)):
             qty = random.randint(10, 100)
             t = random.choice(["in", "out"])
@@ -748,7 +761,6 @@ def seed_invoices(conn):
         "SELECT id, selling_price, purchase_price FROM products"
     ).fetchall()
 
-    # ============ فواتير البيع (60) ============
     sale_count = 0
     for _ in range(60):
         customer_id = random.choice(customers)[0]
@@ -767,7 +779,6 @@ def seed_invoices(conn):
         vat = round(total * 0.15, 2)
         grand_total = round(total + vat, 2)
 
-        # حالة الدفع
         status = random.choice(["unpaid", "partial", "paid"])
         paid = 0
         if status == "paid":
@@ -784,19 +795,20 @@ def seed_invoices(conn):
             VALUES ('sale', ?, ?, ?, 'completed', 0.15, ?, 'YER', 1.0, ?,
                     ?, ?, ?, ?)
         """, (_fmt(d), grand_total, grand_total, vat, customer_id,
-              paid, remaining, status, f"INV-{random.randint(10000, 99999)}"))
+              paid, remaining, status,
+              f"INV-{random.randint(10000, 99999)}"))
 
         inv_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
         for pid, qty, price in item_list:
             conn.execute("""
-                INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price)
+                INSERT INTO invoice_items
+                (invoice_id, product_id, quantity, unit_price)
                 VALUES (?, ?, ?, ?)
             """, (inv_id, pid, qty, price))
 
         sale_count += 1
 
-    # ============ فواتير الشراء (35) ============
     purchase_count = 0
     for _ in range(35):
         supplier_id = random.choice(suppliers)[0]
@@ -831,13 +843,15 @@ def seed_invoices(conn):
             VALUES ('purchase', ?, ?, ?, 'completed', 0.15, ?, 'YER', 1.0, ?,
                     ?, ?, ?, ?)
         """, (_fmt(d), grand_total, grand_total, vat, supplier_id,
-              paid, remaining, status, f"PO-{random.randint(10000, 99999)}"))
+              paid, remaining, status,
+              f"PO-{random.randint(10000, 99999)}"))
 
         inv_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
         for pid, qty, price in item_list:
             conn.execute("""
-                INSERT INTO invoice_items (invoice_id, product_id, quantity, unit_price)
+                INSERT INTO invoice_items
+                (invoice_id, product_id, quantity, unit_price)
                 VALUES (?, ?, ?, ?)
             """, (inv_id, pid, qty, price))
 
@@ -906,8 +920,8 @@ def seed_returns(conn):
             (type, invoice_date, total, total_base, status, vat_rate,
              vat_amount, currency_code, exchange_rate, customer_id,
              reason, reference)
-            VALUES ('sale_return', ?, ?, ?, 'completed', 0.15, ?, 'YER', 1.0,
-                    ?, 'عيب في المنتج', ?)
+            VALUES ('sale_return', ?, ?, ?, 'completed', 0.15, ?,
+                    'YER', 1.0, ?, 'عيب في المنتج', ?)
         """, (d, total + vat, total + vat, vat, inv[1],
               f"RET-{random.randint(1000, 9999)}"))
         count += 1
@@ -921,8 +935,8 @@ def seed_returns(conn):
             (type, invoice_date, total, total_base, status, vat_rate,
              vat_amount, currency_code, exchange_rate, supplier_id,
              reason, reference)
-            VALUES ('purchase_return', ?, ?, ?, 'completed', 0.15, ?, 'YER', 1.0,
-                    ?, 'منتج غير مطابق', ?)
+            VALUES ('purchase_return', ?, ?, ?, 'completed', 0.15, ?,
+                    'YER', 1.0, ?, 'منتج غير مطابق', ?)
         """, (d, total + vat, total + vat, vat, inv[1],
               f"PRET-{random.randint(1000, 9999)}"))
         count += 1
@@ -937,7 +951,6 @@ def seed_vouchers(conn):
     customers = conn.execute("SELECT id FROM customers").fetchall()
     suppliers = conn.execute("SELECT id FROM suppliers").fetchall()
 
-    # سندات قبض (50)
     receipt_count = 0
     for _ in range(50):
         cid = random.choice(customers)[0]
@@ -950,7 +963,6 @@ def seed_vouchers(conn):
         """, (d, cid, amount))
         receipt_count += 1
 
-    # سندات صرف (40)
     payment_count = 0
     for _ in range(40):
         sid = random.choice(suppliers)[0]
@@ -982,7 +994,8 @@ def seed_cash_bank_transactions(conn):
         try:
             conn.execute("""
                 INSERT INTO cash_transactions
-                (cash_account_id, transaction_date, description, type, amount, reference)
+                (cash_account_id, transaction_date, description, type,
+                 amount, reference)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (aid, d, f"حركة {'إيداع' if t=='deposit' else 'سحب'}",
                   t, amount, f"TXN-{random.randint(10000, 99999)}"))
@@ -999,7 +1012,8 @@ def seed_cash_bank_transactions(conn):
         try:
             conn.execute("""
                 INSERT INTO bank_transactions
-                (bank_account_id, transaction_date, description, type, amount, reference)
+                (bank_account_id, transaction_date, description, type,
+                 amount, reference)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (aid, d, f"حركة بنكية {'إيداع' if t=='deposit' else 'سحب'}",
                   t, amount, f"BTXN-{random.randint(10000, 99999)}"))
@@ -1076,24 +1090,13 @@ def seed_inventory_adjustments(conn):
 
 
 # ============================================================
-# 22) القيود المحاسبية (الأهم)
+# 22) القيود المحاسبية
 # ============================================================
 def seed_journal_entries(conn, code_to_id):
-    """
-    حقن القيود المحاسبية المتوازنة:
-    - قيد رأس المال
-    - قيد شراء الأصول الثابتة
-    - قيود المبيعات
-    - قيود المشتريات
-    - قيود المصروفات
-    - قيود الإهلاك
-    - قيود الرواتب
-    """
     entries_created = 0
     lines_created = 0
 
     def add_entry(desc, entry_date, lines):
-        """lines: [(account_code, debit, credit), ...]"""
         nonlocal entries_created, lines_created
         ref = f"ENT-{entry_date}-{random.randint(100000, 999999)}"
         cur = conn.execute("""
@@ -1115,7 +1118,7 @@ def seed_journal_entries(conn, code_to_id):
             lines_created += 1
         entries_created += 1
 
-    # ===== 1) قيد رأس المال =====
+    # قيد رأس المال
     add_entry("قيد تأسيس الشركة ورأس المال", "2026-01-01", [
         ("1101", 500000, 0),
         ("1102", 7000000, 0),
@@ -1123,7 +1126,7 @@ def seed_journal_entries(conn, code_to_id):
         ("3101", 0, 10500000),
     ])
 
-    # ===== 2) قيود شراء الأصول الثابتة =====
+    # شراء الأصول الثابتة
     assets = conn.execute("""
         SELECT name, purchase_cost, purchase_date FROM fixed_assets
     """).fetchall()
@@ -1133,7 +1136,7 @@ def seed_journal_entries(conn, code_to_id):
             ("1102", 0, a[1]),
         ])
 
-    # ===== 3) قيود إهلاك الأصول =====
+    # الإهلاك
     deps = conn.execute("""
         SELECT de.amount, de.entry_date, fa.name
         FROM depreciation_entries de
@@ -1145,7 +1148,7 @@ def seed_journal_entries(conn, code_to_id):
             ("1303", 0, d[0]),
         ])
 
-    # ===== 4) قيود فواتير البيع =====
+    # فواتير البيع
     sale_invoices = conn.execute("""
         SELECT id, total, vat_amount, invoice_date FROM invoices
         WHERE type='sale' AND status='completed' LIMIT 40
@@ -1158,7 +1161,7 @@ def seed_journal_entries(conn, code_to_id):
             ("2102", 0, inv[2]),
         ])
 
-    # ===== 5) قيود فواتير الشراء =====
+    # فواتير الشراء
     purchase_invoices = conn.execute("""
         SELECT id, total, vat_amount, invoice_date FROM invoices
         WHERE type='purchase' AND status='completed' LIMIT 25
@@ -1171,7 +1174,7 @@ def seed_journal_entries(conn, code_to_id):
             ("2101", 0, inv[1]),
         ])
 
-    # ===== 6) قيود سندات القبض =====
+    # سندات القبض
     receipts = conn.execute("""
         SELECT id, amount, date FROM vouchers WHERE type='receipt' LIMIT 30
     """).fetchall()
@@ -1181,7 +1184,7 @@ def seed_journal_entries(conn, code_to_id):
             ("1201", 0, r[1]),
         ])
 
-    # ===== 7) قيود سندات الصرف =====
+    # سندات الصرف
     payments = conn.execute("""
         SELECT id, amount, date FROM vouchers WHERE type='payment' LIMIT 25
     """).fetchall()
@@ -1191,19 +1194,18 @@ def seed_journal_entries(conn, code_to_id):
             ("1101", 0, p[1]),
         ])
 
-    # ===== 8) قيود المصروفات =====
+    # المصروفات
     expenses = conn.execute("""
         SELECT date, category, amount, account_code FROM expenses LIMIT 40
     """).fetchall()
     for e in expenses:
         code = e[3] or "5212"
-        payment_code = "1101"
         add_entry(f"مصروف {e[1]}", e[0], [
             (code, e[2], 0),
-            (payment_code, 0, e[2]),
+            ("1101", 0, e[2]),
         ])
 
-    # ===== 9) قيود الرواتب =====
+    # الرواتب
     payroll = conn.execute("""
         SELECT pr.month, SUM(pr.net_salary), SUM(pr.deductions)
         FROM payroll_runs pr
@@ -1228,7 +1230,6 @@ def seed_journal_entries(conn, code_to_id):
 # 23) الأرصدة الافتتاحية
 # ============================================================
 def seed_opening_balances(conn, code_to_id):
-    """حقن الأرصدة الافتتاحية (يجب أن تكون متوازنة)"""
     balances = [
         ("1101", 500000, 0),
         ("1102", 7000000, 0),
@@ -1257,7 +1258,6 @@ def seed_opening_balances(conn, code_to_id):
 # 24) سجل التدقيق
 # ============================================================
 def seed_audit_log(conn):
-    """حقن سجلات تدقيق حقيقية"""
     actions = [
         ("admin", "🔓 تسجيل دخول ناجح", "users", 1,
          json.dumps({"ip": "192.168.1.10", "status": "success"})),
@@ -1266,16 +1266,19 @@ def seed_audit_log(conn):
         ("admin", "👤 إنشاء مستخدم جديد", "users", 2,
          json.dumps({"username": "manager", "role_id": 2})),
         ("admin", "🌱 حقن بيانات تجريبية", "system", 0,
-         json.dumps({"modules": 29, "status": "success"})),
+         json.dumps({"modules": 30, "status": "success"})),
         ("manager", "🔓 تسجيل دخول ناجح", "users", 2,
          json.dumps({"ip": "192.168.1.15", "status": "success"})),
         ("accountant", "📝 إنشاء قيد محاسبي", "journal_entries", 1,
-         json.dumps({"description": "قيد تأسيس الشركة", "total_debit": 10500000})),
+         json.dumps({"description": "قيد تأسيس الشركة",
+                     "total_debit": 10500000})),
     ]
 
     for _ in range(30):
         u, a, t, rid, nv = random.choice(actions)
-        d = _fmt(_rand_date()) + f" {random.randint(8,18):02d}:{random.randint(0,59):02d}:{random.randint(0,59):02d}"
+        d = (_fmt(_rand_date()) +
+             f" {random.randint(8,18):02d}:{random.randint(0,59):02d}:"
+             f"{random.randint(0,59):02d}")
         try:
             conn.execute("""
                 INSERT INTO audit_log
@@ -1288,13 +1291,196 @@ def seed_audit_log(conn):
 
 
 # ============================================================
+# ✅ 25) إغلاق الفترات المالية
+# ============================================================
+def seed_closed_periods(conn):
+    """إغلاق 3 أشهر سابقة"""
+    periods = [
+        ("month", "2026-06", "2026-07-01 10:00:00", "admin"),
+        ("month", "2026-07", "2026-08-01 10:00:00", "admin"),
+        ("month", "2026-08", "2026-09-01 10:00:00", "admin"),
+    ]
+    count = 0
+    for pt, pv, ca, cb in periods:
+        try:
+            conn.execute("""
+                INSERT OR IGNORE INTO closed_periods
+                (period_type, period_value, closed_at, closed_by)
+                VALUES (?, ?, ?, ?)
+            """, (pt, pv, ca, cb))
+            count += 1
+        except Exception as e:
+            print(f"⚠️ إغلاق فترة {pv}: {e}")
+    print(f"✅ الفترات المُغلقة: {count}")
+
+
+# ============================================================
+# ✅ 26) إغلاق الحسابات السنوي
+# ============================================================
+def seed_closing_logs(conn, code_to_id):
+    """إغلاق سنة 2025 (لأغراض الاختبار)"""
+    # إيجاد حساب الأرباح المبقاة
+    retained_id = code_to_id.get("3102")
+
+    if not retained_id:
+        print("⚠️ لم يُعثر على حساب الأرباح المبقاة — تخطي إغلاق الحسابات")
+        return
+
+    # سنحتاج إلى قيد محاسبي وهمي لسنة 2025
+    entry_date = "2025-12-31"
+    ref = f"CLOSE-2025-{random.randint(100000, 999999)}"
+
+    cur = conn.execute("""
+        INSERT INTO journal_entries (date, description, reference)
+        VALUES (?, ?, ?)
+    """, (entry_date, "قيد إغلاق سنة 2025 - ترحيل صافي الدخل",
+          ref))
+    entry_id = cur.lastrowid
+
+    # قيد بسيط: مدين إيرادات - دائن أرباح مبقاة (افتراضي)
+    net_income = 500000
+    conn.execute("""
+        INSERT INTO journal_lines
+        (entry_id, journal_entry_id, account_id, account_name,
+         debit, credit, currency_code, exchange_rate)
+        VALUES (?, ?, ?, ?, ?, ?, 'YER', 1.0)
+    """, (entry_id, entry_id, retained_id, "3102", 0, net_income))
+
+    try:
+        conn.execute("""
+            INSERT INTO closing_logs
+            (year, cost_center_id, entry_id, net_income, closed_at, closed_by)
+            VALUES ('2025', NULL, ?, ?, '2025-12-31 23:59:59', 'admin')
+        """, (entry_id, net_income))
+        print(f"✅ إغلاق الحسابات: سنة 2025")
+    except Exception as e:
+        print(f"⚠️ إغلاق الحسابات: {e}")
+
+
+# ============================================================
+# ✅ 27) تقييم العملات
+# ============================================================
+def seed_currency_revaluations(conn, code_to_id):
+    """تقييم 3 حسابات بعملات أجنبية"""
+    revaluations = [
+        ("1103", "صندوق النقد الأجنبي", "USD", 500.0, 540.0, 2000),
+        ("1201", "العملاء", "USD", 530.0, 540.0, 5000),
+        ("1102", "البنك", "USD", 530.0, 540.0, 10000),
+    ]
+
+    count = 0
+    for code, acc_name, curr, old_r, new_r, bal in revaluations:
+        aid = code_to_id.get(code)
+        if not aid:
+            continue
+        old_local = bal * old_r
+        new_local = bal * new_r
+        diff = new_local - old_local
+
+        try:
+            conn.execute("""
+                INSERT INTO currency_revaluations
+                (date, account_id, account_name, currency_code,
+                 old_rate, new_rate, foreign_balance,
+                 old_local_value, new_local_value, difference,
+                 created_by)
+                VALUES ('2026-09-30', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'admin')
+            """, (aid, acc_name, curr, old_r, new_r, bal,
+                  old_local, new_local, diff))
+            count += 1
+        except Exception as e:
+            print(f"⚠️ تقييم {code}: {e}")
+
+    print(f"✅ تقييم العملات: {count}")
+
+
+# ============================================================
+# ✅ 28) الأرصدة الافتتاحية للمخزون
+# ============================================================
+def seed_opening_inventory(conn):
+    """أرصدة افتتاحية لـ 30 منتج"""
+    products = conn.execute(
+        "SELECT id, purchase_price FROM products"
+    ).fetchall()
+
+    count = 0
+    for p in products:
+        qty = random.randint(50, 200)
+        cost = p[1]
+        try:
+            conn.execute("""
+                INSERT INTO opening_inventory
+                (entry_date, product_id, quantity, unit_cost, created_by)
+                VALUES ('2026-01-01', ?, ?, ?, 'admin')
+            """, (p[0], qty, cost))
+            count += 1
+        except Exception:
+            pass
+
+    print(f"✅ أرصدة المخزون الافتتاحية: {count}")
+
+
+# ============================================================
+# ✅ 29) المرفقات
+# ============================================================
+def seed_attachments(conn):
+    """مرفقات وهمية مرتبطة بسجلات"""
+    attachments = [
+        ("invoice_123.pdf", "فاتورة رقم 123.pdf", "invoices", 1,
+         "application/pdf"),
+        ("contract_2026.pdf", "عقد 2026.pdf", "customers", 1,
+         "application/pdf"),
+        ("receipt_456.jpg", "سند قبض 456.jpg", "vouchers", 1,
+         "image/jpeg"),
+        ("purchase_order_789.pdf", "أمر شراء 789.pdf", "invoices", 2,
+         "application/pdf"),
+        ("bank_statement_1.pdf", "كشف حساب بنكي.pdf", "bank_accounts", 1,
+         "application/pdf"),
+        ("employee_contract.pdf", "عقد موظف.pdf", "employees", 1,
+         "application/pdf"),
+        ("asset_purchase.pdf", "فاتورة شراء أصل.pdf", "fixed_assets", 1,
+         "application/pdf"),
+        ("vat_return.pdf", "إقرار ضريبي.pdf", "invoices", 3,
+         "application/pdf"),
+        ("audit_report.pdf", "تقرير تدقيق.pdf", "audit_log", 1,
+         "application/pdf"),
+        ("stock_count.pdf", "جرد المخزون.pdf", "products", 1,
+         "application/pdf"),
+        ("lead_contract.pdf", "عقد عميل محتمل.pdf", "crm_leads", 1,
+         "application/pdf"),
+        ("expense_receipt.jpg", "إيصال مصروف.jpg", "expenses", 1,
+         "image/jpeg"),
+        ("salary_slip.pdf", "قسيمة راتب.pdf", "payroll_runs", 1,
+         "application/pdf"),
+        ("cash_voucher.pdf", "سند صرف.pdf", "vouchers", 2,
+         "application/pdf"),
+        ("supplier_contract.pdf", "عقد مورد.pdf", "suppliers", 1,
+         "application/pdf"),
+    ]
+
+    count = 0
+    for fname, orig, tbl, lid, ftype in attachments:
+        try:
+            conn.execute("""
+                INSERT INTO attachments
+                (filename, original_name, file_path, file_size, file_type,
+                 linked_table, linked_id, uploaded_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'admin')
+            """, (fname, orig, f"uploads/{fname}",
+                  random.randint(50000, 500000), ftype, tbl, lid))
+            count += 1
+        except Exception as e:
+            print(f"⚠️ مرفق {fname}: {e}")
+
+    print(f"✅ المرفقات: {count}")
+
+
+# ============================================================
 # 🎯 الدالة الرئيسية
 # ============================================================
 def run_full_seed(progress_callback=None):
     """
-    الدالة الرئيسية لحقن البيانات.
-    Returns:
-        dict: {"success": bool, "summary": {...}, "error": str}
+    حقن البيانات الشاملة — 30 وحدة كاملة.
     """
     random.seed(RANDOM_SEED)
 
@@ -1420,6 +1606,32 @@ def run_full_seed(progress_callback=None):
             progress_callback("📋 الأرصدة الافتتاحية...")
         seed_opening_balances(conn, code_to_id)
         summary["الأرصدة الافتتاحية"] = 4
+
+        # ✅ الوحدات الإضافية الجديدة
+        if progress_callback:
+            progress_callback("📅 إغلاق الفترات...")
+        seed_closed_periods(conn)
+        summary["الفترات المُغلقة"] = 3
+
+        if progress_callback:
+            progress_callback("🔒 إغلاق الحسابات...")
+        seed_closing_logs(conn, code_to_id)
+        summary["إغلاق الحسابات"] = "سنة 2025"
+
+        if progress_callback:
+            progress_callback("💱 تقييم العملات...")
+        seed_currency_revaluations(conn, code_to_id)
+        summary["تقييم العملات"] = 3
+
+        if progress_callback:
+            progress_callback("📦 أرصدة المخزون الافتتاحية...")
+        seed_opening_inventory(conn)
+        summary["أرصدة المخزون الافتتاحية"] = 30
+
+        if progress_callback:
+            progress_callback("📎 المرفقات...")
+        seed_attachments(conn)
+        summary["المرفقات"] = 15
 
         if progress_callback:
             progress_callback("📋 سجل التدقيق...")
