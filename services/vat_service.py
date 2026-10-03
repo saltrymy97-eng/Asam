@@ -1,560 +1,590 @@
-# services/vat_service.py – وحدة إدارة ضريبة القيمة المضافة (v3.1)
-# ✅ Registry + conn=None + إصلاح account_name + دفع الضريبة مع vouchers
-# ✅ v3.1: تمرير payment_account_id للتمييز بين البنوك بنفس account_code
-import sqlite3
-from datetime import date
+# ui/vat_ui.py – واجهة إدارة ضريبة القيمة المضافة (v3.3)
+# ✅ v3.3:
+#   - تمرير payment_account_id لدقة السحب من البنك المحدد
+#   - إصلاح تكرار المدفوعات (Subquery بدل JOIN)
+#   - إصلاح None في حقل التاريخ
+import streamlit as st
+from datetime import date, datetime
+import pandas as pd
+from services.vat_service import (
+    create_vat_table,
+    get_vat_rate,
+    update_vat_rate,
+    calculate_vat,
+    calculate_reverse_vat,
+    get_vat_report,
+    get_tax_return_report,
+    get_vat_history,
+    pay_vat,
+)
+from services.expenses_service import get_payment_accounts
 from database import get_connection, close_connection
-from services.chart_service import get_functional_account
-from services.accounting_service import save_journal_entry
-from services.audit_service import log_action
 
 
-def create_vat_table(conn=None):
-    """إنشاء وتحديث جدول إعدادات الضريبة بأمان"""
-    own_conn = False
-    if conn is None:
-        conn = get_connection()
-        own_conn = True
+# ========== ألوان ==========
+T = "#F8FAFC"
+S = "#CBD5E1"
+BL = "#3B82F6"
+GR = "#10B981"
+OR = "#F59E0B"
+RD = "#EF4444"
+PR = "#8B5CF6"
+CY = "#06B6D4"
+
+
+def h1(title, color=PR):
+    st.markdown(f"""<div style="text-align:right;margin-bottom:2rem;">
+        <h1 style="color:{T};font-size:2.8rem;margin:0;text-shadow:0 0 20px {color};">{title}</h1>
+        <p style="color:{S};font-size:1.2rem;">إدارة ضريبة القيمة المضافة والتقارير</p>
+    </div>""", unsafe_allow_html=True)
+
+
+def h3(title, color=BL):
+    st.markdown(f"""<h3 style="color:{color};text-align:right;margin-bottom:1rem;">{title}</h3>""",
+                unsafe_allow_html=True)
+
+
+def glass(content):
+    st.markdown(
+        f"""<div style="background:rgba(255,255,255,0.12);backdrop-filter:blur(10px);
+        border:1px solid rgba(255,255,255,0.25);border-radius:16px;padding:1.5rem;
+        margin:1rem 0;box-shadow:0 8px 32px rgba(0,0,0,0.37);color:{T};font-size:1.1rem;">
+        {content}</div>""",
+        unsafe_allow_html=True
+    )
+
+
+def kpi_card(icon, title, value, color):
+    return f"""<div style="background:rgba(255,255,255,0.10);backdrop-filter:blur(12px);
+        border:1px solid rgba(255,255,255,0.20);border-radius:16px;padding:1.2rem;
+        text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.37);margin-bottom:0.8rem;">
+        <div style="font-size:2rem;margin-bottom:0.3rem;">{icon}</div>
+        <div style="color:{S};font-size:0.8rem;">{title}</div>
+        <div style="color:{color};font-size:1.6rem;font-weight:800;">{value}</div>
+    </div>"""
+
+
+def _format_account_label(acc):
+    """تنسيق عرض الحساب مع الرصيد والنوع"""
+    icon = "💵" if acc["type"] == "cash" else "🏦"
+    return (
+        f"{icon} {acc['name']} ({acc['currency']}) — "
+        f"الرصيد: {acc['balance']:,.2f}"
+    )
+
+
+# ============================================================
+# ✅ جلب سجل مدفوعات الضريبة (بدون تكرار)
+# ============================================================
+def _get_vat_payments(limit=50):
+    """جلب سجل مدفوعات الضريبة من جدول vouchers (بدون تكرار)"""
+    conn = get_connection()
     try:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS vat_config (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT DEFAULT 'ضريبة القيمة المضافة',
-                rate REAL NOT NULL DEFAULT 0.15,
-                is_active INTEGER DEFAULT 1 CHECK(is_active IN (0,1)),
-                created_at TEXT
-            )
-        """)
-
-        columns = [row[1] for row in conn.execute(
-            "PRAGMA table_info(vat_config)"
-        ).fetchall()]
-
-        if 'name' not in columns:
-            try:
-                conn.execute(
-                    "ALTER TABLE vat_config ADD COLUMN name TEXT "
-                    "DEFAULT 'ضريبة القيمة المضافة'"
-                )
-            except sqlite3.OperationalError:
-                pass
-
-        if 'created_at' not in columns:
-            try:
-                conn.execute("ALTER TABLE vat_config ADD COLUMN created_at TEXT")
-            except sqlite3.OperationalError:
-                pass
-
-        count = conn.execute("SELECT COUNT(*) FROM vat_config").fetchone()[0]
-        if count == 0:
-            conn.execute(
-                "INSERT INTO vat_config (name, rate, is_active) "
-                "VALUES ('ضريبة القيمة المضافة', 0.15, 1)"
-            )
-
-        if own_conn:
-            conn.commit()
-    except Exception:
-        if own_conn:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-    finally:
-        if own_conn:
-            close_connection(conn)
-
-
-# ========== إعدادات ونسب الضريبة ==========
-
-def get_vat_rate(conn=None):
-    """جلب نسبة الضريبة الحالية المفعلة"""
-    own_conn = False
-    if conn is None:
-        conn = get_connection()
-        own_conn = True
-    try:
-        row = conn.execute(
-            "SELECT rate FROM vat_config WHERE is_active = 1 "
-            "ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        return row["rate"] if row else 0.15
-    except Exception:
-        return 0.15
-    finally:
-        if own_conn:
-            close_connection(conn)
-
-
-def update_vat_rate(new_rate, name="ضريبة القيمة المضافة", conn=None):
-    """تحديث نسبة الضريبة وأرشفة النسب القديمة"""
-    own_conn = False
-    if conn is None:
-        conn = get_connection()
-        own_conn = True
-    try:
-        if own_conn:
-            conn.execute("BEGIN")
-        conn.execute("UPDATE vat_config SET is_active = 0")
-        conn.execute(
-            "INSERT INTO vat_config (name, rate, is_active) VALUES (?, ?, 1)",
-            (name, new_rate)
-        )
-        if own_conn:
-            conn.commit()
-
-        log_action(
-            username="admin",
-            action="تحديث نسبة الضريبة",
-            table_name="vat_config",
-            new_value=f"النسبة الجديدة: {new_rate * 100}%"
-        )
-        return True, "تم تحديث نسبة الضريبة بنجاح"
-    except Exception as e:
-        if own_conn:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-        return False, str(e)
-    finally:
-        if own_conn:
-            close_connection(conn)
-
-
-def get_vat_history(conn=None):
-    """جلب سجل تغييرات نسب الضريبة"""
-    own_conn = False
-    if conn is None:
-        conn = get_connection()
-        own_conn = True
-    try:
-        rows = conn.execute(
-            "SELECT * FROM vat_config ORDER BY id DESC LIMIT 20"
-        ).fetchall()
+        rows = conn.execute("""
+            SELECT 
+                v.id,
+                v.date,
+                v.amount,
+                v.account,
+                v.reference,
+                v.notes,
+                v.created_by,
+                v.created_at,
+                je.description AS entry_description,
+                COALESCE(
+                    (SELECT ba.bank_name FROM bank_accounts ba
+                     WHERE ba.account_code = v.account AND ba.is_active = 1
+                     LIMIT 1),
+                    (SELECT ca.name FROM cash_accounts ca
+                     WHERE ca.account_code = v.account AND ca.is_active = 1
+                     LIMIT 1),
+                    v.account
+                ) AS payment_source,
+                CASE
+                    WHEN EXISTS (SELECT 1 FROM bank_accounts ba
+                                 WHERE ba.account_code = v.account AND ba.is_active = 1)
+                        THEN 'bank'
+                    WHEN EXISTS (SELECT 1 FROM cash_accounts ca
+                                 WHERE ca.account_code = v.account AND ca.is_active = 1)
+                        THEN 'cash'
+                    ELSE 'other'
+                END AS source_type
+            FROM vouchers v
+            LEFT JOIN journal_entries je ON v.journal_entry_id = je.id
+            WHERE v.type = 'payment'
+              AND v.party_type = 'tax_authority'
+            ORDER BY v.id DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
         return [dict(r) for r in rows]
-    except Exception:
+    except Exception as e:
+        print(f"Error fetching VAT payments: {e}")
         return []
     finally:
-        if own_conn:
-            close_connection(conn)
+        close_connection(conn)
 
 
-# ========== الحسابات ==========
+def show():
+    create_vat_table()
+    h1("🧾 ضريبة القيمة المضافة (VAT)")
 
-def calculate_vat(amount, rate=None):
-    """حساب قيمة الضريبة لمبلغ صافي"""
-    if rate is None:
-        rate = get_vat_rate()
-    return round(amount * rate, 2)
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "⚙️ الإعدادات",
+        "🧮 حاسبة الضريبة",
+        "🔄 الضريبة العكسية",
+        "💳 دفع الضريبة",
+        "📊 التقارير",
+    ])
 
+    # ============================================================
+    # تبويب 1: الإعدادات
+    # ============================================================
+    with tab1:
+        h3("إعدادات الضريبة", BL)
+        current_rate = get_vat_rate()
 
-def calculate_reverse_vat(total_amount, rate=None):
-    """احتساب المبلغ قبل الضريبة وقيمة الضريبة من المبلغ الإجمالي"""
-    if rate is None:
-        rate = get_vat_rate()
-    before_vat = round(total_amount / (1 + rate), 2)
-    vat_amount = round(total_amount - before_vat, 2)
-    return before_vat, vat_amount
-
-
-# ========== تقارير الضريبة ==========
-
-def get_vat_report(start_date=None, end_date=None, conn=None):
-    """تقرير ملخص الضريبة لفترة محددة"""
-    own_conn = False
-    if conn is None:
-        conn = get_connection()
-        own_conn = True
-    try:
-        date_clause = ""
-        params = []
-        if start_date and end_date:
-            date_clause = " AND invoice_date BETWEEN ? AND ?"
-            params = [start_date, end_date]
-
-        sales = conn.execute(
-            f"SELECT COALESCE(SUM(total), 0), COALESCE(SUM(vat_amount), 0) "
-            f"FROM invoices WHERE type='sale' AND status='completed'{date_clause}",
-            params
-        ).fetchone()
-
-        purchases = conn.execute(
-            f"SELECT COALESCE(SUM(total), 0), COALESCE(SUM(vat_amount), 0) "
-            f"FROM invoices WHERE type='purchase' AND status='completed'{date_clause}",
-            params
-        ).fetchone()
-
-        total_sales = sales[0]
-        output_vat = sales[1]
-        total_purchases = purchases[0]
-        input_vat = purchases[1]
-        net_vat = round(output_vat - input_vat, 2)
-
-        return {
-            "rate": get_vat_rate(conn=conn),
-            "total_sales": total_sales,
-            "total_purchases": total_purchases,
-            "output_vat": output_vat,
-            "input_vat": input_vat,
-            "net_vat": net_vat,
-        }
-    finally:
-        if own_conn:
-            close_connection(conn)
-
-
-def get_tax_return_report(start_date=None, end_date=None, conn=None):
-    """تقرير الإقرار الضريبي التفصيلي"""
-    own_conn = False
-    if conn is None:
-        conn = get_connection()
-        own_conn = True
-    try:
-        date_clause = ""
-        params = []
-        if start_date and end_date:
-            date_clause = " AND invoice_date BETWEEN ? AND ?"
-            params = [start_date, end_date]
-
-        sales_data = conn.execute(
-            f"SELECT COALESCE(SUM(vat_amount),0), "
-            f"COALESCE(SUM(total - vat_amount),0) "
-            f"FROM invoices WHERE type='sale' AND status='completed'{date_clause}",
-            params
-        ).fetchone()
-
-        purchases_data = conn.execute(
-            f"SELECT COALESCE(SUM(vat_amount),0), "
-            f"COALESCE(SUM(total - vat_amount),0) "
-            f"FROM invoices WHERE type='purchase' AND status='completed'{date_clause}",
-            params
-        ).fetchone()
-
-        invoices = conn.execute(
-            f"SELECT id, type, invoice_date, total, vat_amount, vat_rate, "
-            f"COALESCE(reference, CAST(id AS TEXT)) AS invoice_number "
-            f"FROM invoices WHERE status='completed'{date_clause} "
-            f"ORDER BY invoice_date DESC",
-            params
-        ).fetchall()
-
-        output_vat = sales_data[0]
-        input_vat = purchases_data[0]
-        net_vat = round(output_vat - input_vat, 2)
-
-        return {
-            "rate": get_vat_rate(conn=conn),
-            "total_output_vat": output_vat,
-            "total_input_vat": input_vat,
-            "net_vat": net_vat,
-            "sales_before_tax": sales_data[1],
-            "purchases_before_tax": purchases_data[1],
-            "invoices": [dict(inv) for inv in invoices],
-        }
-    finally:
-        if own_conn:
-            close_connection(conn)
-
-
-# ============================================================
-# تسوية الضريبة
-# ============================================================
-def post_vat_settlement_entry(settlement_date, start_date, end_date,
-                               description="تسوية وإقفال ضريبة القيمة المضافة للفترة",
-                               conn=None):
-    """توليد قيد تسوية آلي لإقفال حسابات الضريبة"""
-    report = get_vat_report(start_date, end_date, conn=conn)
-    output_vat = report['output_vat']
-    input_vat = report['input_vat']
-    net_vat = report['net_vat']
-
-    if output_vat == 0 and input_vat == 0:
-        return False, "لا توجد مبالغ ضريبية مستحقة للتسوية خلال هذه الفترة"
-
-    vat_output_acc = get_functional_account("sales_tax")
-    vat_input_acc = get_functional_account("purchase_tax")
-    vat_payable_acc = get_functional_account("sales_tax")
-
-    lines = [
-        {
-            "account": vat_output_acc,
-            "debit": output_vat,
-            "credit": 0.0,
-            "currency_code": "YER",
-            "exchange_rate": 1.0,
-        },
-        {
-            "account": vat_input_acc,
-            "debit": 0.0,
-            "credit": input_vat,
-            "currency_code": "YER",
-            "exchange_rate": 1.0,
-        },
-    ]
-
-    if net_vat > 0:
-        lines.append({
-            "account": vat_payable_acc,
-            "debit": 0.0,
-            "credit": net_vat,
-            "currency_code": "YER",
-            "exchange_rate": 1.0,
-        })
-    elif net_vat < 0:
-        lines.append({
-            "account": vat_payable_acc,
-            "debit": abs(net_vat),
-            "credit": 0.0,
-            "currency_code": "YER",
-            "exchange_rate": 1.0,
-        })
-
-    own_conn = False
-    if conn is None:
-        conn = get_connection()
-        own_conn = True
-
-    try:
-        journal_id, err = save_journal_entry(
-            entry_date=settlement_date,
-            description=f"{description} ({start_date} إلى {end_date})",
-            lines=lines,
-            conn=conn,
-        )
-        if err:
-            return False, f"فشل القيد: {err}"
-
-        if own_conn:
-            conn.commit()
-
-        log_action(
-            username="admin",
-            action="إصدار قيد تسوية الضريبة",
-            table_name="journal_entries",
-            record_id=journal_id,
-            new_value=f"رقم القيد: {journal_id}, الصافي: {net_vat}"
-        )
-        return True, f"تم إنشاء قيد التسوية الضريبية بنجاح برقم قيد: {journal_id}"
-    except Exception as e:
-        if own_conn:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-        return False, str(e)
-    finally:
-        if own_conn:
-            close_connection(conn)
-
-
-# ============================================================
-# ✅ v3.1: دفع الضريبة من بنك/صندوق محدد (مع payment_account_id)
-# ============================================================
-def pay_vat(amount, payment_date, payment_account_code, payment_method="bank",
-            reference="", notes="", created_by="admin", conn=None,
-            payment_account_id=None):
-    """
-    تسجيل دفع الضريبة لجهة الضرائب.
-    
-    ✅ v3.1: 
-      - يُسجّل voucher كامل مع notes + reference
-      - يستخدم payment_account_id للتمييز بين البنوك بنفس account_code
-    
-    Args:
-        payment_account_id: معرف البنك/الصندوق المحدد (id في bank_accounts أو cash_accounts)
-                            إذا مرَّر → يُستخدم مباشرة
-                            إذا None → fallback للبحث بـ account_code (قد يُخطئ مع تعدد البنوك)
-    """
-    amount = float(amount)
-    if amount <= 0:
-        return None, "المبلغ يجب أن يكون أكبر من صفر"
-
-    if payment_method not in ('cash', 'bank'):
-        return None, "طريقة الدفع يجب أن تكون cash أو bank"
-
-    # ✅ فحص الرصيد
-    from services.cash_service import check_sufficient_balance
-    ok, err = check_sufficient_balance(payment_account_code, amount, conn=conn)
-    if not ok:
-        return None, f"لا يمكن دفع الضريبة: {err}"
-
-    own_conn = False
-    if conn is None:
-        conn = get_connection()
-        own_conn = True
-
-    try:
-        if own_conn:
-            conn.execute("BEGIN")
-
-        vat_payable_acc = get_functional_account("sales_tax")
-        if not vat_payable_acc:
-            raise Exception("حساب ضريبة المخرجات (sales_tax) غير معرف")
-
-        # القيد: مدين الضريبة / دائن صندوق أو بنك
-        lines = [
-            {
-                "account": vat_payable_acc,
-                "debit": amount,
-                "credit": 0.0,
-                "currency_code": "YER",
-                "exchange_rate": 1.0,
-            },
-            {
-                "account": payment_account_code,
-                "debit": 0.0,
-                "credit": amount,
-                "currency_code": "YER",
-                "exchange_rate": 1.0,
-            },
-        ]
-
-        journal_id, err = save_journal_entry(
-            entry_date=payment_date,
-            description=f"دفع ضريبة القيمة المضافة - {reference}",
-            lines=lines,
-            conn=conn,
-        )
-        if err:
-            raise Exception(f"فشل القيد: {err}")
-
-        # ============================================================
-        # تسجيل سند صرف كامل مع notes
-        # ============================================================
-        voucher_id = None
-        try:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS vouchers (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    type TEXT NOT NULL,
-                    date TEXT NOT NULL,
-                    party_type TEXT NOT NULL,
-                    party_id INTEGER,
-                    amount REAL NOT NULL,
-                    account TEXT NOT NULL,
-                    invoice_id INTEGER,
-                    journal_entry_id INTEGER,
-                    reference TEXT,
-                    notes TEXT,
-                    created_by TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-
-            cur = conn.execute("""
-                INSERT INTO vouchers
-                (type, date, party_type, party_id, amount, account,
-                 journal_entry_id, reference, notes, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                'payment',
-                payment_date,
-                'tax_authority',
-                None,
-                amount,
-                payment_account_code,
-                journal_id,
-                reference or "دفع ضريبة القيمة المضافة",
-                notes or "",
-                created_by,
-            ))
-            voucher_id = cur.lastrowid
-        except Exception as e:
-            print(f"⚠️ فشل تسجيل سند الضريبة: {e}")
-
-        # ============================================================
-        # ✅ v3.1: تسجيل الحركة في الصندوق المحدد بالـ id
-        # ============================================================
-        if payment_method == 'cash':
-            try:
-                from services.cash_service import add_cash_transaction
-
-                # ✅ أولوية لـ id المحدد
-                if payment_account_id:
-                    acc_row = conn.execute(
-                        "SELECT id FROM cash_accounts "
-                        "WHERE id=? AND is_active=1 LIMIT 1",
-                        (payment_account_id,)
-                    ).fetchone()
-                else:
-                    acc_row = conn.execute(
-                        "SELECT id FROM cash_accounts "
-                        "WHERE account_code=? AND is_active=1 LIMIT 1",
-                        (payment_account_code,)
-                    ).fetchone()
-
-                if acc_row:
-                    add_cash_transaction(
-                        acc_row['id'], payment_date,
-                        f"دفع ضريبة - {reference}",
-                        'withdrawal', amount,
-                        reference=f"vat_payment#{journal_id}",
-                        create_journal=False,
-                        voucher_id=voucher_id,
-                        conn=conn,
-                        skip_balance_check=True,
-                    )
-            except Exception as e:
-                print(f"⚠️ فشل تسجيل حركة الصندوق: {e}")
-
-        # ============================================================
-        # ✅ v3.1: تسجيل الحركة في البنك المحدد بالـ id
-        # ============================================================
-        elif payment_method == 'bank':
-            try:
-                from services.bank_service import add_bank_transaction
-
-                # ✅ أولوية لـ id المحدد
-                if payment_account_id:
-                    acc_row = conn.execute(
-                        "SELECT id FROM bank_accounts "
-                        "WHERE id=? AND is_active=1 LIMIT 1",
-                        (payment_account_id,)
-                    ).fetchone()
-                else:
-                    acc_row = conn.execute(
-                        "SELECT id FROM bank_accounts "
-                        "WHERE account_code=? AND is_active=1 LIMIT 1",
-                        (payment_account_code,)
-                    ).fetchone()
-
-                if acc_row:
-                    add_bank_transaction(
-                        acc_row['id'], payment_date,
-                        f"دفع ضريبة - {reference}",
-                        'withdrawal', amount,
-                        reference=f"vat_payment#{journal_id}",
-                        conn=conn,
-                        skip_balance_check=True,
-                    )
-            except Exception as e:
-                print(f"⚠️ فشل تسجيل حركة البنك: {e}")
-
-        if own_conn:
-            conn.commit()
-
-        log_action(
-            username=created_by,
-            action="دفع ضريبة القيمة المضافة",
-            table_name="journal_entries",
-            record_id=journal_id,
-            new_value=(
-                f"المبلغ: {amount:,.2f} من {payment_account_code} | "
-                f"معرف الحساب: {payment_account_id} | "
-                f"ملاحظات: {notes or '—'}"
+        col1, col2 = st.columns(2)
+        with col1:
+            glass(
+                f'النسبة الحالية: '
+                f'<span style="color:{GR};font-weight:800;">{current_rate * 100:.0f}%</span>'
             )
+        with col2:
+            new_rate = st.number_input(
+                "تحديث النسبة (%)",
+                min_value=0.0, max_value=100.0,
+                value=current_rate * 100, step=0.5
+            ) / 100
+            if st.button("💾 تحديث النسبة", type="primary"):
+                update_vat_rate(new_rate)
+                st.success(f"✅ تم تحديث نسبة الضريبة إلى {new_rate * 100:.0f}%")
+                st.rerun()
+
+        st.markdown("---")
+        h3("سجل التغييرات", PR)
+
+        history = get_vat_history()
+        if history:
+            df = pd.DataFrame(history)
+
+            if 'name' not in df.columns:
+                df['name'] = 'ضريبة القيمة المضافة'
+
+            # ✅ إصلاح None في created_at
+            if 'created_at' in df.columns:
+                df['created_at'] = df['created_at'].apply(
+                    lambda x: x if (x and str(x).strip() and str(x).lower() != 'none')
+                    else "—"
+                )
+            else:
+                df['created_at'] = "—"
+
+            df = df.rename(columns={
+                "name": "الاسم",
+                "rate": "النسبة",
+                "is_active": "نشط",
+                "created_at": "التاريخ",
+            })
+
+            df["النسبة"] = df["النسبة"].apply(
+                lambda x: f"{x * 100:.0f}%" if pd.notna(x) else "—"
+            )
+            df["نشط"] = df["نشط"].apply(lambda x: "✅" if x else "❌")
+
+            cols_to_show = [c for c in ["الاسم", "النسبة", "نشط", "التاريخ"]
+                            if c in df.columns]
+
+            st.dataframe(
+                df[cols_to_show],
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("لا توجد تغييرات سابقة")
+
+    # ============================================================
+    # تبويب 2: حاسبة الضريبة
+    # ============================================================
+    with tab2:
+        h3("حساب الضريبة على مبلغ", CY)
+        amount = st.number_input("المبلغ (قبل الضريبة)", min_value=0.0, step=100.0)
+        if st.button("🧮 احسب الضريبة"):
+            vat_amount = calculate_vat(amount)
+            total = amount + vat_amount
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown(kpi_card("💰", "المبلغ الأساسي", f"{amount:,.2f}", BL),
+                            unsafe_allow_html=True)
+            with col2:
+                st.markdown(kpi_card("🧾", "قيمة الضريبة", f"{vat_amount:,.2f}", OR),
+                            unsafe_allow_html=True)
+            with col3:
+                st.markdown(kpi_card("💎", "الإجمالي", f"{total:,.2f}", GR),
+                            unsafe_allow_html=True)
+
+    # ============================================================
+    # تبويب 3: الضريبة العكسية
+    # ============================================================
+    with tab3:
+        h3("الضريبة العكسية", CY)
+        total_amount = st.number_input("المبلغ الإجمالي (شامل الضريبة)",
+                                        min_value=0.0, step=100.0)
+        if st.button("🔍 احسب الضريبة العكسية"):
+            before_tax, vat_amt = calculate_reverse_vat(total_amount)
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown(
+                    kpi_card("💎", "الإجمالي (شامل الضريبة)",
+                             f"{total_amount:,.2f}", BL),
+                    unsafe_allow_html=True
+                )
+            with col2:
+                st.markdown(
+                    kpi_card("📋", "المبلغ قبل الضريبة",
+                             f"{before_tax:,.2f}", GR),
+                    unsafe_allow_html=True
+                )
+            with col3:
+                st.markdown(
+                    kpi_card("🧾", "قيمة الضريبة",
+                             f"{vat_amt:,.2f}", OR),
+                    unsafe_allow_html=True
+                )
+
+    # ============================================================
+    # تبويب 4: دفع الضريبة
+    # ============================================================
+    with tab4:
+        h3("💳 دفع الضريبة لجهة الضرائب", OR)
+
+        st.markdown("### 📊 ملخص الضريبة المستحقة")
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            pay_start = st.date_input(
+                "من تاريخ (لفحص المستحقات)",
+                value=date.today().replace(day=1),
+                key="vat_pay_start"
+            )
+        with col_b:
+            pay_end = st.date_input(
+                "إلى تاريخ",
+                value=date.today(),
+                key="vat_pay_end"
+            )
+
+        vat_report = get_vat_report(
+            pay_start.strftime("%Y-%m-%d"),
+            pay_end.strftime("%Y-%m-%d"),
         )
 
-        return journal_id, None
+        net_vat = vat_report.get('net_vat', 0)
 
-    except Exception as e:
-        if own_conn:
+        if net_vat > 0:
+            st.warning(
+                f"⚠️ **ضريبة مستحقة الدفع:** {net_vat:,.2f}\n\n"
+                f"ضريبة المخرجات: {vat_report.get('output_vat', 0):,.2f}\n\n"
+                f"ضريبة المدخلات: {vat_report.get('input_vat', 0):,.2f}"
+            )
+        elif net_vat < 0:
+            st.info(f"ℹ️ **رصيد ضريبي دائن:** {abs(net_vat):,.2f} — لا داعي للدفع")
+        else:
+            st.info("✅ لا يوجد مستحقات ضريبية في الفترة")
+
+        st.markdown("---")
+        st.markdown("### 📝 تسجيل دفع الضريبة")
+
+        payment_choice = st.radio(
+            "من أي حساب سيتم الدفع؟",
+            ["بنكي (تحويل)", "نقدي (من صندوق)"],
+            horizontal=True,
+            key="vat_payment_method"
+        )
+
+        all_accounts = get_payment_accounts()
+
+        if "بنكي" in payment_choice:
+            filtered = [a for a in all_accounts if a["type"] == "bank"]
+            payment_method = "bank"
+            if not filtered:
+                st.error("⚠️ لا يوجد حساب بنكي نشط.")
+                return
+        else:
+            filtered = [a for a in all_accounts if a["type"] == "cash"]
+            payment_method = "cash"
+            if not filtered:
+                st.error("⚠️ لا يوجد صندوق نشط.")
+                return
+
+        labels = [_format_account_label(a) for a in filtered]
+        selected_label = st.selectbox(
+            "اختر الحساب",
+            labels,
+            key="vat_account_sel"
+        )
+        idx = labels.index(selected_label)
+        selected_acc = filtered[idx]
+        payment_account_code = selected_acc["code"]
+        # ✅ v3.3: استخراج id الحساب المحدد
+        payment_account_id = selected_acc.get("id")
+
+        default_amount = max(0.0, float(net_vat))
+        amount_to_pay = st.number_input(
+            "المبلغ المراد دفعه",
+            min_value=0.0,
+            step=100.0,
+            value=default_amount,
+            key="vat_pay_amount"
+        )
+
+        pay_date = st.date_input(
+            "تاريخ الدفع",
+            value=date.today(),
+            key="vat_pay_date"
+        )
+
+        reference = st.text_input(
+            "المرجع (رقم إشعار الدفع)",
+            key="vat_pay_reference"
+        )
+
+        notes = st.text_area("ملاحظات", key="vat_pay_notes")
+
+        balance_ok = True
+        if amount_to_pay > 0:
+            if amount_to_pay > selected_acc["balance"]:
+                st.error(
+                    f"⚠️ **الرصيد غير كافٍ**\n\n"
+                    f"المتاح في **{selected_acc['name']}**: "
+                    f"**{selected_acc['balance']:,.2f}** {selected_acc['currency']}\n\n"
+                    f"المطلوب: **{amount_to_pay:,.2f}** {selected_acc['currency']}\n\n"
+                    f"❌ لن تتم العملية"
+                )
+                balance_ok = False
+            else:
+                st.info(
+                    f"✅ الرصيد كافٍ — سيتبقى "
+                    f"**{selected_acc['balance'] - amount_to_pay:,.2f}** "
+                    f"{selected_acc['currency']}"
+                )
+
+        if "saving_vat_payment" not in st.session_state:
+            st.session_state.saving_vat_payment = False
+
+        can_save = (
+            not st.session_state.saving_vat_payment
+            and balance_ok
+            and amount_to_pay > 0
+        )
+
+        if st.button(
+            "💳 تسجيل دفع الضريبة",
+            type="primary",
+            use_container_width=True,
+            disabled=not can_save,
+            key="pay_vat_btn"
+        ):
+            st.session_state.saving_vat_payment = True
+            st.rerun()
+
+        if st.session_state.saving_vat_payment:
             try:
-                conn.rollback()
-            except Exception:
-                pass
-        return None, str(e)
-    finally:
-        if own_conn:
-            close_connection(conn)
+                # ✅ v3.3: تمرير payment_account_id
+                journal_id, err = pay_vat(
+                    amount=amount_to_pay,
+                    payment_date=pay_date.strftime("%Y-%m-%d"),
+                    payment_account_code=payment_account_code,
+                    payment_method=payment_method,
+                    reference=reference,
+                    notes=notes,
+                    created_by=st.session_state.user.get('username', 'admin'),
+                    payment_account_id=payment_account_id,
+                )
+                if err:
+                    st.error(f"❌ فشل: {err}")
+                else:
+                    st.success(
+                        f"✅ تم تسجيل دفع الضريبة بنجاح — "
+                        f"رقم القيد: {journal_id}"
+                    )
+            except Exception as e:
+                st.error(f"❌ خطأ غير متوقع: {e}")
+            finally:
+                st.session_state.saving_vat_payment = False
+                st.rerun()
+
+        st.markdown("---")
+        st.markdown("### 📋 سجل مدفوعات الضريبة")
+
+        payments = _get_vat_payments(limit=100)
+
+        if payments:
+            df_pay = pd.DataFrame(payments)
+
+            df_pay["source_icon"] = df_pay["source_type"].apply(
+                lambda x: "💵" if x == "cash" else ("🏦" if x == "bank" else "📌")
+            )
+            df_pay["المصدر"] = df_pay["source_icon"] + " " + df_pay["payment_source"].fillna("—")
+            df_pay["النوع"] = df_pay["source_type"].apply(
+                lambda x: "نقدي" if x == "cash" else ("بنكي" if x == "bank" else "أخرى")
+            )
+
+            df_display = df_pay.rename(columns={
+                "id": "الرقم",
+                "date": "التاريخ",
+                "amount": "المبلغ",
+                "reference": "المرجع",
+                "notes": "الملاحظات",
+                "created_by": "بواسطة",
+            })
+
+            total_paid = df_pay["amount"].sum()
+            st.markdown(
+                f"<div style='background:rgba(16,185,129,0.15); "
+                f"padding:0.75rem; border-radius:8px; text-align:right; "
+                f"color:{T};'>"
+                f"💰 **إجمالي المدفوعات:** {total_paid:,.2f} "
+                f"| **عدد الدفعات:** {len(payments)}"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+
+            cols = ["الرقم", "التاريخ", "المبلغ", "النوع",
+                    "المصدر", "المرجع", "الملاحظات", "بواسطة"]
+            cols = [c for c in cols if c in df_display.columns]
+
+            st.dataframe(
+                df_display[cols],
+                use_container_width=True,
+                hide_index=True
+            )
+
+            notes_payments = df_pay[
+                df_pay["notes"].notna() & (df_pay["notes"] != "")
+            ]
+            if not notes_payments.empty:
+                with st.expander(f"📝 عرض الملاحظات التفصيلية ({len(notes_payments)} دفعة)"):
+                    for _, row in notes_payments.iterrows():
+                        st.markdown(f"""
+                        <div style="background:rgba(255,255,255,0.05);
+                                    border-right:3px solid {CY};
+                                    border-radius:8px; padding:10px 15px;
+                                    margin:8px 0; text-align:right;">
+                            <div style="color:{S}; font-size:0.85rem;">
+                                💳 دفعة #{row['id']} — {row['date']}
+                            </div>
+                            <div style="color:{T}; margin-top:5px;">
+                                <b>المبلغ:</b> {row['amount']:,.2f} |
+                                <b>المرجع:</b> {row['reference'] or '—'}
+                            </div>
+                            <div style="color:{CY}; margin-top:8px; font-size:1rem;">
+                                📝 {row['notes']}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+        else:
+            st.info("لا توجد مدفوعات ضريبية مسجلة بعد")
+
+    # ============================================================
+    # تبويب 5: التقارير
+    # ============================================================
+    with tab5:
+        h3("تقارير الضريبة", PR)
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input("من تاريخ",
+                                        value=date.today().replace(day=1))
+        with col2:
+            end_date = st.date_input("إلى تاريخ", value=date.today())
+
+        colA, colB = st.columns(2)
+        with colA:
+            if st.button("📊 عرض تقرير الملخص"):
+                report = get_vat_report(
+                    start_date.strftime("%Y-%m-%d") if start_date else None,
+                    end_date.strftime("%Y-%m-%d") if end_date else None,
+                )
+                glass(
+                    f'نسبة الضريبة المعتمدة: '
+                    f'<span style="color:{GR};font-weight:800;">'
+                    f'{report["rate"] * 100:.0f}%</span>'
+                )
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.markdown(
+                        kpi_card("🛒", "إجمالي المبيعات",
+                                 f"{report['total_sales']:,.2f}", BL),
+                        unsafe_allow_html=True
+                    )
+                with col2:
+                    st.markdown(
+                        kpi_card("📤", "ضريبة المخرجات",
+                                 f"{report['output_vat']:,.2f}", RD),
+                        unsafe_allow_html=True
+                    )
+                with col3:
+                    st.markdown(
+                        kpi_card("📥", "ضريبة المدخلات",
+                                 f"{report['input_vat']:,.2f}", OR),
+                        unsafe_allow_html=True
+                    )
+                with col4:
+                    st.markdown(
+                        kpi_card("💎", "صافي الضريبة",
+                                 f"{report['net_vat']:,.2f}", GR),
+                        unsafe_allow_html=True
+                    )
+
+        with colB:
+            if st.button("📋 عرض تقرير الإقرار الضريبي"):
+                tax_return = get_tax_return_report(
+                    start_date.strftime("%Y-%m-%d") if start_date else None,
+                    end_date.strftime("%Y-%m-%d") if end_date else None,
+                )
+                glass(
+                    f'نسبة الضريبة المعتمدة: '
+                    f'<span style="color:{GR};font-weight:800;">'
+                    f'{tax_return["rate"] * 100:.0f}%</span>'
+                )
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.markdown(
+                        kpi_card("📤", "إجمالي ضريبة المخرجات",
+                                 f"{tax_return['total_output_vat']:,.2f}", RD),
+                        unsafe_allow_html=True
+                    )
+                with col2:
+                    st.markdown(
+                        kpi_card("📥", "إجمالي ضريبة المدخلات",
+                                 f"{tax_return['total_input_vat']:,.2f}", OR),
+                        unsafe_allow_html=True
+                    )
+                with col3:
+                    st.markdown(
+                        kpi_card("💎", "صافي الضريبة المستحقة",
+                                 f"{tax_return['net_vat']:,.2f}", GR),
+                        unsafe_allow_html=True
+                    )
+
+                if tax_return["invoices"]:
+                    st.markdown("---")
+                    st.markdown("**📋 تفاصيل الفواتير**")
+                    df_inv = pd.DataFrame(tax_return["invoices"])
+                    df_inv = df_inv.rename(columns={
+                        "id": "رقم الفاتورة", "type": "النوع",
+                        "invoice_date": "التاريخ", "total": "الإجمالي",
+                        "vat_amount": "الضريبة", "vat_rate": "النسبة",
+                    })
+                    df_inv["النوع"] = df_inv["النوع"].apply(
+                        lambda x: "بيع" if x == "sale" else "شراء"
+                    )
+                    df_inv["النسبة"] = df_inv["النسبة"].apply(
+                        lambda x: f"{x*100:.0f}%"
+                    )
+                    st.dataframe(
+                        df_inv[["رقم الفاتورة", "النوع", "التاريخ",
+                                "الإجمالي", "الضريبة", "النسبة"]],
+                        use_container_width=True, hide_index=True
+                    )
+                else:
+                    st.info("لا توجد فواتير في الفترة المحددة.")
