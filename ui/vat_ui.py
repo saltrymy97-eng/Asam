@@ -1,7 +1,7 @@
-# ui/vat_ui.py – واجهة إدارة ضريبة القيمة المضافة (v3.3)
-# ✅ v3.3:
-#   - تمرير payment_account_id لدقة السحب من البنك المحدد
-#   - إصلاح تكرار المدفوعات (Subquery بدل JOIN)
+# ui/vat_ui.py – واجهة إدارة ضريبة القيمة المضافة (v3.4)
+# ✅ v3.4: 
+#   - عرض البنك/الصندوق الصحيح لكل دفعة (من bank_transactions/cash_transactions)
+#   - إصلاح تكرار المدفوعات
 #   - إصلاح None في حقل التاريخ
 import streamlit as st
 from datetime import date, datetime
@@ -74,10 +74,15 @@ def _format_account_label(acc):
 
 
 # ============================================================
-# ✅ جلب سجل مدفوعات الضريبة (بدون تكرار)
+# ✅ v3.4: عرض البنك الصحيح لكل دفعة
 # ============================================================
 def _get_vat_payments(limit=50):
-    """جلب سجل مدفوعات الضريبة من جدول vouchers (بدون تكرار)"""
+    """
+    جلب سجل مدفوعات الضريبة مع تحديد البنك/الصندوق الفعلي.
+    
+    ✅ v3.4: نستخرج البنك من bank_transactions/cash_transactions 
+              باستخدام reference المشترك (vat_payment#{journal_id})
+    """
     conn = get_connection()
     try:
         rows = conn.execute("""
@@ -90,25 +95,34 @@ def _get_vat_payments(limit=50):
                 v.notes,
                 v.created_by,
                 v.created_at,
+                v.journal_entry_id,
                 je.description AS entry_description,
-                COALESCE(
-                    (SELECT ba.bank_name FROM bank_accounts ba
-                     WHERE ba.account_code = v.account AND ba.is_active = 1
-                     LIMIT 1),
-                    (SELECT ca.name FROM cash_accounts ca
-                     WHERE ca.account_code = v.account AND ca.is_active = 1
-                     LIMIT 1),
-                    v.account
-                ) AS payment_source,
+                
+                -- ✅ البحث في bank_transactions عن البنك الفعلي
+                (SELECT ba.bank_name
+                 FROM bank_transactions bt
+                 JOIN bank_accounts ba ON bt.bank_account_id = ba.id
+                 WHERE bt.reference = 'vat_payment#' || v.journal_entry_id
+                 LIMIT 1) AS bank_source,
+                
+                -- ✅ البحث في cash_transactions عن الصندوق الفعلي
+                (SELECT ca.name
+                 FROM cash_transactions ct
+                 JOIN cash_accounts ca ON ct.cash_account_id = ca.id
+                 WHERE ct.reference = 'vat_payment#' || v.journal_entry_id
+                 LIMIT 1) AS cash_source,
+                
+                -- ✅ نوع المصدر
                 CASE
-                    WHEN EXISTS (SELECT 1 FROM bank_accounts ba
-                                 WHERE ba.account_code = v.account AND ba.is_active = 1)
+                    WHEN EXISTS (SELECT 1 FROM bank_transactions bt
+                                 WHERE bt.reference = 'vat_payment#' || v.journal_entry_id)
                         THEN 'bank'
-                    WHEN EXISTS (SELECT 1 FROM cash_accounts ca
-                                 WHERE ca.account_code = v.account AND ca.is_active = 1)
+                    WHEN EXISTS (SELECT 1 FROM cash_transactions ct
+                                 WHERE ct.reference = 'vat_payment#' || v.journal_entry_id)
                         THEN 'cash'
                     ELSE 'other'
                 END AS source_type
+                
             FROM vouchers v
             LEFT JOIN journal_entries je ON v.journal_entry_id = je.id
             WHERE v.type = 'payment'
@@ -116,7 +130,23 @@ def _get_vat_payments(limit=50):
             ORDER BY v.id DESC
             LIMIT ?
         """, (limit,)).fetchall()
-        return [dict(r) for r in rows]
+
+        results = []
+        for r in rows:
+            row = dict(r)
+            # ✅ تحديد المصدر النهائي
+            if row.get("bank_source"):
+                row["payment_source"] = row["bank_source"]
+                row["source_type"] = "bank"
+            elif row.get("cash_source"):
+                row["payment_source"] = row["cash_source"]
+                row["source_type"] = "cash"
+            else:
+                row["payment_source"] = row.get("account") or "—"
+                row["source_type"] = "other"
+            results.append(row)
+
+        return results
     except Exception as e:
         print(f"Error fetching VAT payments: {e}")
         return []
@@ -170,7 +200,6 @@ def show():
             if 'name' not in df.columns:
                 df['name'] = 'ضريبة القيمة المضافة'
 
-            # ✅ إصلاح None في created_at
             if 'created_at' in df.columns:
                 df['created_at'] = df['created_at'].apply(
                     lambda x: x if (x and str(x).strip() and str(x).lower() != 'none')
@@ -325,7 +354,6 @@ def show():
         idx = labels.index(selected_label)
         selected_acc = filtered[idx]
         payment_account_code = selected_acc["code"]
-        # ✅ v3.3: استخراج id الحساب المحدد
         payment_account_id = selected_acc.get("id")
 
         default_amount = max(0.0, float(net_vat))
@@ -389,7 +417,6 @@ def show():
 
         if st.session_state.saving_vat_payment:
             try:
-                # ✅ v3.3: تمرير payment_account_id
                 journal_id, err = pay_vat(
                     amount=amount_to_pay,
                     payment_date=pay_date.strftime("%Y-%m-%d"),
