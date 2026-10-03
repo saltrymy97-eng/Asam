@@ -1,7 +1,10 @@
-# ui/vat_ui.py – واجهة إدارة ضريبة القيمة المضافة (v3.0)
-# ✅ تبويب دفع الضريبة + سجل المدفوعات مع الملاحظات
+# ui/vat_ui.py – واجهة إدارة ضريبة القيمة المضافة (v3.1)
+# ✅ v3.1: 
+#   - إصلاح تكرار مدفوعات الضريبة (Subquery بدل JOIN)
+#   - إصلاح None في حقل التاريخ بسجل التغييرات
+#   - تحسينات عامة
 import streamlit as st
-from datetime import date
+from datetime import date, datetime
 import pandas as pd
 from services.vat_service import (
     create_vat_table,
@@ -71,10 +74,10 @@ def _format_account_label(acc):
 
 
 # ============================================================
-# جلب سجل مدفوعات الضريبة
+# ✅ v3.1: إصلاح تكرار المدفوعات
 # ============================================================
 def _get_vat_payments(limit=50):
-    """جلب سجل مدفوعات الضريبة من جدول vouchers"""
+    """جلب سجل مدفوعات الضريبة من جدول vouchers (بدون تكرار)"""
     conn = get_connection()
     try:
         rows = conn.execute("""
@@ -88,20 +91,26 @@ def _get_vat_payments(limit=50):
                 v.created_by,
                 v.created_at,
                 je.description AS entry_description,
-                CASE 
-                    WHEN ba.id IS NOT NULL THEN ba.bank_name
-                    WHEN ca.id IS NOT NULL THEN ca.name
-                    ELSE v.account
-                END AS payment_source,
+                COALESCE(
+                    (SELECT ba.bank_name FROM bank_accounts ba
+                     WHERE ba.account_code = v.account AND ba.is_active = 1
+                     LIMIT 1),
+                    (SELECT ca.name FROM cash_accounts ca
+                     WHERE ca.account_code = v.account AND ca.is_active = 1
+                     LIMIT 1),
+                    v.account
+                ) AS payment_source,
                 CASE
-                    WHEN ba.id IS NOT NULL THEN 'bank'
-                    WHEN ca.id IS NOT NULL THEN 'cash'
+                    WHEN EXISTS (SELECT 1 FROM bank_accounts ba
+                                 WHERE ba.account_code = v.account AND ba.is_active = 1)
+                        THEN 'bank'
+                    WHEN EXISTS (SELECT 1 FROM cash_accounts ca
+                                 WHERE ca.account_code = v.account AND ca.is_active = 1)
+                        THEN 'cash'
                     ELSE 'other'
                 END AS source_type
             FROM vouchers v
             LEFT JOIN journal_entries je ON v.journal_entry_id = je.id
-            LEFT JOIN bank_accounts ba ON ba.account_code = v.account AND ba.is_active = 1
-            LEFT JOIN cash_accounts ca ON ca.account_code = v.account AND ca.is_active = 1
             WHERE v.type = 'payment'
               AND v.party_type = 'tax_authority'
             ORDER BY v.id DESC
@@ -153,19 +162,51 @@ def show():
 
         st.markdown("---")
         h3("سجل التغييرات", PR)
+
         history = get_vat_history()
         if history:
             df = pd.DataFrame(history)
+
+            # ✅ v3.1: إصلاح حقل "created_at" الفارغ
             if 'name' not in df.columns:
                 df['name'] = 'ضريبة القيمة المضافة'
+
+            # ✅ v3.1: إصلاح None في created_at
+            if 'created_at' in df.columns:
+                df['created_at'] = df['created_at'].apply(
+                    lambda x: x if (x and str(x).strip() and str(x).lower() != 'none')
+                    else "—"
+                )
+            else:
+                df['created_at'] = "—"
+
+            # ✅ v3.1: إعادة تسمية الأعمدة
             df = df.rename(columns={
-                "name": "الاسم", "rate": "النسبة",
-                "is_active": "نشط", "created_at": "التاريخ"
+                "name": "الاسم",
+                "rate": "النسبة",
+                "is_active": "نشط",
+                "created_at": "التاريخ",
             })
-            df["النسبة"] = df["النسبة"].apply(lambda x: f"{x * 100:.0f}%")
-            df["نشط"] = df["نشط"].apply(lambda x: "✅" if x else "❌")
-            cols_to_show = [c for c in ["الاسم", "النسبة", "نشط", "التاريخ"] if c in df.columns]
-            st.dataframe(df[cols_to_show], use_container_width=True, hide_index=True)
+
+            # ✅ v3.1: تنسيق النسبة
+            df["النسبة"] = df["النسبة"].apply(
+                lambda x: f"{x * 100:.0f}%" if pd.notna(x) else "—"
+            )
+
+            # ✅ v3.1: تنسيق نشط
+            df["نشط"] = df["نشط"].apply(
+                lambda x: "✅" if x else "❌"
+            )
+
+            # ✅ v3.1: عرض الأعمدة المتوفرة فقط
+            cols_to_show = [c for c in ["الاسم", "النسبة", "نشط", "التاريخ"]
+                            if c in df.columns]
+
+            st.dataframe(
+                df[cols_to_show],
+                use_container_width=True,
+                hide_index=True
+            )
         else:
             st.info("لا توجد تغييرات سابقة")
 
@@ -194,19 +235,29 @@ def show():
     # ============================================================
     with tab3:
         h3("الضريبة العكسية", CY)
-        total_amount = st.number_input("المبلغ الإجمالي (شامل الضريبة)", min_value=0.0, step=100.0)
+        total_amount = st.number_input("المبلغ الإجمالي (شامل الضريبة)",
+                                        min_value=0.0, step=100.0)
         if st.button("🔍 احسب الضريبة العكسية"):
             before_tax, vat_amt = calculate_reverse_vat(total_amount)
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.markdown(kpi_card("💎", "الإجمالي (شامل الضريبة)", f"{total_amount:,.2f}", BL),
-                            unsafe_allow_html=True)
+                st.markdown(
+                    kpi_card("💎", "الإجمالي (شامل الضريبة)",
+                             f"{total_amount:,.2f}", BL),
+                    unsafe_allow_html=True
+                )
             with col2:
-                st.markdown(kpi_card("📋", "المبلغ قبل الضريبة", f"{before_tax:,.2f}", GR),
-                            unsafe_allow_html=True)
+                st.markdown(
+                    kpi_card("📋", "المبلغ قبل الضريبة",
+                             f"{before_tax:,.2f}", GR),
+                    unsafe_allow_html=True
+                )
             with col3:
-                st.markdown(kpi_card("🧾", "قيمة الضريبة", f"{vat_amt:,.2f}", OR),
-                            unsafe_allow_html=True)
+                st.markdown(
+                    kpi_card("🧾", "قيمة الضريبة",
+                             f"{vat_amt:,.2f}", OR),
+                    unsafe_allow_html=True
+                )
 
     # ============================================================
     # تبويب 4: دفع الضريبة
@@ -214,7 +265,6 @@ def show():
     with tab4:
         h3("💳 دفع الضريبة لجهة الضرائب", OR)
 
-        # ملخص الضريبة الصافية
         st.markdown("### 📊 ملخص الضريبة المستحقة")
 
         col_a, col_b = st.columns(2)
@@ -250,8 +300,6 @@ def show():
             st.info("✅ لا يوجد مستحقات ضريبية في الفترة")
 
         st.markdown("---")
-
-        # نموذج الدفع
         st.markdown("### 📝 تسجيل دفع الضريبة")
 
         payment_choice = st.radio(
@@ -454,7 +502,8 @@ def show():
         h3("تقارير الضريبة", PR)
         col1, col2 = st.columns(2)
         with col1:
-            start_date = st.date_input("من تاريخ", value=date.today().replace(day=1))
+            start_date = st.date_input("من تاريخ",
+                                        value=date.today().replace(day=1))
         with col2:
             end_date = st.date_input("إلى تاريخ", value=date.today())
 
@@ -472,21 +521,29 @@ def show():
                 )
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    st.markdown(kpi_card("🛒", "إجمالي المبيعات",
-                                          f"{report['total_sales']:,.2f}", BL),
-                                unsafe_allow_html=True)
+                    st.markdown(
+                        kpi_card("🛒", "إجمالي المبيعات",
+                                 f"{report['total_sales']:,.2f}", BL),
+                        unsafe_allow_html=True
+                    )
                 with col2:
-                    st.markdown(kpi_card("📤", "ضريبة المخرجات",
-                                          f"{report['output_vat']:,.2f}", RD),
-                                unsafe_allow_html=True)
+                    st.markdown(
+                        kpi_card("📤", "ضريبة المخرجات",
+                                 f"{report['output_vat']:,.2f}", RD),
+                        unsafe_allow_html=True
+                    )
                 with col3:
-                    st.markdown(kpi_card("📥", "ضريبة المدخلات",
-                                          f"{report['input_vat']:,.2f}", OR),
-                                unsafe_allow_html=True)
+                    st.markdown(
+                        kpi_card("📥", "ضريبة المدخلات",
+                                 f"{report['input_vat']:,.2f}", OR),
+                        unsafe_allow_html=True
+                    )
                 with col4:
-                    st.markdown(kpi_card("💎", "صافي الضريبة",
-                                          f"{report['net_vat']:,.2f}", GR),
-                                unsafe_allow_html=True)
+                    st.markdown(
+                        kpi_card("💎", "صافي الضريبة",
+                                 f"{report['net_vat']:,.2f}", GR),
+                        unsafe_allow_html=True
+                    )
 
         with colB:
             if st.button("📋 عرض تقرير الإقرار الضريبي"):
@@ -501,17 +558,23 @@ def show():
                 )
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    st.markdown(kpi_card("📤", "إجمالي ضريبة المخرجات",
-                                          f"{tax_return['total_output_vat']:,.2f}", RD),
-                                unsafe_allow_html=True)
+                    st.markdown(
+                        kpi_card("📤", "إجمالي ضريبة المخرجات",
+                                 f"{tax_return['total_output_vat']:,.2f}", RD),
+                        unsafe_allow_html=True
+                    )
                 with col2:
-                    st.markdown(kpi_card("📥", "إجمالي ضريبة المدخلات",
-                                          f"{tax_return['total_input_vat']:,.2f}", OR),
-                                unsafe_allow_html=True)
+                    st.markdown(
+                        kpi_card("📥", "إجمالي ضريبة المدخلات",
+                                 f"{tax_return['total_input_vat']:,.2f}", OR),
+                        unsafe_allow_html=True
+                    )
                 with col3:
-                    st.markdown(kpi_card("💎", "صافي الضريبة المستحقة",
-                                          f"{tax_return['net_vat']:,.2f}", GR),
-                                unsafe_allow_html=True)
+                    st.markdown(
+                        kpi_card("💎", "صافي الضريبة المستحقة",
+                                 f"{tax_return['net_vat']:,.2f}", GR),
+                        unsafe_allow_html=True
+                    )
 
                 if tax_return["invoices"]:
                     st.markdown("---")
@@ -525,7 +588,9 @@ def show():
                     df_inv["النوع"] = df_inv["النوع"].apply(
                         lambda x: "بيع" if x == "sale" else "شراء"
                     )
-                    df_inv["النسبة"] = df_inv["النسبة"].apply(lambda x: f"{x*100:.0f}%")
+                    df_inv["النسبة"] = df_inv["النسبة"].apply(
+                        lambda x: f"{x*100:.0f}%"
+                    )
                     st.dataframe(
                         df_inv[["رقم الفاتورة", "النوع", "التاريخ",
                                 "الإجمالي", "الضريبة", "النسبة"]],
