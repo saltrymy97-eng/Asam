@@ -1,8 +1,8 @@
-# ui/vat_ui.py – واجهة إدارة ضريبة القيمة المضافة (v3.1)
-# ✅ v3.1: 
-#   - إصلاح تكرار مدفوعات الضريبة (Subquery بدل JOIN)
-#   - إصلاح None في حقل التاريخ بسجل التغييرات
-#   - تحسينات عامة
+# ui/vat_ui.py – واجهة إدارة ضريبة القيمة المضافة (v3.3)
+# ✅ v3.3:
+#   - تمرير payment_account_id لدقة السحب من البنك المحدد
+#   - إصلاح تكرار المدفوعات (Subquery بدل JOIN)
+#   - إصلاح None في حقل التاريخ
 import streamlit as st
 from datetime import date, datetime
 import pandas as pd
@@ -74,7 +74,7 @@ def _format_account_label(acc):
 
 
 # ============================================================
-# ✅ v3.1: إصلاح تكرار المدفوعات
+# ✅ جلب سجل مدفوعات الضريبة (بدون تكرار)
 # ============================================================
 def _get_vat_payments(limit=50):
     """جلب سجل مدفوعات الضريبة من جدول vouchers (بدون تكرار)"""
@@ -167,11 +167,10 @@ def show():
         if history:
             df = pd.DataFrame(history)
 
-            # ✅ v3.1: إصلاح حقل "created_at" الفارغ
             if 'name' not in df.columns:
                 df['name'] = 'ضريبة القيمة المضافة'
 
-            # ✅ v3.1: إصلاح None في created_at
+            # ✅ إصلاح None في created_at
             if 'created_at' in df.columns:
                 df['created_at'] = df['created_at'].apply(
                     lambda x: x if (x and str(x).strip() and str(x).lower() != 'none')
@@ -180,7 +179,6 @@ def show():
             else:
                 df['created_at'] = "—"
 
-            # ✅ v3.1: إعادة تسمية الأعمدة
             df = df.rename(columns={
                 "name": "الاسم",
                 "rate": "النسبة",
@@ -188,17 +186,11 @@ def show():
                 "created_at": "التاريخ",
             })
 
-            # ✅ v3.1: تنسيق النسبة
             df["النسبة"] = df["النسبة"].apply(
                 lambda x: f"{x * 100:.0f}%" if pd.notna(x) else "—"
             )
+            df["نشط"] = df["نشط"].apply(lambda x: "✅" if x else "❌")
 
-            # ✅ v3.1: تنسيق نشط
-            df["نشط"] = df["نشط"].apply(
-                lambda x: "✅" if x else "❌"
-            )
-
-            # ✅ v3.1: عرض الأعمدة المتوفرة فقط
             cols_to_show = [c for c in ["الاسم", "النسبة", "نشط", "التاريخ"]
                             if c in df.columns]
 
@@ -333,6 +325,8 @@ def show():
         idx = labels.index(selected_label)
         selected_acc = filtered[idx]
         payment_account_code = selected_acc["code"]
+        # ✅ v3.3: استخراج id الحساب المحدد
+        payment_account_id = selected_acc.get("id")
 
         default_amount = max(0.0, float(net_vat))
         amount_to_pay = st.number_input(
@@ -356,7 +350,6 @@ def show():
 
         notes = st.text_area("ملاحظات", key="vat_pay_notes")
 
-        # فحص فوري للرصيد
         balance_ok = True
         if amount_to_pay > 0:
             if amount_to_pay > selected_acc["balance"]:
@@ -375,7 +368,6 @@ def show():
                     f"{selected_acc['currency']}"
                 )
 
-        # زر الدفع
         if "saving_vat_payment" not in st.session_state:
             st.session_state.saving_vat_payment = False
 
@@ -397,6 +389,7 @@ def show():
 
         if st.session_state.saving_vat_payment:
             try:
+                # ✅ v3.3: تمرير payment_account_id
                 journal_id, err = pay_vat(
                     amount=amount_to_pay,
                     payment_date=pay_date.strftime("%Y-%m-%d"),
@@ -405,6 +398,7 @@ def show():
                     reference=reference,
                     notes=notes,
                     created_by=st.session_state.user.get('username', 'admin'),
+                    payment_account_id=payment_account_id,
                 )
                 if err:
                     st.error(f"❌ فشل: {err}")
@@ -419,9 +413,6 @@ def show():
                 st.session_state.saving_vat_payment = False
                 st.rerun()
 
-        # ============================================================
-        # سجل المدفوعات
-        # ============================================================
         st.markdown("---")
         st.markdown("### 📋 سجل مدفوعات الضريبة")
 
@@ -468,7 +459,6 @@ def show():
                 hide_index=True
             )
 
-            # عرض الملاحظات التفصيلية
             notes_payments = df_pay[
                 df_pay["notes"].notna() & (df_pay["notes"] != "")
             ]
