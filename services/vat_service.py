@@ -1,5 +1,6 @@
-# services/vat_service.py – وحدة إدارة ضريبة القيمة المضافة (v3.0)
+# services/vat_service.py – وحدة إدارة ضريبة القيمة المضافة (v3.1)
 # ✅ Registry + conn=None + إصلاح account_name + دفع الضريبة مع vouchers
+# ✅ v3.1: تمرير payment_account_id للتمييز بين البنوك بنفس account_code
 import sqlite3
 from datetime import date
 from database import get_connection, close_connection
@@ -257,7 +258,7 @@ def get_tax_return_report(start_date=None, end_date=None, conn=None):
 
 
 # ============================================================
-# ✅ إصلاح: post_vat_settlement_entry
+# تسوية الضريبة
 # ============================================================
 def post_vat_settlement_entry(settlement_date, start_date, end_date,
                                description="تسوية وإقفال ضريبة القيمة المضافة للفترة",
@@ -348,13 +349,22 @@ def post_vat_settlement_entry(settlement_date, start_date, end_date,
 
 
 # ============================================================
-# ✅ v3.0: دفع الضريبة من بنك/صندوق مع تسجيل voucher كامل
+# ✅ v3.1: دفع الضريبة من بنك/صندوق محدد (مع payment_account_id)
 # ============================================================
 def pay_vat(amount, payment_date, payment_account_code, payment_method="bank",
-            reference="", notes="", created_by="admin", conn=None):
+            reference="", notes="", created_by="admin", conn=None,
+            payment_account_id=None):
     """
     تسجيل دفع الضريبة لجهة الضرائب.
-    ✅ v3.0: يُسجّل voucher كامل مع notes + reference
+    
+    ✅ v3.1: 
+      - يُسجّل voucher كامل مع notes + reference
+      - يستخدم payment_account_id للتمييز بين البنوك بنفس account_code
+    
+    Args:
+        payment_account_id: معرف البنك/الصندوق المحدد (id في bank_accounts أو cash_accounts)
+                            إذا مرَّر → يُستخدم مباشرة
+                            إذا None → fallback للبحث بـ account_code (قد يُخطئ مع تعدد البنوك)
     """
     amount = float(amount)
     if amount <= 0:
@@ -410,11 +420,10 @@ def pay_vat(amount, payment_date, payment_account_code, payment_method="bank",
             raise Exception(f"فشل القيد: {err}")
 
         # ============================================================
-        # ✅ v3.0: تسجيل سند صرف كامل مع notes
+        # تسجيل سند صرف كامل مع notes
         # ============================================================
         voucher_id = None
         try:
-            # إنشاء الجدول إذا لم يكن موجوداً
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS vouchers (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -454,14 +463,27 @@ def pay_vat(amount, payment_date, payment_account_code, payment_method="bank",
         except Exception as e:
             print(f"⚠️ فشل تسجيل سند الضريبة: {e}")
 
-        # ✅ تسجيل الحركة في الصندوق
+        # ============================================================
+        # ✅ v3.1: تسجيل الحركة في الصندوق المحدد بالـ id
+        # ============================================================
         if payment_method == 'cash':
             try:
                 from services.cash_service import add_cash_transaction
-                acc_row = conn.execute(
-                    "SELECT id FROM cash_accounts WHERE account_code=? AND is_active=1 LIMIT 1",
-                    (payment_account_code,)
-                ).fetchone()
+
+                # ✅ أولوية لـ id المحدد
+                if payment_account_id:
+                    acc_row = conn.execute(
+                        "SELECT id FROM cash_accounts "
+                        "WHERE id=? AND is_active=1 LIMIT 1",
+                        (payment_account_id,)
+                    ).fetchone()
+                else:
+                    acc_row = conn.execute(
+                        "SELECT id FROM cash_accounts "
+                        "WHERE account_code=? AND is_active=1 LIMIT 1",
+                        (payment_account_code,)
+                    ).fetchone()
+
                 if acc_row:
                     add_cash_transaction(
                         acc_row['id'], payment_date,
@@ -476,14 +498,27 @@ def pay_vat(amount, payment_date, payment_account_code, payment_method="bank",
             except Exception as e:
                 print(f"⚠️ فشل تسجيل حركة الصندوق: {e}")
 
-        # ✅ تسجيل الحركة في البنك
+        # ============================================================
+        # ✅ v3.1: تسجيل الحركة في البنك المحدد بالـ id
+        # ============================================================
         elif payment_method == 'bank':
             try:
                 from services.bank_service import add_bank_transaction
-                acc_row = conn.execute(
-                    "SELECT id FROM bank_accounts WHERE account_code=? AND is_active=1 LIMIT 1",
-                    (payment_account_code,)
-                ).fetchone()
+
+                # ✅ أولوية لـ id المحدد
+                if payment_account_id:
+                    acc_row = conn.execute(
+                        "SELECT id FROM bank_accounts "
+                        "WHERE id=? AND is_active=1 LIMIT 1",
+                        (payment_account_id,)
+                    ).fetchone()
+                else:
+                    acc_row = conn.execute(
+                        "SELECT id FROM bank_accounts "
+                        "WHERE account_code=? AND is_active=1 LIMIT 1",
+                        (payment_account_code,)
+                    ).fetchone()
+
                 if acc_row:
                     add_bank_transaction(
                         acc_row['id'], payment_date,
@@ -506,6 +541,7 @@ def pay_vat(amount, payment_date, payment_account_code, payment_method="bank",
             record_id=journal_id,
             new_value=(
                 f"المبلغ: {amount:,.2f} من {payment_account_code} | "
+                f"معرف الحساب: {payment_account_id} | "
                 f"ملاحظات: {notes or '—'}"
             )
         )
