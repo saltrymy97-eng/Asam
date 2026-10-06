@@ -1,6 +1,7 @@
 # database.py - قاعدة بيانات نظام حوكمة ERP (SQLite)
-# v8.1 — Autocommit + تجاهل BEGIN/COMMIT + تحسينات أداء قصوى
+# v8.2 — Autocommit + تجاهل BEGIN/COMMIT + تحسينات أداء قصوى
 # ✅ v8.1: إضافة حقول الأصول الثابتة (annual_depreciation_rate, manual_monthly_depreciation, last_depreciation_date)
+# ✅ v8.2: إضافة عمود is_system لجدول accounts (للحسابات النظامية: بنوك/صناديق)
 import sqlite3
 import bcrypt
 import os
@@ -194,6 +195,15 @@ def _migrate_fixed_assets_v2(cursor):
                      "TEXT")
 
 
+def _migrate_accounts_is_system(cursor):
+    """
+    ✅ v8.2: إضافة عمود is_system لجدول accounts.
+    - is_system = 0: حساب عادي (يظهر للمستخدم)
+    - is_system = 1: حساب نظامي (بنوك/صناديق فرعية — مخفي افتراضياً)
+    """
+    _safe_add_column(cursor, "accounts", "is_system", "INTEGER DEFAULT 0")
+
+
 def init_db():
     """إنشاء جميع جداول النظام إذا لم تكن موجودة"""
     conn = get_connection()
@@ -228,6 +238,7 @@ def init_db():
     )''')
 
     # ========== 2. شجرة الحسابات ==========
+    # ✅ v8.2: إضافة عمود is_system
     c.execute('''CREATE TABLE IF NOT EXISTS accounts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT UNIQUE NOT NULL,
@@ -238,6 +249,7 @@ def init_db():
         is_active INTEGER CHECK(is_active IN (0,1)) DEFAULT 1,
         account_type TEXT CHECK(account_type IN ('Asset','Liability','Equity','Revenue','Expense')),
         functional_type TEXT,
+        is_system INTEGER DEFAULT 0 CHECK(is_system IN (0,1)),
         FOREIGN KEY (parent_id) REFERENCES accounts(id) ON DELETE SET NULL
     )''')
 
@@ -774,6 +786,7 @@ def init_db():
     # ========== 17. الترحيلات ==========
     _migrate_payment_cycle(c)
     _migrate_fixed_assets_v2(c)   # ✅ v8.1
+    _migrate_accounts_is_system(c)  # ✅ v8.2 — جديد
 
     # ========== 18. الفهارس ==========
     c.execute("CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode)")
@@ -799,6 +812,8 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_invoice_payments_voucher ON invoice_payments(voucher_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_cash_transactions_voucher ON cash_transactions(voucher_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_bank_transactions_voucher ON bank_transactions(voucher_id)")
+    # ✅ v8.2: فهرس عمود is_system
+    c.execute("CREATE INDEX IF NOT EXISTS idx_accounts_is_system ON accounts(is_system)")
 
     # ✅ تحسين بعد كل الإدراجات/الفهارس
     try:
