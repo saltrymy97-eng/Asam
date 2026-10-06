@@ -1,8 +1,7 @@
 # services/seed_service.py
-# v1.1 — خدمة حقن البيانات التجريبية الشاملة (30 وحدة)
+# v2.0 — خدمة حقن البيانات التجريبية الشاملة (30 وحدة)
 # ✅ SQL مباشر — لا يعتمد على توقيعات الخدمات
-# ✅ يشمل: إغلاق الفترات + إغلاق الحسابات + تقييم العملات
-# ✅         + أرصدة المخزون الافتتاحية + المرفقات
+# ✅ v2.0: دعم "الحسابات المخفية" (أكواد فريدة للبنوك/الصناديق)
 import sqlite3
 import random
 import json
@@ -351,8 +350,9 @@ def seed_accounts(conn):
         parent_id = code_to_id.get(parent_code) if parent_code else None
         cur = conn.execute("""
             INSERT INTO accounts (code, name, parent_id, level, is_debit,
-                                   account_type, functional_type, is_active)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                                   account_type, functional_type, is_active,
+                                   is_system)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0)
         """, (code, name, parent_id, level, is_debit, atype, ftype))
         code_to_id[code] = cur.lastrowid
 
@@ -424,37 +424,59 @@ def seed_cost_centers(conn):
 
 
 # ============================================================
-# 7) الصناديق والبنوك
+# 7) ✅ الصناديق والبنوك (v2.0: باستخدام دوال الخدمة)
 # ============================================================
 def seed_cash_and_bank(conn):
+    """
+    ✅ v2.0: استخدام create_cash_account + create_bank_account
+    - تُولّد أكواداً فريدة (1101.01, 1102.01...)
+    - تُنشئ حسابات نظامية (is_system=1)
+    - تُنشئ قيود افتتاحية تلقائية
+    """
+    # ⚠️ إغلاق conn الحالي لأن دوال الخدمة تفتح اتصالاً جديداً
+    conn.execute("PRAGMA foreign_keys = OFF")
+
+    # استيراد مؤجل (لتجنب circular imports)
+    from services.cash_service import create_cash_account
+    from services.bank_service import create_bank_account
+
+    # الصناديق
     cash_accounts = [
-        ("الصندوق الرئيسي", "YER", 500000, "1101"),
-        ("صندوق النقد الأجنبي", "USD", 2000, "1103"),
+        ("الصندوق الرئيسي", "YER", 500000),
+        ("صندوق النقد الأجنبي", "USD", 2000),
     ]
-    for name, curr, bal, code in cash_accounts:
-        conn.execute("""
-            INSERT INTO cash_accounts
-            (name, currency_code, opening_balance, current_balance,
-             account_code, is_active)
-            VALUES (?, ?, ?, ?, ?, 1)
-        """, (name, curr, bal, bal, code))
+    for name, curr, bal in cash_accounts:
+        success, msg = create_cash_account(
+            name=name,
+            currency_code=curr,
+            opening_balance=bal,
+            created_by="admin"
+        )
+        if not success:
+            print(f"⚠️ فشل إنشاء صندوق {name}: {msg}")
 
+    # البنوك
     bank_accounts = [
-        ("بنك اليمن الدولي", "1001234567", "1102",
-         "الحساب الجاري - YER", "YER", 5000000),
-        ("بنك التضامن", "2004567890", "1102",
-         "حساب التوفير - YER", "YER", 2000000),
-        ("بنك الكريمي", "3009876543", "1102",
-         "حساب بالدولار", "USD", 15000),
+        ("بنك اليمن الدولي", "1001234567", "الحساب الجاري - YER",
+         "YER", 5000000),
+        ("بنك التضامن", "2004567890", "حساب التوفير - YER",
+         "YER", 2000000),
+        ("بنك الكريمي", "3009876543", "حساب بالدولار",
+         "USD", 15000),
     ]
-    for bn, acc, code, name, curr, bal in bank_accounts:
-        conn.execute("""
-            INSERT INTO bank_accounts
-            (bank_name, account_number, account_code, account_name,
-             currency_code, opening_balance, current_balance, is_active)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-        """, (bn, acc, code, name, curr, bal, bal))
+    for bn, acc, name, curr, bal in bank_accounts:
+        try:
+            create_bank_account(
+                bank_name=bn,
+                account_number=acc,
+                account_name=name,
+                currency_code=curr,
+                opening_balance=bal,
+            )
+        except Exception as e:
+            print(f"⚠️ فشل إنشاء بنك {bn}: {e}")
 
+    conn.execute("PRAGMA foreign_keys = ON")
     print(f"✅ الصناديق: {len(cash_accounts)} | البنوك: {len(bank_accounts)}")
 
 
@@ -1090,7 +1112,7 @@ def seed_inventory_adjustments(conn):
 
 
 # ============================================================
-# 22) القيود المحاسبية
+# 22) ✅ القيود المحاسبية (v2.0: دعم أكواد البنوك/الصناديق الفريدة)
 # ============================================================
 def seed_journal_entries(conn, code_to_id):
     entries_created = 0
@@ -1118,10 +1140,29 @@ def seed_journal_entries(conn, code_to_id):
             lines_created += 1
         entries_created += 1
 
+    # ✅ v2.0: جلب الأكواد الفعلية للبنوك والصناديق
+    bank_codes = {}
+    for row in conn.execute("""
+        SELECT id, bank_name, account_code FROM bank_accounts
+        ORDER BY id
+    """).fetchall():
+        bank_codes[row["bank_name"]] = row["account_code"]
+
+    cash_codes = {}
+    for row in conn.execute("""
+        SELECT id, name, account_code FROM cash_accounts
+        ORDER BY id
+    """).fetchall():
+        cash_codes[row["name"]] = row["account_code"]
+
+    # نستخدم أول بنك/صندوق للقيود العامة
+    first_bank_code = list(bank_codes.values())[0] if bank_codes else "1102"
+    first_cash_code = list(cash_codes.values())[0] if cash_codes else "1101"
+
     # قيد رأس المال
     add_entry("قيد تأسيس الشركة ورأس المال", "2026-01-01", [
-        ("1101", 500000, 0),
-        ("1102", 7000000, 0),
+        (first_cash_code, 500000, 0),
+        (first_bank_code, 7000000, 0),
         ("1301", 3000000, 0),
         ("3101", 0, 10500000),
     ])
@@ -1133,7 +1174,7 @@ def seed_journal_entries(conn, code_to_id):
     for a in assets:
         add_entry(f"شراء أصل ثابت: {a[0]}", a[2], [
             ("1401", a[1], 0),
-            ("1102", 0, a[1]),
+            (first_bank_code, 0, a[1]),
         ])
 
     # الإهلاك
@@ -1180,7 +1221,7 @@ def seed_journal_entries(conn, code_to_id):
     """).fetchall()
     for r in receipts:
         add_entry(f"سند قبض #{r[0]}", r[2], [
-            ("1101", r[1], 0),
+            (first_cash_code, r[1], 0),
             ("1201", 0, r[1]),
         ])
 
@@ -1191,7 +1232,7 @@ def seed_journal_entries(conn, code_to_id):
     for p in payments:
         add_entry(f"سند صرف #{p[0]}", p[2], [
             ("2101", p[1], 0),
-            ("1101", 0, p[1]),
+            (first_cash_code, 0, p[1]),
         ])
 
     # المصروفات
@@ -1202,7 +1243,7 @@ def seed_journal_entries(conn, code_to_id):
         code = e[3] or "5212"
         add_entry(f"مصروف {e[1]}", e[0], [
             (code, e[2], 0),
-            ("1101", 0, e[2]),
+            (first_cash_code, 0, e[2]),
         ])
 
     # الرواتب
@@ -1219,7 +1260,7 @@ def seed_journal_entries(conn, code_to_id):
         entry_date = f"{month}-28"
         add_entry(f"رواتب شهر {month}", entry_date, [
             ("5201", gross, 0),
-            ("1102", 0, total_net),
+            (first_bank_code, 0, total_net),
             ("2103", 0, total_ded),
         ])
 
@@ -1227,20 +1268,44 @@ def seed_journal_entries(conn, code_to_id):
 
 
 # ============================================================
-# 23) الأرصدة الافتتاحية
+# 23) ✅ الأرصدة الافتتاحية (v2.0)
 # ============================================================
 def seed_opening_balances(conn, code_to_id):
-    balances = [
-        ("1101", 500000, 0),
-        ("1102", 7000000, 0),
+    # ✅ v2.0: استخدام الأكواد الفعلية للبنوك/الصناديق
+    bank_codes = [r["account_code"] for r in conn.execute(
+        "SELECT account_code FROM bank_accounts ORDER BY id"
+    ).fetchall()]
+    cash_codes = [r["account_code"] for r in conn.execute(
+        "SELECT account_code FROM cash_accounts ORDER BY id"
+    ).fetchall()]
+
+    balances = []
+    # الصندوق الأول
+    if cash_codes:
+        balances.append((cash_codes[0], 500000, 0))
+    # البنك الأول
+    if bank_codes:
+        balances.append((bank_codes[0], 7000000, 0))
+
+    balances.extend([
         ("1301", 3000000, 0),
         ("3101", 0, 10500000),
-    ]
+    ])
+
     count = 0
     for code, dr, cr in balances:
         aid = code_to_id.get(code)
+        # ✅ v2.0: البحث في جدول accounts إذا لم نجد في code_to_id
+        if not aid:
+            row = conn.execute(
+                "SELECT id FROM accounts WHERE code = ?", (code,)
+            ).fetchone()
+            if row:
+                aid = row["id"]
+
         if not aid:
             continue
+
         try:
             conn.execute("""
                 INSERT INTO opening_balances
@@ -1291,10 +1356,9 @@ def seed_audit_log(conn):
 
 
 # ============================================================
-# ✅ 25) إغلاق الفترات المالية
+# 25) إغلاق الفترات المالية
 # ============================================================
 def seed_closed_periods(conn):
-    """إغلاق 3 أشهر سابقة"""
     periods = [
         ("month", "2026-06", "2026-07-01 10:00:00", "admin"),
         ("month", "2026-07", "2026-08-01 10:00:00", "admin"),
@@ -1315,18 +1379,15 @@ def seed_closed_periods(conn):
 
 
 # ============================================================
-# ✅ 26) إغلاق الحسابات السنوي
+# 26) إغلاق الحسابات السنوي
 # ============================================================
 def seed_closing_logs(conn, code_to_id):
-    """إغلاق سنة 2025 (لأغراض الاختبار)"""
-    # إيجاد حساب الأرباح المبقاة
     retained_id = code_to_id.get("3102")
 
     if not retained_id:
         print("⚠️ لم يُعثر على حساب الأرباح المبقاة — تخطي إغلاق الحسابات")
         return
 
-    # سنحتاج إلى قيد محاسبي وهمي لسنة 2025
     entry_date = "2025-12-31"
     ref = f"CLOSE-2025-{random.randint(100000, 999999)}"
 
@@ -1337,7 +1398,6 @@ def seed_closing_logs(conn, code_to_id):
           ref))
     entry_id = cur.lastrowid
 
-    # قيد بسيط: مدين إيرادات - دائن أرباح مبقاة (افتراضي)
     net_income = 500000
     conn.execute("""
         INSERT INTO journal_lines
@@ -1358,14 +1418,11 @@ def seed_closing_logs(conn, code_to_id):
 
 
 # ============================================================
-# ✅ 27) تقييم العملات
+# 27) تقييم العملات
 # ============================================================
 def seed_currency_revaluations(conn, code_to_id):
-    """تقييم 3 حسابات بعملات أجنبية"""
     revaluations = [
-        ("1103", "صندوق النقد الأجنبي", "USD", 500.0, 540.0, 2000),
         ("1201", "العملاء", "USD", 530.0, 540.0, 5000),
-        ("1102", "البنك", "USD", 530.0, 540.0, 10000),
     ]
 
     count = 0
@@ -1395,10 +1452,9 @@ def seed_currency_revaluations(conn, code_to_id):
 
 
 # ============================================================
-# ✅ 28) الأرصدة الافتتاحية للمخزون
+# 28) الأرصدة الافتتاحية للمخزون
 # ============================================================
 def seed_opening_inventory(conn):
-    """أرصدة افتتاحية لـ 30 منتج"""
     products = conn.execute(
         "SELECT id, purchase_price FROM products"
     ).fetchall()
@@ -1421,10 +1477,9 @@ def seed_opening_inventory(conn):
 
 
 # ============================================================
-# ✅ 29) المرفقات
+# 29) المرفقات
 # ============================================================
 def seed_attachments(conn):
-    """مرفقات وهمية مرتبطة بسجلات"""
     attachments = [
         ("invoice_123.pdf", "فاتورة رقم 123.pdf", "invoices", 1,
          "application/pdf"),
@@ -1479,9 +1534,7 @@ def seed_attachments(conn):
 # 🎯 الدالة الرئيسية
 # ============================================================
 def run_full_seed(progress_callback=None):
-    """
-    حقن البيانات الشاملة — 30 وحدة كاملة.
-    """
+    """حقن البيانات الشاملة — 30 وحدة كاملة."""
     random.seed(RANDOM_SEED)
 
     summary = {}
@@ -1521,6 +1574,7 @@ def run_full_seed(progress_callback=None):
         seed_cost_centers(conn)
         summary["مراكز التكلفة"] = 5
 
+        # ✅ v2.0: الصناديق والبنوك — بعد الحسابات (لأنها تحتاج حساب أب)
         if progress_callback:
             progress_callback("💰 الصناديق والبنوك...")
         seed_cash_and_bank(conn)
@@ -1607,7 +1661,6 @@ def run_full_seed(progress_callback=None):
         seed_opening_balances(conn, code_to_id)
         summary["الأرصدة الافتتاحية"] = 4
 
-        # ✅ الوحدات الإضافية الجديدة
         if progress_callback:
             progress_callback("📅 إغلاق الفترات...")
         seed_closed_periods(conn)
@@ -1621,7 +1674,7 @@ def run_full_seed(progress_callback=None):
         if progress_callback:
             progress_callback("💱 تقييم العملات...")
         seed_currency_revaluations(conn, code_to_id)
-        summary["تقييم العملات"] = 3
+        summary["تقييم العملات"] = 1
 
         if progress_callback:
             progress_callback("📦 أرصدة المخزون الافتتاحية...")
