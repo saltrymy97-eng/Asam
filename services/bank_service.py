@@ -1,13 +1,77 @@
-# services/bank_service.py – منطق التعاملات البنكية (v6.0)
+# services/bank_service.py – منطق التعاملات البنكية (v7.0)
 # ✅ Connection Registry + حماية الرصيد + إصلاح Deadlock + التحقق قبل الإضافة
-# ✅ إصلاح: conn.commit() بدل conn.execute("COMMIT")
-# ✅ إضافة: دعم notes في create_bank_reconciliation
+# ✅ v7.0: توليد كود فريد لكل بنك + إنشاء حساب نظامي في شجرة الحسابات
 import sqlite3
 from datetime import date, datetime
 from database import get_connection, close_connection
 from services.currency_service import get_base_currency, get_exchange_rate, convert_amount
 from services.chart_service import get_functional_account
 from services.accounting_service import save_journal_entry
+
+
+# ============================================================
+# ✅ v7.0: دالة مساعدة — توليد كود فريد للبنك
+# ============================================================
+def _generate_unique_bank_code(conn):
+    """
+    توليد كود فريد للبنك بالشكل:
+        1102.01, 1102.02, 1102.03, ...
+    
+    يعتمد على:
+        - الحساب الأب (functional_type='bank') → "1102"
+        - عدّ البنوك الحالية في bank_accounts
+    """
+    # 1. إيجاد الحساب الأب للبنك
+    parent = conn.execute("""
+        SELECT id, code, level FROM accounts
+        WHERE functional_type = 'bank' AND is_active = 1
+        ORDER BY LENGTH(code), code
+        LIMIT 1
+    """).fetchone()
+
+    if not parent:
+        raise ValueError(
+            "حساب البنك الأب مفقود في شجرة الحسابات. "
+            "أضف حساباً بالنوع الوظيفي 'bank' أولاً."
+        )
+
+    parent_code = parent["code"]
+    parent_id = parent["id"]
+    parent_level = parent["level"]
+
+    # 2. عدّ البنوك الحالية
+    count = conn.execute(
+        "SELECT COUNT(*) FROM bank_accounts"
+    ).fetchone()[0]
+
+    # 3. توليد الكود
+    # → 1102.01, 1102.02, ...
+    new_code = f"{parent_code}.{(count + 1):02d}"
+
+    return {
+        "parent_id": parent_id,
+        "parent_code": parent_code,
+        "parent_level": parent_level,
+        "new_code": new_code,
+    }
+
+
+# ============================================================
+# ✅ v7.0: دالة مساعدة — إنشاء الحساب النظامي
+# ============================================================
+def _create_system_account(conn, code, name, parent_id, parent_level,
+                           functional_type='bank'):
+    """
+    إنشاء حساب نظامي في شجرة الحسابات.
+    - is_system = 1 → مخفي افتراضياً من الواجهة
+    - account_type = 'Asset' (كل البنوك/الصناديق أصول)
+    """
+    conn.execute("""
+        INSERT INTO accounts
+        (code, name, parent_id, level, is_debit, is_active,
+         account_type, functional_type, is_system)
+        VALUES (?, ?, ?, ?, 'debit', 1, 'Asset', ?, 1)
+    """, (code, name, parent_id, parent_level + 1, functional_type))
 
 
 # ============================================================
@@ -62,7 +126,14 @@ def check_bank_sufficient_balance(bank_account_id, amount, conn=None):
 def create_bank_account(bank_name, account_number, account_name="",
                         currency_code="YER", opening_balance=0.0,
                         account_code=None, conn=None):
-    """إضافة حساب بنكي جديد."""
+    """
+    إضافة حساب بنكي جديد.
+    
+    ✅ v7.0:
+      - توليد كود فريد تلقائياً: 1102.01, 1102.02, ...
+      - إنشاء حساب نظامي في شجرة الحسابات (is_system=1)
+      - القيد الافتتاحي يستخدم الحساب الفرعي الجديد
+    """
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -72,13 +143,28 @@ def create_bank_account(bank_name, account_number, account_name="",
         if own_conn:
             conn.execute("BEGIN IMMEDIATE")
 
-        final_account_code = account_code or get_functional_account("bank")
-        if not final_account_code:
-            raise ValueError(
-                "حساب البنك مفقود في شجرة الحسابات. "
-                "أضف حساباً بالنوع الوظيفي 'bank' أولاً."
+        # ============================================================
+        # ✅ v7.0: توليد كود فريد تلقائياً
+        # ============================================================
+        if account_code:
+            # كود مُمرَّر يدوياً (نادر)
+            final_account_code = account_code
+        else:
+            # توليد تلقائي
+            code_info = _generate_unique_bank_code(conn)
+            final_account_code = code_info["new_code"]
+
+            # إنشاء الحساب النظامي في شجرة الحسابات
+            _create_system_account(
+                conn,
+                code=final_account_code,
+                name=bank_name,
+                parent_id=code_info["parent_id"],
+                parent_level=code_info["parent_level"],
+                functional_type='bank',
             )
 
+        # التحقق من حساب رأس المال (لو فيه رصيد افتتاحي)
         capital_account_code = None
         if opening_balance > 0:
             capital_account_code = get_functional_account("capital")
@@ -88,6 +174,7 @@ def create_bank_account(bank_name, account_number, account_name="",
                     "أضف حساباً بالنوع الوظيفي 'capital' أولاً."
                 )
 
+        # إدراج البنك
         conn.execute(
             """INSERT INTO bank_accounts 
                (bank_name, account_number, account_name, currency_code, 
@@ -97,6 +184,7 @@ def create_bank_account(bank_name, account_number, account_name="",
              opening_balance, opening_balance, final_account_code)
         )
 
+        # القيد الافتتاحي
         if opening_balance > 0:
             lines = [
                 {
