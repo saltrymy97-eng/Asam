@@ -1,8 +1,9 @@
-# services/cash_service.py – وحدة الصندوق متعدد العملات (v8.0)
+# services/cash_service.py – وحدة الصندوق متعدد العملات (v8.1)
 # ✅ متوافق مع Connection Registry
 # ✅ حماية صارمة من الرصيد السالب
 # ✅ v7.0: توليد كود فريد لكل صندوق + إنشاء حساب نظامي
 # ✅ v8.0: إضافة transfer_funds (توافق) — تدعم 4 حالات تحويل
+# ✅ v8.1: إصلاح get_exchange_rate — دعم نفس العملة + إمكانية التوسع
 import sqlite3
 from datetime import date
 from database import get_connection, close_connection
@@ -10,6 +11,39 @@ from services.audit_service import log_action
 from services.currency_service import get_base_currency, get_exchange_rate, convert_amount
 from services.chart_service import get_functional_account
 from services.accounting_service import save_journal_entry
+
+
+# ============================================================
+# ✅ v8.1: دالة مساعدة — حساب سعر التحويل بين عملتين
+# ============================================================
+def _get_transfer_rates(from_curr, to_curr):
+    """
+    إرجاع (from_rate, to_rate) لحساب التحويل.
+    
+    ✅ v8.1:
+      - نفس العملة → (1.0, 1.0) بدون استدعاء get_exchange_rate
+      - عملات مختلفة → يُحسب سعر الصرف عبر العملة الأساسية
+      - قابل للتوسع مستقبلاً
+    """
+    # ✅ حالة نفس العملة — الأسرع والأدق
+    if from_curr == to_curr:
+        return 1.0, 1.0
+
+    # ✅ عملات مختلفة — نحتاج سعر الصرف
+    base_currency = get_base_currency()
+    base_code = base_currency['code'] if base_currency else 'YER'
+
+    if from_curr == base_code:
+        from_rate = 1.0
+    else:
+        from_rate = get_exchange_rate(from_curr, base_code) or 1.0
+
+    if to_curr == base_code:
+        to_rate = 1.0
+    else:
+        to_rate = get_exchange_rate(to_curr, base_code) or 1.0
+
+    return from_rate, to_rate
 
 
 # ============================================================
@@ -591,7 +625,7 @@ def add_cash_transaction(
 
 
 # ============================================================
-# التحويل بين الصناديق
+# التحويل بين الصناديق (v8.1: إصلاح get_exchange_rate)
 # ============================================================
 def transfer_between_cashes(from_account_id, to_account_id, amount, transfer_date,
                              description="تحويل بين الصناديق", reference="",
@@ -632,8 +666,8 @@ def transfer_between_cashes(from_account_id, to_account_id, amount, transfer_dat
         from_curr = from_acc.get('currency_code', 'YER')
         to_curr = to_acc.get('currency_code', 'YER')
 
-        from_rate = get_exchange_rate(from_curr)
-        to_rate = get_exchange_rate(to_curr)
+        # ✅ v8.1: استخدام الدالة المساعدة
+        from_rate, to_rate = _get_transfer_rates(from_curr, to_curr)
 
         base_amount = amount * from_rate
         converted_to_amount = base_amount / to_rate if to_rate else amount
@@ -710,16 +744,13 @@ def transfer_between_cashes(from_account_id, to_account_id, amount, transfer_dat
 
 
 # ============================================================
-# ✅ v8.0: دالة التحويل الشاملة (توافق — تُعيد توجيه للـ bank_service)
+# ✅ دالة التحويل الشاملة (توافق — تُعيد توجيه للـ bank_service)
 # ============================================================
 def transfer_funds(from_kind, from_id, to_kind, to_id, amount,
                    transfer_date, description="تحويل", reference="",
                    conn=None):
     """
-    ✅ v8.0: دالة توافق — تُعيد توجيه إلى bank_service.transfer_funds.
-    
-    السبب: تجنّب التكرار — الدالة الشاملة موجودة في bank_service فقط.
-    هذا الملف يُتيح الاستدعاء من كود يعتمد على cash_service.
+    دالة توافق — تُعيد توجيه إلى bank_service.transfer_funds.
     """
     from services.bank_service import transfer_funds as bank_transfer_funds
     return bank_transfer_funds(
