@@ -1,7 +1,8 @@
-# services/chart_service.py – منطق شجرة الحسابات (v3.0)
+# services/chart_service.py – منطق شجرة الحسابات (v3.1)
 # ✅ Connection Registry — لا يُغلق الاتصال
 # ✅ v2.1: تسجيل كامل (username + record_id + dict) + تسجيل الحذف
 # ✅ v3.0: دعم is_system (الحسابات النظامية) + حماية
+# ✅ v3.1: إصلاح — get_accounts_tree تُعيد dict بدل sqlite3.Row (لدعم .get())
 import sqlite3
 from database import get_connection, close_connection
 from services.audit_service import log_action
@@ -41,7 +42,6 @@ def _resolve_conn(conn):
 def create_accounts_table():
     conn = get_connection()
     try:
-        # ✅ v3.0: إضافة is_system في الجدول الجديد
         conn.execute("""
             CREATE TABLE IF NOT EXISTS accounts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,7 +95,6 @@ def add_account(code, name, parent_id=None, account_type=None,
         if owns:
             c.execute("COMMIT")
 
-        # ✅ تسجيل كامل في سجل التدقيق
         try:
             log_action(
                 username=created_by,
@@ -136,12 +135,13 @@ def add_account(code, name, parent_id=None, account_type=None,
 
 
 # ============================================================
-# ✅ v3.0: get_accounts_tree مع is_system
+# ✅ v3.1: get_accounts_tree — يُعيد list of dict
 # ============================================================
 def get_accounts_tree(conn=None):
     """
     جلب شجرة الحسابات.
     ✅ v3.0: يُعيد عمود is_system أيضاً
+    ✅ v3.1: يُعيد list of dict (بدل sqlite3.Row) — لدعم .get()
     """
     c, owns = _resolve_conn(conn)
     try:
@@ -152,7 +152,8 @@ def get_accounts_tree(conn=None):
             FROM accounts
             ORDER BY LENGTH(code), code
         """).fetchall()
-        return accounts
+        # ✅ v3.1: تحويل إلى list of dict
+        return [dict(a) for a in accounts]
     finally:
         if owns:
             close_connection(c)
@@ -170,21 +171,12 @@ def build_tree(accounts, parent_id=None, indent=0):
 
 
 # ============================================================
-# ✅ v3.0: get_account_options — يستثني النظامية والفرعية
+# ✅ get_account_options — يستثني النظامية والفرعية
 # ============================================================
 def get_account_options(conn=None, include_system=False,
                         include_subsidiary=False):
     """
     جلب خيارات الحساب (للقوائم المنسدلة).
-    
-    ✅ v3.0:
-       - لا يُظهر الحسابات النظامية (is_system=1) افتراضياً
-       - لا يُظهر الحسابات الفرعية (1101.01) افتراضياً
-       - الحسابات الرقمية فقط (1101, 1102)
-    
-    Args:
-        include_system:     إظهار الحسابات النظامية
-        include_subsidiary: إظهار الحسابات الفرعية (بكود يحتوي على '.')
     """
     accounts = get_accounts_tree(conn=conn)
     options = {"لا شيء (حساب رئيسي)": None}
@@ -202,18 +194,16 @@ def get_account_options(conn=None, include_system=False,
 
 
 # ============================================================
-# ✅ v3.0: get_functional_account — يختار الأب فقط (لا الفرعي)
+# ✅ get_functional_account — يختار الأب فقط (لا الفرعي)
 # ============================================================
 def get_functional_account(functional_type, conn=None):
     """
     إرجاع كود الحساب حسب النوع الوظيفي.
     ✅ v3.0: يستثني الحسابات النظامية (الفرعية).
-    ✅ لا يُغلق الاتصال المُمرَّر أو المشترك.
     """
     c, owns = _resolve_conn(conn)
     try:
         c.row_factory = sqlite3.Row
-        # ✅ استثناء النظامية (is_system=0)
         row = c.execute(
             "SELECT code, name FROM accounts "
             "WHERE functional_type = ? AND is_active = 1 "
@@ -234,7 +224,7 @@ def get_functional_account(functional_type, conn=None):
 
 
 # ============================================================
-# ✅ v3.0: delete_account — منع حذف النظامية
+# ✅ delete_account — منع حذف النظامية
 # ============================================================
 def delete_account(account_id, conn=None, deleted_by="admin"):
     """
@@ -244,7 +234,6 @@ def delete_account(account_id, conn=None, deleted_by="admin"):
     """
     c, owns = _resolve_conn(conn)
     try:
-        # ✅ v3.0: فحص النظامية أولاً
         c.row_factory = sqlite3.Row
         acc_check = c.execute(
             "SELECT is_system FROM accounts WHERE id = ?",
@@ -253,7 +242,6 @@ def delete_account(account_id, conn=None, deleted_by="admin"):
         if acc_check and acc_check["is_system"]:
             return False, "لا يمكن حذف حساب نظامي — يُدار تلقائياً من وحدات البنك/الصندوق."
 
-        # ✅ 1. فحص الاستخدام في القيود
         try:
             used = c.execute(
                 "SELECT COUNT(*) FROM journal_lines WHERE account_id = ?",
@@ -265,7 +253,6 @@ def delete_account(account_id, conn=None, deleted_by="admin"):
         if used > 0:
             return False, "لا يمكن حذف هذا الحساب لأنه مستخدم في قيود محاسبية."
 
-        # ✅ 2. جلب بيانات الحساب قبل الحذف
         account = c.execute(
             "SELECT id, code, name, parent_id, level, account_type, "
             "functional_type FROM accounts WHERE id = ?",
@@ -277,14 +264,12 @@ def delete_account(account_id, conn=None, deleted_by="admin"):
 
         old_data = dict(account)
 
-        # ✅ 3. الحذف
         if owns:
             c.execute("BEGIN IMMEDIATE")
         c.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
         if owns:
             c.execute("COMMIT")
 
-        # ✅ 4. تسجيل الحذف
         try:
             log_action(
                 username=deleted_by,
