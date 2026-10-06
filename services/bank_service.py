@@ -1,13 +1,47 @@
-# services/bank_service.py – منطق التعاملات البنكية (v8.0)
+# services/bank_service.py – منطق التعاملات البنكية (v8.1)
 # ✅ Connection Registry + حماية الرصيد + إصلاح Deadlock + التحقق قبل الإضافة
 # ✅ v7.0: توليد كود فريد لكل بنك + إنشاء حساب نظامي في شجرة الحسابات
 # ✅ v8.0: إضافة دالة transfer_funds الشاملة (4 حالات تحويل)
+# ✅ v8.1: إصلاح get_exchange_rate — دعم نفس العملة + إمكانية التوسع
 import sqlite3
 from datetime import date, datetime
 from database import get_connection, close_connection
 from services.currency_service import get_base_currency, get_exchange_rate, convert_amount
 from services.chart_service import get_functional_account
 from services.accounting_service import save_journal_entry
+
+
+# ============================================================
+# ✅ v8.1: دالة مساعدة — حساب سعر التحويل بين عملتين
+# ============================================================
+def _get_transfer_rates(from_curr, to_curr):
+    """
+    إرجاع (from_rate, to_rate) لحساب التحويل.
+    
+    ✅ v8.1:
+      - نفس العملة → (1.0, 1.0) بدون استدعاء get_exchange_rate
+      - عملات مختلفة → يُحسب سعر الصرف عبر العملة الأساسية
+      - قابل للتوسع مستقبلاً
+    """
+    # ✅ حالة نفس العملة — الأسرع والأدق
+    if from_curr == to_curr:
+        return 1.0, 1.0
+
+    # ✅ عملات مختلفة — نحتاج سعر الصرف
+    base_currency = get_base_currency()
+    base_code = base_currency['code'] if base_currency else 'YER'
+
+    if from_curr == base_code:
+        from_rate = 1.0
+    else:
+        from_rate = get_exchange_rate(from_curr, base_code) or 1.0
+
+    if to_curr == base_code:
+        to_rate = 1.0
+    else:
+        to_rate = get_exchange_rate(to_curr, base_code) or 1.0
+
+    return from_rate, to_rate
 
 
 # ============================================================
@@ -118,10 +152,7 @@ def check_bank_sufficient_balance(bank_account_id, amount, conn=None):
 def create_bank_account(bank_name, account_number, account_name="",
                         currency_code="YER", opening_balance=0.0,
                         account_code=None, conn=None):
-    """
-    إضافة حساب بنكي جديد.
-    ✅ v7.0: توليد كود فريد + إنشاء حساب نظامي
-    """
+    """إضافة حساب بنكي جديد."""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -531,8 +562,8 @@ def transfer_between_banks(from_account_id, to_account_id, amount,
         from_curr = from_acc.get('currency_code', 'YER')
         to_curr = to_acc.get('currency_code', 'YER')
 
-        from_rate = get_exchange_rate(from_curr)
-        to_rate = get_exchange_rate(to_curr)
+        # ✅ v8.1: استخدام الدالة المساعدة
+        from_rate, to_rate = _get_transfer_rates(from_curr, to_curr)
 
         base_amount = amount * from_rate
         converted_to_amount = base_amount / to_rate if to_rate else amount
@@ -597,7 +628,7 @@ def transfer_between_banks(from_account_id, to_account_id, amount,
 
 
 # ============================================================
-# ✅ v8.0: دالة التحويل الشاملة — تدعم 4 حالات
+# دالة التحويل الشاملة — تدعم 4 حالات
 # ============================================================
 def transfer_funds(from_kind, from_id, to_kind, to_id, amount,
                    transfer_date, description="تحويل", reference="",
@@ -611,19 +642,7 @@ def transfer_funds(from_kind, from_id, to_kind, to_id, amount,
         - cash → bank    (جديدة)
         - cash → cash    (تستدعي transfer_between_cashes)
     
-    Args:
-        from_kind: 'bank' أو 'cash'
-        from_id:   id الحساب المصدر
-        to_kind:   'bank' أو 'cash'
-        to_id:     id الحساب الهدف
-        amount:    المبلغ
-        transfer_date: التاريخ (YYYY-MM-DD)
-        description: البيان
-        reference: المرجع (اختياري — يُولَّد تلقائياً إذا فارغ)
-    
-    Returns:
-        (journal_id, None) عند النجاح
-        (None, "رسالة الخطأ") عند الفشل
+    ✅ v8.1: يعمل بكفاءة مع نفس العملة (بدون استدعاء سعر الصرف)
     """
     try:
         amount = float(amount)
@@ -636,7 +655,7 @@ def transfer_funds(from_kind, from_id, to_kind, to_id, amount,
     if from_kind == to_kind and from_id == to_id:
         return None, "لا يمكن التحويل لنفس الحساب"
 
-    # ✅ 1. الحالة: بنك → بنك (استدعاء الدالة الموجودة)
+    # ✅ 1. الحالة: بنك → بنك
     if from_kind == 'bank' and to_kind == 'bank':
         try:
             journal_id = transfer_between_banks(
@@ -647,7 +666,7 @@ def transfer_funds(from_kind, from_id, to_kind, to_id, amount,
         except Exception as e:
             return None, str(e)
 
-    # ✅ 2. الحالة: صندوق → صندوق (استدعاء من cash_service)
+    # ✅ 2. الحالة: صندوق → صندوق
     if from_kind == 'cash' and to_kind == 'cash':
         try:
             from services.cash_service import transfer_between_cashes
@@ -657,13 +676,11 @@ def transfer_funds(from_kind, from_id, to_kind, to_id, amount,
             )
             if not ok:
                 return None, msg
-            # نُعيد قيد رقم — لكن transfer_between_cashes لا تُعيده
-            # نُعيد True فقط
             return True, None
         except Exception as e:
             return None, str(e)
 
-    # ✅ 3 و 4. الحالات: بنك ↔ صندوق (جديدة)
+    # ✅ 3 و 4. الحالات: بنك ↔ صندوق
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -677,12 +694,10 @@ def transfer_funds(from_kind, from_id, to_kind, to_id, amount,
         if from_kind == 'bank':
             from_acc = get_bank_account_by_id(from_id, conn=conn)
             from_table = 'bank_transactions'
-            from_id_col = 'bank_account_id'
         else:
             from services.cash_service import get_cash_account_by_id
             from_acc = get_cash_account_by_id(from_id, conn=conn)
             from_table = 'cash_transactions'
-            from_id_col = 'cash_account_id'
 
         if to_kind == 'bank':
             to_acc = get_bank_account_by_id(to_id, conn=conn)
@@ -720,8 +735,8 @@ def transfer_funds(from_kind, from_id, to_kind, to_id, amount,
         from_curr = from_acc.get('currency_code', 'YER')
         to_curr = to_acc.get('currency_code', 'YER')
 
-        from_rate = get_exchange_rate(from_curr)
-        to_rate = get_exchange_rate(to_curr)
+        # ✅ v8.1: استخدام الدالة المساعدة
+        from_rate, to_rate = _get_transfer_rates(from_curr, to_curr)
 
         base_amount = amount * from_rate
         converted_to_amount = base_amount / to_rate if to_rate else amount
@@ -761,8 +776,7 @@ def transfer_funds(from_kind, from_id, to_kind, to_id, amount,
         else:
             journal_id = _journal_result
 
-        # ✅ تسجيل الحركتين في الجدولين المناسبين
-        # (بدون قيد محاسبي — لأن القيد أُنشئ أعلاه)
+        # تسجيل الحركتين
         ref = reference or f"TR-{date.today().strftime('%Y%m%d')}-{journal_id}"
 
         # الحركة الصادرة
