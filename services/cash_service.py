@@ -1,11 +1,8 @@
-# services/cash_service.py – وحدة الصندوق متعدد العملات (v7.0)
+# services/cash_service.py – وحدة الصندوق متعدد العملات (v8.0)
 # ✅ متوافق مع Connection Registry
 # ✅ حماية صارمة من الرصيد السالب
-# ✅ BEGIN IMMEDIATE — منع Race Condition
-# ✅ update_cash_balance ذرّي (Atomic)
-# ✅ check_sufficient_balance صارمة
-# ✅ قيد افتتاحي تلقائي عند إنشاء الصندوق
-# ✅ v7.0: توليد كود فريد لكل صندوق + إنشاء حساب نظامي في شجرة الحسابات
+# ✅ v7.0: توليد كود فريد لكل صندوق + إنشاء حساب نظامي
+# ✅ v8.0: إضافة transfer_funds (توافق) — تدعم 4 حالات تحويل
 import sqlite3
 from datetime import date
 from database import get_connection, close_connection
@@ -39,12 +36,7 @@ def _generate_unique_cash_code(conn):
     """
     توليد كود فريد للصندوق بالشكل:
         1101.01, 1101.02, 1101.03, ...
-    
-    يعتمد على:
-        - الحساب الأب (functional_type='cash') → "1101"
-        - عدّ الصناديق الحالية في cash_accounts
     """
-    # 1. إيجاد الحساب الأب للصندوق
     parent = conn.execute("""
         SELECT id, code, level FROM accounts
         WHERE functional_type = 'cash' AND is_active = 1
@@ -62,13 +54,10 @@ def _generate_unique_cash_code(conn):
     parent_id = parent["id"]
     parent_level = parent["level"]
 
-    # 2. عدّ الصناديق الحالية
     count = conn.execute(
         "SELECT COUNT(*) FROM cash_accounts"
     ).fetchone()[0]
 
-    # 3. توليد الكود
-    # → 1101.01, 1101.02, ...
     new_code = f"{parent_code}.{(count + 1):02d}"
 
     return {
@@ -87,7 +76,6 @@ def _create_system_account(conn, code, name, parent_id, parent_level,
     """
     إنشاء حساب نظامي في شجرة الحسابات.
     - is_system = 1 → مخفي افتراضياً من الواجهة
-    - account_type = 'Asset' (كل الصناديق أصول)
     """
     conn.execute("""
         INSERT INTO accounts
@@ -103,16 +91,6 @@ def _create_system_account(conn, code, name, parent_id, parent_level,
 def check_sufficient_balance(account_code, amount, conn=None, strict=True):
     """
     فحص كفاية الرصيد قبل الصرف.
-
-    Args:
-        account_code: كود الحساب (صندوق أو بنك)
-        amount:       المبلغ المطلوب صرفه
-        conn:         اتصال خارجي (اختياري)
-        strict:       إذا True — يرفض إذا لم يُعثر على الحساب (افتراضي)
-
-    Returns:
-        (True, None)              إذا كان الرصيد كافياً
-        (False, "رسالة الخطأ")   إذا لم يكن كافياً
     """
     if account_code is None:
         return False, "كود الحساب مفقود"
@@ -234,16 +212,7 @@ def create_cash_tables():
 # ============================================================
 def create_cash_account(name, currency_code="YER", opening_balance=0.0,
                          account_code=None, created_by="admin"):
-    """
-    إنشاء حساب صندوق جديد مع ربطه بشجرة الحسابات + قيد افتتاحي تلقائي.
-
-    ✅ v7.0:
-       - توليد كود فريد تلقائياً: 1101.01, 1101.02, ...
-       - إنشاء حساب نظامي في شجرة الحسابات (is_system=1)
-       - إنشاء قيد افتتاحي تلقائياً (مدين صندوق / دائن رأس مال)
-       - BEGIN IMMEDIATE — كل شيء في Transaction واحدة
-    """
-    # --- validation ---
+    """إنشاء حساب صندوق جديد."""
     if not name or not str(name).strip():
         return False, "اسم الصندوق مطلوب"
 
@@ -259,18 +228,12 @@ def create_cash_account(name, currency_code="YER", opening_balance=0.0,
     try:
         conn.execute("BEGIN IMMEDIATE")
 
-        # ============================================================
-        # ✅ v7.0: توليد كود فريد تلقائياً
-        # ============================================================
         if account_code:
-            # كود مُمرَّر يدوياً (نادر)
             final_account_code = account_code
         else:
-            # توليد تلقائي
             code_info = _generate_unique_cash_code(conn)
             final_account_code = code_info["new_code"]
 
-            # إنشاء الحساب النظامي في شجرة الحسابات
             _create_system_account(
                 conn,
                 code=final_account_code,
@@ -280,7 +243,6 @@ def create_cash_account(name, currency_code="YER", opening_balance=0.0,
                 functional_type='cash',
             )
 
-        # التحقق من حساب رأس المال (لو فيه رصيد افتتاحي)
         capital_account_code = None
         if opening_balance > 0:
             capital_account_code = _read_functional_code(conn, "capital")
@@ -290,7 +252,6 @@ def create_cash_account(name, currency_code="YER", opening_balance=0.0,
                     "أضف حساباً بالنوع الوظيفي 'capital' أولاً."
                 )
 
-        # إدراج الصندوق
         cur = conn.execute(
             """INSERT INTO cash_accounts
                (name, currency_code, opening_balance, current_balance, account_code)
@@ -300,7 +261,6 @@ def create_cash_account(name, currency_code="YER", opening_balance=0.0,
         )
         cash_account_id = cur.lastrowid
 
-        # قيد افتتاحي تلقائي
         entry_id = None
         if opening_balance > 0:
             lines = [
@@ -335,7 +295,6 @@ def create_cash_account(name, currency_code="YER", opening_balance=0.0,
 
         conn.commit()
 
-        # تسجيل التدقيق
         try:
             log_action(
                 username=created_by,
@@ -406,11 +365,7 @@ def get_cash_account_by_id(account_id, conn=None):
 # ✅ update_cash_balance — نسخة ذرّية (Atomic)
 # ============================================================
 def update_cash_balance(account_id, conn=None):
-    """
-    تحديث رصيد الصندوق — ذرّي بالكامل.
-    ✅ لا قراءة منفصلة — UPDATE واحد يحسب ويعيد الكتابة.
-    ✅ يمنع Race Condition بين مستخدمين متزامنين.
-    """
+    """تحديث رصيد الصندوق — ذرّي بالكامل."""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -484,13 +439,7 @@ def add_cash_transaction(
     skip_balance_check=False,
     created_by="admin"
 ):
-    """
-    إضافة حركة صندوق مع قيد محاسبي تلقائي.
-
-    ✅ فحص الرصيد قبل السحب (داخل Transaction).
-    ✅ BEGIN IMMEDIATE — منع Race Condition.
-    ✅ validation صارم للمبلغ قبل أي شيء.
-    """
+    """إضافة حركة صندوق مع قيد محاسبي تلقائي."""
     if trans_type not in ('deposit', 'withdrawal'):
         return False, "نوع الحركة غير صالح"
 
@@ -520,7 +469,6 @@ def add_cash_transaction(
         cash_code = account.get('account_code') or _read_functional_code(conn, "cash")
         currency = account.get('currency_code', 'YER')
 
-        # فحص الرصيد قبل السحب
         if trans_type == 'withdrawal' and not skip_balance_check:
             ok, err = check_sufficient_balance(
                 cash_code, amount, conn=conn, strict=True
@@ -759,6 +707,26 @@ def transfer_between_cashes(from_account_id, to_account_id, amount, transfer_dat
         return False, str(e)
     finally:
         close_connection(conn)
+
+
+# ============================================================
+# ✅ v8.0: دالة التحويل الشاملة (توافق — تُعيد توجيه للـ bank_service)
+# ============================================================
+def transfer_funds(from_kind, from_id, to_kind, to_id, amount,
+                   transfer_date, description="تحويل", reference="",
+                   conn=None):
+    """
+    ✅ v8.0: دالة توافق — تُعيد توجيه إلى bank_service.transfer_funds.
+    
+    السبب: تجنّب التكرار — الدالة الشاملة موجودة في bank_service فقط.
+    هذا الملف يُتيح الاستدعاء من كود يعتمد على cash_service.
+    """
+    from services.bank_service import transfer_funds as bank_transfer_funds
+    return bank_transfer_funds(
+        from_kind, from_id, to_kind, to_id, amount,
+        transfer_date, description=description,
+        reference=reference, conn=conn
+    )
 
 
 # ============================================================
