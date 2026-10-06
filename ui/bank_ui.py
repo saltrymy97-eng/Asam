@@ -1,5 +1,8 @@
-# ui/bank_ui.py – واجهة التعاملات البنكية (v4.0)
-# 🔧 v4.0 — إصلاحات جذرية:
+# ui/bank_ui.py – واجهة التعاملات البنكية (v4.1)
+# 🔧 v4.1 — إصلاح إضافي:
+#   ✅ حل مشكلة Streamlit: الاحتفاظ بقيمة قديمة في قائمة "إلى"
+#      (كان يعرض نفس الحساب المختار في "من" مؤقتًا)
+# 🔧 v4.0 — الإصلاحات السابقة:
 #   ✅ حل مشكلة الرقم الثابت في st.number_input
 #   ✅ قائمة المصدر/الوجهة بهوية (kind, id) وليس بالاسم
 #   ✅ آخر التحويلات تُجمّع الحركتين في عملية واحدة بـ transfer_reference
@@ -27,15 +30,7 @@ ACCENT_RED = "#EF4444"
 ACCENT_PURPLE = "#8B5CF6"
 
 
-# ============================================================
-# 🔧 v4.0: مساعد بناء قائمة موحّدة (بنوك + صناديق)
-# ============================================================
 def _build_transfer_options():
-    """
-    يبني قائمة موحّدة للتحويل.
-    يُعيد: (options_list, options_map)
-    كل عنصر له هوية حقيقية (kind, id).
-    """
     bank_accounts = bank.get_all_bank_accounts(active_only=True)
     cash_accounts = cash_service.get_all_cash_accounts(active_only=True)
 
@@ -70,7 +65,6 @@ def _build_transfer_options():
 
 
 def _format_transfer_option(key, options_map):
-    """تنسيق عرض الخيار — للمستخدم فقط، لا يُستخدم كمعرف."""
     info = options_map.get(key)
     if not info:
         return "?"
@@ -81,30 +75,17 @@ def _format_transfer_option(key, options_map):
     )
 
 
-# ============================================================
-# 🔧 v4.0: عرض آخر التحويلات — تجميع بـ transfer_reference
-# ============================================================
 def _render_recent_transfers():
-    """
-    يجمع حركات bank_transactions و cash_transactions حسب transfer_reference
-    ويعرض كل تحويل كعملية واحدة.
-    """
     from database import get_connection, close_connection
     conn = get_connection()
     try:
-        # جمع كل الحركات التي لها transfer_reference (تبدأ بـ TR-)
         rows = []
 
-        # bank_transactions
         try:
             bank_rows = conn.execute("""
                 SELECT 
-                    bt.reference,
-                    bt.transaction_date,
-                    bt.type,
-                    bt.amount,
-                    bt.description,
-                    bt.journal_id,
+                    bt.reference, bt.transaction_date, bt.type, bt.amount,
+                    bt.description, bt.journal_id,
                     ba.bank_name as acc_name,
                     ba.currency_code as currency,
                     'bank' as acc_kind
@@ -117,16 +98,11 @@ def _render_recent_transfers():
         except Exception:
             pass
 
-        # cash_transactions
         try:
             cash_rows = conn.execute("""
                 SELECT 
-                    ct.reference,
-                    ct.transaction_date,
-                    ct.type,
-                    ct.amount,
-                    ct.description,
-                    ct.journal_id,
+                    ct.reference, ct.transaction_date, ct.type, ct.amount,
+                    ct.description, ct.journal_id,
                     ca.name as acc_name,
                     ca.currency_code as currency,
                     'cash' as acc_kind
@@ -143,7 +119,6 @@ def _render_recent_transfers():
             st.info("لا توجد تحويلات سابقة")
             return
 
-        # تجميع حسب reference
         grouped = {}
         for r in rows:
             ref = r['reference']
@@ -153,21 +128,16 @@ def _render_recent_transfers():
                     'date': r['transaction_date'],
                     'journal_id': r['journal_id'],
                     'source': None,
-                    'source_kind': None,
                     'destination': None,
                     'amount': None,
                     'currency': r['currency'],
                 }
-            # المصدر: withdrawal (cash) أو transfer_out (bank)
             if r['type'] in ('transfer_out', 'withdrawal'):
                 grouped[ref]['source'] = r['acc_name']
-                grouped[ref]['source_kind'] = r['acc_kind']
                 grouped[ref]['amount'] = r['amount']
-            # الوجهة: deposit (cash) أو transfer_in (bank)
             elif r['type'] in ('transfer_in', 'deposit'):
                 grouped[ref]['destination'] = r['acc_name']
 
-        # ترتيب حسب التاريخ ثم المرجع تنازليًا
         sorted_refs = sorted(
             grouped.values(),
             key=lambda x: (x['date'] or '', x['reference']),
@@ -206,7 +176,7 @@ def show():
         "🏛️ الحسابات", "💳 الحركات", "🔄 تحويل", "⚖️ مصالحة", "📊 ملخص"
     ])
 
-    # ---------- تبويب 1: الحسابات البنكية ----------
+    # ---------- تبويب 1: الحسابات ----------
     with tab1:
         col1, col2 = st.columns([1, 1])
         with col1:
@@ -271,7 +241,7 @@ def show():
                 st.info("لا توجد حسابات بنكية")
             st.markdown("</div>", unsafe_allow_html=True)
 
-    # ---------- تبويب 2: الحركات البنكية ----------
+    # ---------- تبويب 2: الحركات ----------
     with tab2:
         st.markdown(f"<h3 style='color:{ACCENT_GREEN};'>تسجيل حركة بنكية</h3>", unsafe_allow_html=True)
         accounts = bank.get_all_bank_accounts()
@@ -337,7 +307,6 @@ def show():
         st.markdown("---")
         st.markdown(f"<h3 style='color:{TEXT_PRIMARY};'>📋 الحركات البنكية</h3>", unsafe_allow_html=True)
 
-        # 🔧 v4.0: قائمة الفلترة تُحدّث من get_all_bank_accounts النشطة
         active_accounts = bank.get_all_bank_accounts(active_only=True)
         filter_options = ["الكل"] + [
             f"{a['bank_name']} - {a['account_number']}" for a in active_accounts
@@ -380,7 +349,6 @@ def show():
         if not options:
             st.warning("لا توجد حسابات بنكية أو صناديق. أضف حساباً أولاً.")
         else:
-            # 🔧 v4.0: قائمتان بنفس المصدر — الفلترة تتم بالهوية (kind, id)
             with st.form("transfer_form"):
                 col1, col2 = st.columns(2)
 
@@ -393,12 +361,18 @@ def show():
                     )
 
                 with col2:
-                    # 🔧 v4.0: إزالة نفس الحساب بالهوية وليس بالاسم
+                    # 🔧 v4.1: قائمة "إلى" بدون from_key + إصلاح احتفاظ Streamlit
                     to_options = [k for k in options if k != from_key]
                     if not to_options:
                         st.warning("لا يوجد حساب هدف متاح")
                         to_key = None
                     else:
+                        # 🔧 v4.1: إذا كانت القيمة المحفوظة تساوي from_key،
+                        # نُصفّرها قبل عرض الـ widget — يمنع ظهور نفس الحساب.
+                        current_to = st.session_state.get("transfer_to_key")
+                        if current_to == from_key or current_to not in to_options:
+                            st.session_state["transfer_to_key"] = to_options[0]
+
                         to_key = st.selectbox(
                             "📥 إلى (الهدف)",
                             to_options,
@@ -406,14 +380,13 @@ def show():
                             key="transfer_to_key"
                         )
 
-                # 🔧 v4.0: حقل المبلغ بدون value ثابت + key فريد
                 col3, col4 = st.columns(2)
                 with col3:
                     amount = st.number_input(
                         "💰 المبلغ",
                         min_value=0.01,
                         step=100.0,
-                        value=None,     # ← لا قيمة افتراضية ثابتة
+                        value=None,
                         placeholder="أدخل المبلغ",
                         key="transfer_amount_input"
                     )
@@ -448,7 +421,6 @@ def show():
                         from_info = options_map[from_key]
                         to_info = options_map[to_key]
 
-                        # 🔧 v4.0: تحقق عرضي فقط — الحماية الحقيقية في Service
                         if from_info["currency"] != to_info["currency"]:
                             st.error(
                                 f"❌ لا يمكن التحويل بين عملتين مختلفتين.\n\n"
@@ -464,7 +436,6 @@ def show():
                             )
                         else:
                             try:
-                                # 🔧 v4.0: تمرير amount كما هو — لا تحويل int/float
                                 journal_id, err = transfer_funds(
                                     from_kind=from_info["kind"],
                                     from_id=from_info["id"],
@@ -490,7 +461,6 @@ def show():
                             except Exception as e:
                                 st.error(f"❌ خطأ غير متوقع: {e}")
 
-            # 🔧 v4.0: عرض آخر التحويلات مُجمّعة
             st.markdown("---")
             st.markdown(
                 f"<h4 style='color:{TEXT_PRIMARY};'>📋 آخر التحويلات</h4>",
@@ -498,7 +468,7 @@ def show():
             )
             _render_recent_transfers()
 
-    # ---------- تبويب 4: المصالحة البنكية ----------
+    # ---------- تبويب 4: المصالحة ----------
     with tab4:
         st.markdown(f"<h3 style='color:{ACCENT_ORANGE};'>⚖️ المصالحة البنكية</h3>", unsafe_allow_html=True)
         accounts = bank.get_all_bank_accounts()
@@ -550,7 +520,7 @@ def show():
         else:
             st.info("لا توجد حسابات")
 
-    # ---------- تبويب 5: ملخص الأرصدة ----------
+    # ---------- تبويب 5: ملخص ----------
     with tab5:
         st.markdown(f"<h3 style='color:{ACCENT_PURPLE};'>📊 ملخص الأرصدة البنكية</h3>", unsafe_allow_html=True)
         summary, total_base = bank.get_bank_balance_summary()
