@@ -1,8 +1,7 @@
-# ui/accounting_ui.py – واجهة الحسابات (تصميم زجاجي فخم + عرض احترافي للأسماء والأرصدة + عملات متعددة)
+# ui/accounting_ui.py – واجهة الحسابات (v2.0)
+# ✅ v2.0: استخدام get_connection + فلترة الحسابات النظامية من القوائم
 import streamlit as st
 import pandas as pd
-import sqlite3
-import os
 from datetime import date
 from services.accounting_service import (
     get_account_code,
@@ -16,8 +15,7 @@ from services.accounting_service import (
 from services.audit_service import log_action
 from services import cost_center_service
 from services.currency_service import get_base_currency, get_exchange_rate
-
-DB_PATH = os.path.join("data", "erp.db")
+from database import get_connection, close_connection
 
 # ========== ألوان التصميم ==========
 GLASS_BG = "rgba(255, 255, 255, 0.12)"
@@ -31,30 +29,51 @@ ACCENT_ORANGE = "#F59E0B"
 ACCENT_RED = "#EF4444"
 ACCENT_PURPLE = "#8B5CF6"
 
-# ---------- دوال مساعدة للعرض الاحترافي ----------
+
+# ============================================================
+# ✅ v2.0: دوال مساعدة — استخدام get_connection + دعم النظامية
+# ============================================================
 def get_account_display_name(code):
-    """تحويل كود الحساب إلى اسمه الكامل من شجرة الحسابات"""
+    """
+    تحويل كود الحساب إلى اسمه الكامل من شجرة الحسابات.
+    ✅ يعرض حتى الحسابات النظامية (لأنها قد تظهر في القيود).
+    """
     if not code:
         return ""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    # إذا كان الكود رقماً، نبحث عنه في شجرة الحسابات
-    if code.isdigit():
-        row = conn.execute("SELECT code, name FROM accounts WHERE code = ?", (code,)).fetchone()
-        conn.close()
-        if row:
-            return f"{row['code']} - {row['name']}"
-    # إذا لم يكن رقماً (مثل اسم العميل)، نرجعه كما هو
-    conn.close()
-    return code
 
-def get_accounts_list():
-    """جلب جميع الحسابات من شجرة الحسابات"""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    accounts = conn.execute("SELECT code, name FROM accounts ORDER BY code").fetchall()
-    conn.close()
-    return [f"{a['code']} - {a['name']}" for a in accounts]
+    conn = get_connection()
+    try:
+        if code.isdigit() or "." in code:
+            row = conn.execute(
+                "SELECT code, name FROM accounts WHERE code = ?",
+                (code,)
+            ).fetchone()
+            if row:
+                return f"{row['code']} - {row['name']}"
+        return code
+    finally:
+        close_connection(conn)
+
+
+def get_accounts_list(include_system=False):
+    """
+    جلب جميع الحسابات **العادية** من شجرة الحسابات.
+    ✅ v2.0: يُخفي الحسابات النظامية افتراضياً.
+    ✅ يُخفي الحسابات الفرعية (1101.01) افتراضياً.
+    """
+    conn = get_connection()
+    try:
+        query = "SELECT code, name, is_system FROM accounts WHERE is_active = 1"
+        if not include_system:
+            query += " AND (is_system IS NULL OR is_system = 0)"
+            query += " AND code NOT LIKE '%.%'"
+        query += " ORDER BY code"
+
+        accounts = conn.execute(query).fetchall()
+        return [f"{a['code']} - {a['name']}" for a in accounts]
+    finally:
+        close_connection(conn)
+
 
 def get_cost_centers_list():
     """جلب قائمة مراكز التكلفة النشطة للاختيار"""
@@ -65,16 +84,19 @@ def get_cost_centers_list():
     mapping = {f"{c['code']} - {c['name']}": c['id'] for c in centers}
     return options, mapping
 
+
 def get_all_currencies():
     """جلب جميع العملات النشطة من قاعدة البيانات"""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    # جلب العملات النشطة
-    currencies = conn.execute(
-        "SELECT code, name, symbol FROM currencies WHERE is_active = 1 ORDER BY is_base DESC, code"
-    ).fetchall()
-    conn.close()
-    return currencies
+    conn = get_connection()
+    try:
+        currencies = conn.execute(
+            "SELECT code, name, symbol FROM currencies "
+            "WHERE is_active = 1 ORDER BY is_base DESC, code"
+        ).fetchall()
+        return currencies
+    finally:
+        close_connection(conn)
+
 
 def show():
     st.markdown(f"""
@@ -86,26 +108,34 @@ def show():
 
     tab1, tab2, tab3 = st.tabs(["📝 قيود اليومية", "📖 دفتر الأستاذ", "⚖️ ميزان المراجعة"])
 
-    # ---------- قيود اليومية ----------
+    # ============================================================
+    # قيود اليومية
+    # ============================================================
     with tab1:
-        st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>تسجيل قيد يومية</h3>", unsafe_allow_html=True)
-        
+        st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>تسجيل قيد يومية</h3>",
+                    unsafe_allow_html=True)
+
         accounts_list = get_accounts_list()
         cc_options, cc_mapping = get_cost_centers_list()
         currencies = get_all_currencies()
-        
+
         if not accounts_list:
             st.warning("لا توجد حسابات. أضف حسابات من شجرة الحسابات أولاً.")
         else:
             with st.form("journal_entry_form"):
                 entry_date = st.date_input("التاريخ", value=date.today())
-                description = st.text_input("البيان", placeholder="أدخل وصف العملية المالية")
-                
-                st.markdown(f"<p style='color:{TEXT_SECONDARY}; margin-top:1rem;'>الأسطر المحاسبية (حتى 4 أسطر)</p>", unsafe_allow_html=True)
-                
+                description = st.text_input("البيان",
+                                             placeholder="أدخل وصف العملية المالية")
+
+                st.markdown(
+                    f"<p style='color:{TEXT_SECONDARY}; margin-top:1rem;'>"
+                    f"الأسطر المحاسبية (حتى 4 أسطر)</p>",
+                    unsafe_allow_html=True
+                )
+
                 lines = []
                 cost_center_allocations = []
-                
+
                 for i in range(4):
                     cols = st.columns([3, 1.5, 1.5, 1])
                     account = cols[0].selectbox(
@@ -113,40 +143,50 @@ def show():
                         [""] + accounts_list,
                         key=f"acc_{i}"
                     )
-                    debit = cols[1].number_input(f"مدين {i+1}", min_value=0.0, step=0.01, key=f"deb_{i}")
-                    credit = cols[2].number_input(f"دائن {i+1}", min_value=0.0, step=0.01, key=f"cred_{i}")
-                    
-                    # ✨ إضافة قائمة منسدلة للعملة
+                    debit = cols[1].number_input(
+                        f"مدين {i+1}", min_value=0.0, step=0.01, key=f"deb_{i}"
+                    )
+                    credit = cols[2].number_input(
+                        f"دائن {i+1}", min_value=0.0, step=0.01, key=f"cred_{i}"
+                    )
+
+                    # قائمة العملات
                     curr_names = [f"{c['code']} - {c['name']}" for c in currencies]
                     if curr_names:
-                        # افتراضي العملة الأساسية
                         base_currency = get_base_currency()
-                        default_curr = f"{base_currency['code']} - {base_currency['name']}" if base_currency else curr_names[0]
+                        default_curr = (
+                            f"{base_currency['code']} - {base_currency['name']}"
+                            if base_currency else curr_names[0]
+                        )
                         selected_curr = cols[3].selectbox(
                             f"العملة {i+1}",
                             curr_names,
-                            index=curr_names.index(default_curr) if default_curr in curr_names else 0,
+                            index=curr_names.index(default_curr)
+                                if default_curr in curr_names else 0,
                             key=f"curr_{i}"
                         )
                         currency_code = selected_curr.split(" - ")[0]
                     else:
                         currency_code = "YER"
-                    
+
                     if account:
                         code = account.split(" - ")[-1]
                         lines.append({
-                            "account": code, 
-                            "debit": debit, 
+                            "account": code,
+                            "debit": debit,
                             "credit": credit,
                             "currency_code": currency_code
                         })
-                        
+
                         if cc_options:
-                            with st.expander(f"🎯 توزيع مراكز التكلفة للسطر {i+1}", expanded=False):
+                            with st.expander(
+                                f"🎯 توزيع مراكز التكلفة للسطر {i+1}",
+                                expanded=False
+                            ):
                                 st.caption("يمكنك توزيع مبلغ السطر على حتى 3 مراكز تكلفة")
                                 allocs_for_line = []
                                 remaining_amount = debit if debit > 0 else credit
-                                
+
                                 for j in range(3):
                                     c_cols = st.columns([3, 2, 2])
                                     center_choice = c_cols[0].selectbox(
@@ -174,39 +214,49 @@ def show():
                                             allocs_for_line.append({
                                                 'cost_center_id': center_id,
                                                 'amount': alloc_amount,
-                                                'percentage': alloc_pct if alloc_pct > 0 else (alloc_amount / remaining_amount * 100 if remaining_amount > 0 else 0)
+                                                'percentage': (
+                                                    alloc_pct if alloc_pct > 0
+                                                    else (alloc_amount / remaining_amount * 100
+                                                          if remaining_amount > 0 else 0)
+                                                )
                                             })
-                                
+
                                 if allocs_for_line:
                                     total_alloc = sum(a['amount'] for a in allocs_for_line)
                                     if abs(total_alloc - remaining_amount) > 0.01:
-                                        st.warning(f"مجموع التوزيعات ({total_alloc:,.2f}) لا يساوي مبلغ السطر ({remaining_amount:,.2f})")
+                                        st.warning(
+                                            f"مجموع التوزيعات ({total_alloc:,.2f}) "
+                                            f"لا يساوي مبلغ السطر ({remaining_amount:,.2f})"
+                                        )
                                     cost_center_allocations.append({
                                         'line_index': i,
                                         'allocations': allocs_for_line
                                     })
 
                 submitted = st.form_submit_button("💾 حفظ القيد", type="primary")
-                
+
                 if submitted:
                     if not description:
                         st.error("البيان مطلوب")
                     elif not lines:
                         st.error("أضف سطراً محاسبياً واحداً على الأقل")
                     else:
-                        # 🚀 إرسال البيانات مباشرة للخدمة الخلفية (Backend) التي تدعم العملات
-                        # (تم إزالة شرط التحقق المبدئي الذي كان يمنع العملات الأجنبية)
                         entry_id, error = save_journal_entry(
-                            description, lines, entry_date.strftime("%Y-%m-%d"),
-                            cost_center_allocations=cost_center_allocations if cost_center_allocations else None
+                            description, lines,
+                            entry_date.strftime("%Y-%m-%d"),
+                            cost_center_allocations=(
+                                cost_center_allocations
+                                if cost_center_allocations else None
+                            )
                         )
-                        
+
                         if error:
-                            # ستظهر هنا رسالة الخطأ الذكية التي تأتي من accounting_service (بالعملة الأساسية)
                             st.error(error)
                         else:
-                            # جلب اسم المستخدم بأمان من الجلسة لتفادي أخطاء المفاتيح
-                            username = st.session_state.user.get('username', 'admin') if 'user' in st.session_state else 'admin'
+                            username = (
+                                st.session_state.user.get('username', 'admin')
+                                if 'user' in st.session_state else 'admin'
+                            )
                             log_action(
                                 username=username,
                                 action="قيد يومية",
@@ -214,17 +264,23 @@ def show():
                                 record_id=entry_id,
                                 new_value=f"البيان: {description}"
                             )
-                            st.success("تم تسجيل القيد بنجاح مع تحويل العملات وتوزيعات مراكز التكلفة ✅")
+                            st.success(
+                                "تم تسجيل القيد بنجاح مع تحويل العملات "
+                                "وتوزيعات مراكز التكلفة ✅"
+                            )
                             st.rerun()
 
         # عرض آخر القيود
         st.markdown("---")
-        st.markdown(f"<h4 style='color:{TEXT_PRIMARY};\">آخر قيود اليومية</h4>", unsafe_allow_html=True)
+        st.markdown(
+            f"<h4 style='color:{TEXT_PRIMARY};'>آخر قيود اليومية</h4>",
+            unsafe_allow_html=True
+        )
         entries = get_recent_entries()
         if entries:
             df_entries = pd.DataFrame(entries)
             st.dataframe(df_entries, use_container_width=True, hide_index=True)
-            
+
             entry_ids = [e['id'] for e in entries]
             selected_entry = st.selectbox("اختر قيداً لعرض تفاصيله", entry_ids)
             if selected_entry:
@@ -246,47 +302,60 @@ def show():
                             if line.get('cost_center_allocations'):
                                 st.caption("توزيع مراكز التكلفة:")
                                 alloc_df = pd.DataFrame(line['cost_center_allocations'])
-                                st.dataframe(alloc_df, use_container_width=True, hide_index=True)
+                                st.dataframe(alloc_df,
+                                             use_container_width=True,
+                                             hide_index=True)
                             else:
                                 st.caption("لا يوجد توزيع لمراكز تكلفة")
+
                     total_d = sum(d['debit'] for d in details)
                     total_c = sum(d['credit'] for d in details)
-                    st.markdown(f"**المجموع: مدين {total_d:,.2f} | دائن {total_c:,.2f}**")
+                    st.markdown(
+                        f"**المجموع: مدين {total_d:,.2f} | دائن {total_c:,.2f}**"
+                    )
         else:
             st.info("لا توجد قيود بعد")
 
-    # ---------- دفتر الأستاذ ----------
+    # ============================================================
+    # دفتر الأستاذ
+    # ============================================================
     with tab2:
-        st.markdown(f"<h3 style='color:{ACCENT_GREEN};'>دفتر الأستاذ العام</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:{ACCENT_GREEN};'>دفتر الأستاذ العام</h3>",
+                    unsafe_allow_html=True)
         accounts = get_distinct_accounts()
         if accounts:
-            # تحويل الأكواد إلى أسماء قابلة للقراءة
             display_accounts = [get_account_display_name(acc) for acc in accounts]
             acc_mapping = dict(zip(display_accounts, accounts))
-            
+
             selected_display = st.selectbox("اختر الحساب", display_accounts)
             selected_account = acc_mapping[selected_display]
-            
+
             ledger = get_ledger(selected_account)
             if ledger:
                 df_ledger = pd.DataFrame(ledger)
                 df_ledger["رصيد مدين"] = df_ledger["debit"] - df_ledger["credit"]
                 df_ledger["رصيد دائن"] = df_ledger["credit"] - df_ledger["debit"]
-                df_ledger["رصيد مدين"] = df_ledger["رصيد مدين"].apply(lambda x: x if x > 0 else 0)
-                df_ledger["رصيد دائن"] = df_ledger["رصيد دائن"].apply(lambda x: x if x > 0 else 0)
-                
-                # ✅ التعديل الاحترافي: التأكد من وجود العمود قبل تحويله
+                df_ledger["رصيد مدين"] = df_ledger["رصيد مدين"].apply(
+                    lambda x: x if x > 0 else 0
+                )
+                df_ledger["رصيد دائن"] = df_ledger["رصيد دائن"].apply(
+                    lambda x: x if x > 0 else 0
+                )
+
                 if "account_name" in df_ledger.columns:
-                    df_ledger["account_name"] = df_ledger["account_name"].apply(get_account_display_name)
-                
-                # إعادة ترتيب الأعمدة للعرض (مع التأكد من وجود account_name)
-                cols = ["date", "description", "debit", "credit", "رصيد مدين", "رصيد دائن", "currency_code", "exchange_rate"]
+                    df_ledger["account_name"] = df_ledger["account_name"].apply(
+                        get_account_display_name
+                    )
+
+                cols = ["date", "description", "debit", "credit",
+                        "رصيد مدين", "رصيد دائن",
+                        "currency_code", "exchange_rate"]
                 if "account_name" in df_ledger.columns:
-                    cols.insert(2, "account_name")  # إضافة اسم الحساب في المكان المناسب
-                
+                    cols.insert(2, "account_name")
+
                 df_ledger = df_ledger[cols]
                 st.dataframe(df_ledger, use_container_width=True, hide_index=True)
-                
+
                 final_balance = (df_ledger["debit"].sum() - df_ledger["credit"].sum())
                 if final_balance > 0:
                     st.markdown(f"**الرصيد النهائي: {final_balance:,.2f} (مدين)**")
@@ -299,26 +368,37 @@ def show():
         else:
             st.info("لا توجد حسابات بعد")
 
-    # ---------- ميزان المراجعة ----------
+    # ============================================================
+    # ميزان المراجعة
+    # ============================================================
     with tab3:
-        st.markdown(f"<h3 style='color:{ACCENT_ORANGE};'>ميزان المراجعة</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:{ACCENT_ORANGE};'>ميزان المراجعة</h3>",
+                    unsafe_allow_html=True)
         tb = get_trial_balance()
         if tb:
             df_tb = pd.DataFrame(tb)
             df_tb["رصيد مدين"] = df_tb["total_debit"] - df_tb["total_credit"]
             df_tb["رصيد دائن"] = df_tb["total_credit"] - df_tb["total_debit"]
-            df_tb["رصيد مدين"] = df_tb["رصيد مدين"].apply(lambda x: x if x > 0 else 0)
-            df_tb["رصيد دائن"] = df_tb["رصيد دائن"].apply(lambda x: x if x > 0 else 0)
-            
-            # 🔧 تحسين أسماء الحسابات
-            df_tb["account_name"] = df_tb["account_name"].apply(get_account_display_name)
-            
-            df_tb = df_tb[["account_name", "total_debit", "total_credit", "رصيد مدين", "رصيد دائن"]]
+            df_tb["رصيد مدين"] = df_tb["رصيد مدين"].apply(
+                lambda x: x if x > 0 else 0
+            )
+            df_tb["رصيد دائن"] = df_tb["رصيد دائن"].apply(
+                lambda x: x if x > 0 else 0
+            )
+
+            df_tb["account_name"] = df_tb["account_name"].apply(
+                get_account_display_name
+            )
+
+            df_tb = df_tb[["account_name", "total_debit", "total_credit",
+                            "رصيد مدين", "رصيد دائن"]]
             st.dataframe(df_tb, use_container_width=True, hide_index=True)
-            
+
             total_d = df_tb["total_debit"].sum()
             total_c = df_tb["total_credit"].sum()
-            st.markdown(f"**إجمالي المدين: {total_d:,.2f} | إجمالي الدائن: {total_c:,.2f}**")
+            st.markdown(
+                f"**إجمالي المدين: {total_d:,.2f} | إجمالي الدائن: {total_c:,.2f}**"
+            )
             if abs(total_d - total_c) < 0.01:
                 st.success("الميزان متوازن ✅")
             else:
