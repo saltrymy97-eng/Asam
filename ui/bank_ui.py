@@ -1,9 +1,12 @@
-# ui/bank_ui.py – واجهة التعاملات البنكية (v2.0)
+# ui/bank_ui.py – واجهة التعاملات البنكية (v3.0)
 # ✅ إضافة: حقل ملاحظات المصالحة (نص حر)
+# ✅ v3.0: إضافة تبويب "تحويل" مع دعم 4 حالات
 import streamlit as st
 import pandas as pd
 from datetime import date
 from services import bank_service as bank
+from services import cash_service
+from services.bank_service import transfer_funds
 from services.currency_service import get_all_currencies, get_base_currency
 
 # ========== ألوان التصميم ==========
@@ -23,11 +26,13 @@ def show():
     st.markdown(f"""
     <div style="margin-bottom:2rem; text-align:right;">
         <h1 style="color:{TEXT_PRIMARY}; font-size:2.8rem; margin:0; text-shadow:0 0 20px {ACCENT_BLUE};">🏦 التعاملات البنكية</h1>
-        <p style="color:{TEXT_SECONDARY}; font-size:1.2rem;">إدارة الحسابات البنكية والحركات والمصالحات</p>
+        <p style="color:{TEXT_SECONDARY}; font-size:1.2rem;">إدارة الحسابات البنكية والحركات والمصالحات والتحويلات</p>
     </div>
     """, unsafe_allow_html=True)
 
-    tab1, tab2, tab3, tab4 = st.tabs(["🏛️ الحسابات", "💳 الحركات", "⚖️ مصالحة", "📊 ملخص"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "🏛️ الحسابات", "💳 الحركات", "🔄 تحويل", "⚖️ مصالحة", "📊 ملخص"
+    ])
 
     # ---------- تبويب 1: الحسابات البنكية ----------
     with tab1:
@@ -159,8 +164,188 @@ def show():
         else:
             st.info("لا توجد حركات")
 
-    # ---------- تبويب 3: المصالحة البنكية ----------
+    # ---------- ✅ تبويب 3: تحويل (جديد v3.0) ----------
     with tab3:
+        st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>🔄 تحويل بين الحسابات</h3>",
+                    unsafe_allow_html=True)
+
+        # 1. جلب قائمة موحّدة — بنوك + صناديق
+        bank_accounts = bank.get_all_bank_accounts(active_only=True)
+        cash_accounts = cash_service.get_all_cash_accounts(active_only=True)
+
+        if not bank_accounts and not cash_accounts:
+            st.warning("لا توجد حسابات بنكية أو صناديق. أضف حساباً أولاً.")
+        else:
+            # بناء قائمة الخيارات الموحّدة
+            options = []
+            options_map = {}
+
+            for b in bank_accounts:
+                label = f"🏦 {b['bank_name']} ({b['currency_code']}) — {b['current_balance']:,.2f}"
+                options.append(label)
+                options_map[label] = {
+                    "kind": "bank",
+                    "id": b['id'],
+                    "name": b['bank_name'],
+                    "currency": b['currency_code'],
+                    "balance": b['current_balance'],
+                }
+
+            for c in cash_accounts:
+                label = f"💵 {c['name']} ({c['currency_code']}) — {c['current_balance']:,.2f}"
+                options.append(label)
+                options_map[label] = {
+                    "kind": "cash",
+                    "id": c['id'],
+                    "name": c['name'],
+                    "currency": c['currency_code'],
+                    "balance": c['current_balance'],
+                }
+
+            # النموذج
+            with st.form("transfer_form"):
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    from_label = st.selectbox(
+                        "📤 من (المصدر)",
+                        options,
+                        key="transfer_from"
+                    )
+
+                with col2:
+                    # إزالة "من" من قائمة "إلى" تلقائياً
+                    to_options = [o for o in options if o != from_label]
+                    to_label = st.selectbox(
+                        "📥 إلى (الهدف)",
+                        to_options,
+                        key="transfer_to"
+                    )
+
+                col3, col4 = st.columns(2)
+                with col3:
+                    amount = st.number_input(
+                        "💰 المبلغ",
+                        min_value=0.01,
+                        step=100.0,
+                        value=1000.0,
+                        key="transfer_amount"
+                    )
+                    transfer_date = st.date_input(
+                        "📅 التاريخ",
+                        value=date.today(),
+                        key="transfer_date"
+                    )
+                with col4:
+                    description = st.text_input(
+                        "📝 البيان",
+                        value="تحويل بين الحسابات",
+                        key="transfer_desc"
+                    )
+                    reference = st.text_input(
+                        "🔖 المرجع (اختياري)",
+                        key="transfer_ref"
+                    )
+
+                submitted = st.form_submit_button(
+                    "🔄 تنفيذ التحويل",
+                    type="primary",
+                    use_container_width=True
+                )
+
+                if submitted:
+                    from_info = options_map[from_label]
+                    to_info = options_map[to_label]
+
+                    # التحقق من الرصيد
+                    if amount > from_info["balance"] + 0.001:
+                        st.error(
+                            f"❌ الرصيد غير كافٍ\n\n"
+                            f"المتاح في **{from_info['name']}**: "
+                            f"**{from_info['balance']:,.2f}** {from_info['currency']}\n\n"
+                            f"المطلوب: **{amount:,.2f}** {from_info['currency']}"
+                        )
+                    else:
+                        # التنفيذ
+                        try:
+                            journal_id, err = transfer_funds(
+                                from_kind=from_info["kind"],
+                                from_id=from_info["id"],
+                                to_kind=to_info["kind"],
+                                to_id=to_info["id"],
+                                amount=amount,
+                                transfer_date=transfer_date.strftime("%Y-%m-%d"),
+                                description=description,
+                                reference=reference,
+                            )
+
+                            if err:
+                                st.error(f"❌ فشل التحويل: {err}")
+                            else:
+                                st.success(
+                                    f"✅ تم التحويل بنجاح\n\n"
+                                    f"**من**: {from_info['name']}\n\n"
+                                    f"**إلى**: {to_info['name']}\n\n"
+                                    f"**المبلغ**: {amount:,.2f} {from_info['currency']}"
+                                )
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ خطأ غير متوقع: {e}")
+
+            # ✅ عرض آخر التحويلات
+            st.markdown("---")
+            st.markdown(
+                f"<h4 style='color:{TEXT_PRIMARY};'>📋 آخر التحويلات</h4>",
+                unsafe_allow_html=True
+            )
+
+            try:
+                # جلب آخر التحويلات من bank_transactions و cash_transactions
+                # بفلترة التحويلات (transfer_in, transfer_out)
+                from database import get_connection, close_connection
+                conn = get_connection()
+                try:
+                    bank_transfers = conn.execute("""
+                        SELECT 
+                            bt.id,
+                            bt.transaction_date,
+                            bt.type,
+                            bt.amount,
+                            bt.reference,
+                            bt.description,
+                            ba.bank_name as source_name,
+                            ba.currency_code as currency
+                        FROM bank_transactions bt
+                        JOIN bank_accounts ba ON bt.bank_account_id = ba.id
+                        WHERE bt.type IN ('transfer_in', 'transfer_out')
+                        ORDER BY bt.id DESC
+                        LIMIT 20
+                    """).fetchall()
+
+                    if bank_transfers:
+                        rows = []
+                        for t in bank_transfers:
+                            type_label = "↗️ صادر" if t['type'] == 'transfer_out' else "↘️ وارد"
+                            rows.append({
+                                "التاريخ": t['transaction_date'],
+                                "النوع": type_label,
+                                "الحساب": t['source_name'],
+                                "المبلغ": f"{t['amount']:,.2f} {t['currency']}",
+                                "المرجع": t['reference'] or "—",
+                                "البيان": t['description'] or "—",
+                            })
+
+                        df_transfers = pd.DataFrame(rows)
+                        st.dataframe(df_transfers, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("لا توجد تحويلات سابقة")
+                finally:
+                    close_connection(conn)
+            except Exception as e:
+                st.info("لا توجد تحويلات سابقة")
+
+    # ---------- تبويب 4: المصالحة البنكية ----------
+    with tab4:
         st.markdown(f"<h3 style='color:{ACCENT_ORANGE};'>⚖️ المصالحة البنكية</h3>", unsafe_allow_html=True)
         accounts = bank.get_all_bank_accounts()
         if accounts:
@@ -178,7 +363,6 @@ def show():
                 stmt_date = st.date_input("تاريخ كشف البنك", value=date.today())
                 stmt_balance = st.number_input("رصيد كشف البنك", min_value=0.0, step=0.01)
 
-                # ✅ حقل ملاحظات — نص حر
                 notes = st.text_area(
                     "ملاحظات المصالحة (اختياري)",
                     placeholder="اكتب أي ملاحظات تفسر الفرق بين رصيد الدفاتر وكشف البنك...",
@@ -200,7 +384,6 @@ def show():
                     except Exception as e:
                         st.error(str(e))
 
-            # عرض الحركات غير المسواة
             unreconciled = bank.get_unreconciled_transactions(acc_id2)
             if unreconciled:
                 st.markdown("**حركات غير مسواة:**")
@@ -208,8 +391,8 @@ def show():
         else:
             st.info("لا توجد حسابات")
 
-    # ---------- تبويب 4: ملخص الأرصدة ----------
-    with tab4:
+    # ---------- تبويب 5: ملخص الأرصدة ----------
+    with tab5:
         st.markdown(f"<h3 style='color:{ACCENT_PURPLE};'>📊 ملخص الأرصدة البنكية</h3>", unsafe_allow_html=True)
         summary, total_base = bank.get_bank_balance_summary()
         if summary:
@@ -224,7 +407,6 @@ def show():
             reconciliations = bank.get_reconciliation_history()
             if reconciliations:
                 df_rec = pd.DataFrame(reconciliations)
-                # ✅ إعادة ترتيب الأعمدة لإظهار الملاحظات
                 display_cols = ['id', 'reconciliation_date', 'statement_balance',
                                 'book_balance', 'difference', 'notes']
                 display_cols = [c for c in display_cols if c in df_rec.columns]
