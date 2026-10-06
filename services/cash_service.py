@@ -1,9 +1,13 @@
-# services/cash_service.py – وحدة الصندوق متعدد العملات (v8.1)
-# ✅ متوافق مع Connection Registry
-# ✅ حماية صارمة من الرصيد السالب
-# ✅ v7.0: توليد كود فريد لكل صندوق + إنشاء حساب نظامي
-# ✅ v8.0: إضافة transfer_funds (توافق) — تدعم 4 حالات تحويل
-# ✅ v8.1: إصلاح get_exchange_rate — دعم نفس العملة + إمكانية التوسع
+# services/cash_service.py – وحدة الصندوق (v9.1)
+# 🔧 v9.1 — إصلاح جذري للتحويل:
+#   ✅ transfer_between_cashes تقبل conn + تُعيد (journal_id, error)
+#   ✅ رفض اختلاف العملات (لا تحويل عملات)
+#   ✅ قيد واحد لكل تحويل + حركتان مباشرتان
+#   ✅ رفض الحساب بدون account_code أو currency_code
+#   ✅ MAX(suffix)+1 بدل COUNT(*)+1
+#   ✅ skip_period_check=False
+#   ✅ منع الضغط المكرر عبر reference
+
 import sqlite3
 from datetime import date
 from database import get_connection, close_connection
@@ -14,43 +18,77 @@ from services.accounting_service import save_journal_entry
 
 
 # ============================================================
-# ✅ v8.1: دالة مساعدة — حساب سعر التحويل بين عملتين
+# 🔧 v9.1: مساعدات صارمة
 # ============================================================
-def _get_transfer_rates(from_curr, to_curr):
-    """
-    إرجاع (from_rate, to_rate) لحساب التحويل.
-    
-    ✅ v8.1:
-      - نفس العملة → (1.0, 1.0) بدون استدعاء get_exchange_rate
-      - عملات مختلفة → يُحسب سعر الصرف عبر العملة الأساسية
-      - قابل للتوسع مستقبلاً
-    """
-    # ✅ حالة نفس العملة — الأسرع والأدق
-    if from_curr == to_curr:
-        return 1.0, 1.0
+def _require_account_code(acc, kind_label):
+    """رفض الحساب بدون account_code."""
+    code = (acc or {}).get('account_code')
+    if not code or not str(code).strip():
+        name = (acc or {}).get('name') or (acc or {}).get('bank_name') or '?'
+        raise ValueError(
+            f"الحساب {kind_label} '{name}' لا يحتوي على account_code. "
+            f"لا يُسمح بالتحويل على الحساب الأب (1101/1102)."
+        )
+    return str(code).strip()
 
-    # ✅ عملات مختلفة — نحتاج سعر الصرف
-    base_currency = get_base_currency()
-    base_code = base_currency['code'] if base_currency else 'YER'
 
-    if from_curr == base_code:
-        from_rate = 1.0
-    else:
-        from_rate = get_exchange_rate(from_curr, base_code) or 1.0
+def _require_currency(acc, kind_label):
+    """رفض الحساب بدون currency_code."""
+    curr = (acc or {}).get('currency_code')
+    if not curr or not str(curr).strip():
+        name = (acc or {}).get('name') or (acc or {}).get('bank_name') or '?'
+        raise ValueError(
+            f"الحساب {kind_label} '{name}' لا يحتوي على currency_code. "
+            f"راجع إعداد الحساب."
+        )
+    return str(curr).strip()
 
-    if to_curr == base_code:
-        to_rate = 1.0
-    else:
-        to_rate = get_exchange_rate(to_curr, base_code) or 1.0
 
-    return from_rate, to_rate
+def _generate_transfer_reference(conn):
+    """TR-YYYYMMDD-NNNN"""
+    today = date.today().strftime("%Y%m%d")
+    prefix = f"TR-{today}-"
+    max_num = 0
+    for table in ('bank_transactions', 'cash_transactions'):
+        try:
+            row = conn.execute(
+                f"SELECT reference FROM {table} "
+                f"WHERE reference LIKE ? ORDER BY reference DESC LIMIT 1",
+                (prefix + "%",)
+            ).fetchone()
+            if row and row[0]:
+                try:
+                    n = int(str(row[0]).split('-')[-1])
+                    if n > max_num:
+                        max_num = n
+                except (ValueError, IndexError):
+                    pass
+        except Exception:
+            pass
+    return f"{prefix}{max_num + 1:04d}"
+
+
+def _reference_exists(conn, reference):
+    """فحص إن كان المرجع مستخدمًا من قبل."""
+    if not reference:
+        return False
+    for table in ('bank_transactions', 'cash_transactions'):
+        try:
+            row = conn.execute(
+                f"SELECT 1 FROM {table} WHERE reference = ? LIMIT 1",
+                (reference,)
+            ).fetchone()
+            if row:
+                return True
+        except Exception:
+            pass
+    return False
 
 
 # ============================================================
-# ✅ مساعد: قراءة الحساب الوظيفي من نفس الاتصال
+# قراءة الحساب الوظيفي من نفس الاتصال
 # ============================================================
 def _read_functional_code(conn, functional_type):
-    """قراءة كود الحساب الوظيفي من نفس الاتصال"""
     try:
         r = conn.execute(
             "SELECT code FROM accounts WHERE functional_type = ? AND is_active = 1 LIMIT 1",
@@ -64,13 +102,10 @@ def _read_functional_code(conn, functional_type):
 
 
 # ============================================================
-# ✅ v7.0: دالة مساعدة — توليد كود فريد للصندوق
+# توليد كود فريد للصندوق — MAX+1
 # ============================================================
 def _generate_unique_cash_code(conn):
-    """
-    توليد كود فريد للصندوق بالشكل:
-        1101.01, 1101.02, 1101.03, ...
-    """
+    """1101.01, 1101.02, ... — باستخدام MAX(suffix)+1"""
     parent = conn.execute("""
         SELECT id, code, level FROM accounts
         WHERE functional_type = 'cash' AND is_active = 1
@@ -88,11 +123,21 @@ def _generate_unique_cash_code(conn):
     parent_id = parent["id"]
     parent_level = parent["level"]
 
-    count = conn.execute(
-        "SELECT COUNT(*) FROM cash_accounts"
-    ).fetchone()[0]
+    prefix = parent_code + "."
+    rows = conn.execute(
+        "SELECT code FROM accounts WHERE code LIKE ?", (prefix + "%",)
+    ).fetchall()
 
-    new_code = f"{parent_code}.{(count + 1):02d}"
+    max_suffix = 0
+    for r in rows:
+        try:
+            suffix = int(str(r["code"]).split('.')[-1])
+            if suffix > max_suffix:
+                max_suffix = suffix
+        except (ValueError, IndexError):
+            continue
+
+    new_code = f"{parent_code}.{max_suffix + 1:02d}"
 
     return {
         "parent_id": parent_id,
@@ -102,15 +147,8 @@ def _generate_unique_cash_code(conn):
     }
 
 
-# ============================================================
-# ✅ v7.0: دالة مساعدة — إنشاء الحساب النظامي
-# ============================================================
 def _create_system_account(conn, code, name, parent_id, parent_level,
                             functional_type='cash'):
-    """
-    إنشاء حساب نظامي في شجرة الحسابات.
-    - is_system = 1 → مخفي افتراضياً من الواجهة
-    """
     conn.execute("""
         INSERT INTO accounts
         (code, name, parent_id, level, is_debit, is_active,
@@ -120,12 +158,9 @@ def _create_system_account(conn, code, name, parent_id, parent_level,
 
 
 # ============================================================
-# ✅ دالة فحص كفاية الرصيد (للصندوق والبنك) — نسخة صارمة
+# فحص كفاية الرصيد
 # ============================================================
 def check_sufficient_balance(account_code, amount, conn=None, strict=True):
-    """
-    فحص كفاية الرصيد قبل الصرف.
-    """
     if account_code is None:
         return False, "كود الحساب مفقود"
 
@@ -143,7 +178,7 @@ def check_sufficient_balance(account_code, amount, conn=None, strict=True):
         own_conn = True
 
     try:
-        # 1) البحث في الصناديق النقدية
+        # 1) الصناديق
         row = conn.execute(
             "SELECT name, current_balance FROM cash_accounts "
             "WHERE account_code = ? AND is_active = 1",
@@ -164,7 +199,7 @@ def check_sufficient_balance(account_code, amount, conn=None, strict=True):
                 )
             return True, None
 
-        # 2) البحث في الحسابات البنكية
+        # 2) البنوك
         try:
             row = conn.execute(
                 "SELECT bank_name, current_balance FROM bank_accounts "
@@ -188,11 +223,9 @@ def check_sufficient_balance(account_code, amount, conn=None, strict=True):
         except Exception:
             pass
 
-        # 3) لم نجد الحساب
         if strict:
             return False, (
-                f"⚠️ الحساب '{account_code}' غير موجود في الصناديق أو البنوك. "
-                f"إذا كانت عملية إدارية، استخدم skip_balance_check=True"
+                f"⚠️ الحساب '{account_code}' غير موجود في الصناديق أو البنوك."
             )
         return True, None
 
@@ -205,7 +238,6 @@ def check_sufficient_balance(account_code, amount, conn=None, strict=True):
 # إنشاء الجداول
 # ============================================================
 def create_cash_tables():
-    """إنشاء جداول الصندوق إذا لم تكن موجودة"""
     conn = get_connection()
     try:
         conn.execute("""
@@ -242,11 +274,10 @@ def create_cash_tables():
 
 
 # ============================================================
-# ✅ إنشاء حساب صندوق — مع قيد افتتاحي تلقائي + كود فريد
+# إنشاء حساب صندوق
 # ============================================================
 def create_cash_account(name, currency_code="YER", opening_balance=0.0,
                          account_code=None, created_by="admin"):
-    """إنشاء حساب صندوق جديد."""
     if not name or not str(name).strip():
         return False, "اسم الصندوق مطلوب"
 
@@ -282,8 +313,7 @@ def create_cash_account(name, currency_code="YER", opening_balance=0.0,
             capital_account_code = _read_functional_code(conn, "capital")
             if not capital_account_code:
                 raise ValueError(
-                    "حساب رأس المال مفقود في شجرة الحسابات. "
-                    "أضف حساباً بالنوع الوظيفي 'capital' أولاً."
+                    "حساب رأس المال مفقود في شجرة الحسابات."
                 )
 
         cur = conn.execute(
@@ -314,18 +344,15 @@ def create_cash_account(name, currency_code="YER", opening_balance=0.0,
                 },
             ]
 
-            _journal_result = save_journal_entry(
+            entry_id, jerr = save_journal_entry(
                 description=f"رصيد افتتاحي لصندوق {name}",
                 lines=lines,
                 entry_date=date.today().strftime("%Y-%m-%d"),
                 conn=conn,
                 skip_period_check=True,
             )
-
-            if isinstance(_journal_result, tuple):
-                entry_id, jerr = _journal_result
-                if jerr:
-                    raise ValueError(f"فشل القيد الافتتاحي: {jerr}")
+            if jerr:
+                raise ValueError(f"فشل القيد الافتتاحي: {jerr}")
 
         conn.commit()
 
@@ -362,7 +389,6 @@ def create_cash_account(name, currency_code="YER", opening_balance=0.0,
 
 
 def get_all_cash_accounts(active_only=True, conn=None):
-    """جلب جميع حسابات الصندوق"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -380,7 +406,6 @@ def get_all_cash_accounts(active_only=True, conn=None):
 
 
 def get_cash_account_by_id(account_id, conn=None):
-    """جلب حساب صندوق محدد"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -395,11 +420,7 @@ def get_cash_account_by_id(account_id, conn=None):
             close_connection(conn)
 
 
-# ============================================================
-# ✅ update_cash_balance — نسخة ذرّية (Atomic)
-# ============================================================
 def update_cash_balance(account_id, conn=None):
-    """تحديث رصيد الصندوق — ذرّي بالكامل."""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -456,7 +477,7 @@ def update_cash_balance(account_id, conn=None):
 
 
 # ============================================================
-# حركات الصندوق
+# حركة صندوق مستقلة (إيداع/سحب يدوي) — لا تُستخدم في التحويلات
 # ============================================================
 def add_cash_transaction(
     cash_account_id,
@@ -500,8 +521,14 @@ def add_cash_transaction(
                 conn.rollback()
             return False, "حساب الصندوق غير موجود"
 
-        cash_code = account.get('account_code') or _read_functional_code(conn, "cash")
-        currency = account.get('currency_code', 'YER')
+        # 🔧 v9.1: رفض fallback + رفض العملة الفارغة
+        try:
+            cash_code = _require_account_code(account, "الصندوق")
+            currency = _require_currency(account, "الصندوق")
+        except ValueError as ve:
+            if own_conn:
+                conn.rollback()
+            return False, str(ve)
 
         if trans_type == 'withdrawal' and not skip_balance_check:
             ok, err = check_sufficient_balance(
@@ -521,9 +548,14 @@ def add_cash_transaction(
         journal_id = None
 
         if create_journal:
+            # 🔧 v9.1: contra اختياري — fallback محافظ
             target_contra_code = contra_account_code or _read_functional_code(conn, "bank")
-            lines = []
+            if not target_contra_code:
+                if own_conn:
+                    conn.rollback()
+                return False, "لم يُمرَّر contra_account_code ولا يوجد حساب بنكي وظيفي."
 
+            lines = []
             if trans_type == 'deposit':
                 lines.append({
                     "account": cash_code,
@@ -555,22 +587,18 @@ def add_cash_transaction(
                     "exchange_rate": exchange_rate
                 })
 
-            _journal_result = save_journal_entry(
+            # 🔧 v9.1: skip_period_check=False
+            journal_id, jerr = save_journal_entry(
                 entry_date=transaction_date,
                 description=f"{description} ({reference})".strip(),
                 lines=lines,
-                conn=conn
+                conn=conn,
+                skip_period_check=False
             )
-
-            if isinstance(_journal_result, tuple):
-                journal_id = _journal_result[0]
-                jerr = _journal_result[1] if len(_journal_result) > 1 else None
-                if jerr:
-                    if own_conn:
-                        conn.rollback()
-                    return False, f"فشل القيد المحاسبي: {jerr}"
-            else:
-                journal_id = _journal_result
+            if jerr:
+                if own_conn:
+                    conn.rollback()
+                return False, f"فشل القيد المحاسبي: {jerr}"
 
         conn.execute(
             """INSERT INTO cash_transactions
@@ -600,15 +628,18 @@ def add_cash_transaction(
             except Exception:
                 pass
 
-        log_action(
-            username=created_by,
-            action=f"{'إيداع' if trans_type == 'deposit' else 'سحب'} صندوق",
-            table_name="cash_transactions",
-            new_value=(
-                f"صندوق: {account['name']}, المبلغ: {amount:,.2f} {currency}, "
-                f"الرصيد الجديد: {new_balance:,.2f}"
+        try:
+            log_action(
+                username=created_by,
+                action=f"{'إيداع' if trans_type == 'deposit' else 'سحب'} صندوق",
+                table_name="cash_transactions",
+                new_value=(
+                    f"صندوق: {account['name']}, المبلغ: {amount:,.2f} {currency}, "
+                    f"الرصيد الجديد: {new_balance:,.2f}"
+                )
             )
-        )
+        except Exception:
+            pass
 
         return True, f"تمت الحركة بنجاح. الرصيد الحالي: {new_balance:,.2f}"
 
@@ -625,132 +656,172 @@ def add_cash_transaction(
 
 
 # ============================================================
-# التحويل بين الصناديق (v8.1: إصلاح get_exchange_rate)
+# 🔧 v9.1: التحويل بين الصناديق
+#   - تقبل conn
+#   - تُعيد (journal_id, error) موحّد
+#   - قيد واحد + حركتان مباشرتان
+#   - رفض اختلاف العملات
 # ============================================================
 def transfer_between_cashes(from_account_id, to_account_id, amount, transfer_date,
                              description="تحويل بين الصناديق", reference="",
-                             created_by="admin"):
-    """تحويل بين صندوقين — مع فحص الرصيد."""
+                             created_by="admin", conn=None):
+    """
+    تحويل بين صندوقين.
+    ✅ يُعيد دائمًا: (journal_id, error)
+    """
     try:
         amount = float(amount)
     except (TypeError, ValueError):
-        return False, "المبلغ غير صحيح"
+        return None, "المبلغ غير صحيح"
 
     if amount <= 0:
-        return False, "المبلغ يجب أن يكون أكبر من صفر"
+        return None, "المبلغ يجب أن يكون أكبر من صفر"
 
     if from_account_id == to_account_id:
-        return False, "لا يمكن التحويل لنفس الصندوق"
+        return None, "لا يمكن التحويل لنفس الصندوق"
 
-    conn = get_connection()
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
+
     try:
-        conn.execute("BEGIN IMMEDIATE")
+        if own_conn:
+            conn.execute("BEGIN IMMEDIATE")
 
         from_acc = get_cash_account_by_id(from_account_id, conn=conn)
         to_acc = get_cash_account_by_id(to_account_id, conn=conn)
 
         if not from_acc or not to_acc:
-            conn.rollback()
-            return False, "أحد حسابات الصندوق غير موجود"
+            if own_conn:
+                conn.rollback()
+            return None, "أحد حسابات الصندوق غير موجود"
 
-        from_code = from_acc.get('account_code') or _read_functional_code(conn, "cash")
-        to_code = to_acc.get('account_code') or _read_functional_code(conn, "cash")
+        if not from_acc.get('is_active', 1) or not to_acc.get('is_active', 1):
+            if own_conn:
+                conn.rollback()
+            return None, "أحد الحسابات غير نشط"
 
+        # 🔧 v9.1: رفض fallback + رفض العملة الفارغة
+        try:
+            from_code = _require_account_code(from_acc, "الصندوق المصدر")
+            to_code = _require_account_code(to_acc, "الصندوق الوجهة")
+            from_curr = _require_currency(from_acc, "الصندوق المصدر")
+            to_curr = _require_currency(to_acc, "الصندوق الوجهة")
+        except ValueError as ve:
+            if own_conn:
+                conn.rollback()
+            return None, str(ve)
+
+        # 🔧 v9.1: رفض اختلاف العملات
+        if from_curr != to_curr:
+            if own_conn:
+                conn.rollback()
+            return None, (
+                f"لا يمكن تحويل الأموال بين حسابين بعملتين مختلفتين حاليًا. "
+                f"المصدر: {from_curr} — الوجهة: {to_curr}."
+            )
+
+        # فحص الرصيد
         ok, err = check_sufficient_balance(
             from_code, amount, conn=conn, strict=True
         )
         if not ok:
-            conn.rollback()
-            return False, err
+            if own_conn:
+                conn.rollback()
+            return None, err
 
-        from_curr = from_acc.get('currency_code', 'YER')
-        to_curr = to_acc.get('currency_code', 'YER')
+        # 🔧 v9.1: reference موحّد + منع التكرار
+        if not reference:
+            reference = _generate_transfer_reference(conn)
 
-        # ✅ v8.1: استخدام الدالة المساعدة
-        from_rate, to_rate = _get_transfer_rates(from_curr, to_curr)
+        if _reference_exists(conn, reference):
+            if own_conn:
+                conn.rollback()
+            return None, (
+                f"مرجع التحويل '{reference}' مستخدم مسبقًا."
+            )
 
-        base_amount = amount * from_rate
-        converted_to_amount = base_amount / to_rate if to_rate else amount
-
+        # 🔧 v9.1: قيد واحد بنفس المبلغ (لا تحويل عملات)
         lines = [
             {
                 "account": to_code,
-                "debit": converted_to_amount,
+                "debit": amount,
                 "credit": 0.0,
                 "currency_code": to_curr,
-                "exchange_rate": to_rate
+                "exchange_rate": 1.0
             },
             {
                 "account": from_code,
                 "debit": 0.0,
                 "credit": amount,
                 "currency_code": from_curr,
-                "exchange_rate": from_rate
+                "exchange_rate": 1.0
             }
         ]
 
-        result = save_journal_entry(
+        journal_id, jerr = save_journal_entry(
             entry_date=transfer_date,
             description=f"{description} من {from_acc['name']} إلى {to_acc['name']}",
             lines=lines,
-            conn=conn
+            conn=conn,
+            skip_period_check=False
         )
-        if isinstance(result, tuple):
-            journal_id = result[0]
-            jerr = result[1] if len(result) > 1 else None
-            if jerr:
+        if jerr:
+            if own_conn:
                 conn.rollback()
-                return False, f"فشل القيد: {jerr}"
-        else:
-            journal_id = result
+            return None, f"فشل القيد: {jerr}"
 
-        ok1, msg1 = add_cash_transaction(
-            from_account_id, transfer_date,
-            f"تحويل إلى {to_acc['name']}",
-            'withdrawal', amount, reference,
-            create_journal=False,
-            conn=conn,
-            skip_balance_check=True,
-            created_by=created_by
+        # 🔧 v9.1: إدخال الحركتين مباشرة (بدون add_cash_transaction)
+        conn.execute(
+            """INSERT INTO cash_transactions
+               (cash_account_id, transaction_date, description, type, amount,
+                reference, journal_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (from_account_id, transfer_date,
+             f"تحويل إلى {to_acc['name']}",
+             'withdrawal', amount, reference, journal_id)
         )
-        if not ok1:
-            conn.rollback()
-            return False, f"فشل الخصم: {msg1}"
-
-        ok2, msg2 = add_cash_transaction(
-            to_account_id, transfer_date,
-            f"تحويل من {from_acc['name']}",
-            'deposit', converted_to_amount, reference,
-            create_journal=False,
-            conn=conn,
-            skip_balance_check=True,
-            created_by=created_by
+        conn.execute(
+            """INSERT INTO cash_transactions
+               (cash_account_id, transaction_date, description, type, amount,
+                reference, journal_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (to_account_id, transfer_date,
+             f"تحويل من {from_acc['name']}",
+             'deposit', amount, reference, journal_id)
         )
-        if not ok2:
-            conn.rollback()
-            return False, f"فشل الإيداع: {msg2}"
 
-        conn.commit()
-        return True, f"تم التحويل بنجاح برقم قيد: {journal_id}"
+        # تحديث الرصيدين
+        update_cash_balance(from_account_id, conn=conn)
+        update_cash_balance(to_account_id, conn=conn)
+
+        if own_conn:
+            conn.commit()
+
+        return journal_id, None
 
     except Exception as e:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-        return False, str(e)
+        if own_conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return None, str(e)
     finally:
-        close_connection(conn)
+        if own_conn:
+            close_connection(conn)
 
 
 # ============================================================
-# ✅ دالة التحويل الشاملة (توافق — تُعيد توجيه للـ bank_service)
+# دالة توافق — تُعيد التوجيه إلى bank_service
 # ============================================================
 def transfer_funds(from_kind, from_id, to_kind, to_id, amount,
                    transfer_date, description="تحويل", reference="",
                    conn=None):
     """
-    دالة توافق — تُعيد توجيه إلى bank_service.transfer_funds.
+    توافق — تُعيد التوجيه إلى bank_service.transfer_funds.
+    ✅ تُعيد (journal_id, error) كما في bank_service.
     """
     from services.bank_service import transfer_funds as bank_transfer_funds
     return bank_transfer_funds(
@@ -764,7 +835,6 @@ def transfer_funds(from_kind, from_id, to_kind, to_id, amount,
 # سجل الحركات
 # ============================================================
 def get_cash_transactions(cash_account_id=None, limit=50, conn=None):
-    """جلب حركات الصندوق"""
     own_conn = False
     if conn is None:
         conn = get_connection()
@@ -797,7 +867,6 @@ def get_cash_transactions(cash_account_id=None, limit=50, conn=None):
 # التقارير
 # ============================================================
 def get_cash_balance_summary(conn=None):
-    """ملخص أرصدة جميع صناديق النقدية"""
     accounts = get_all_cash_accounts(active_only=True, conn=conn)
     summary = []
     total_balance_base = 0.0
@@ -828,7 +897,6 @@ def get_cash_balance_summary(conn=None):
 
 
 def get_cash_statement(cash_account_id, from_date, to_date, conn=None):
-    """كشف حساب الصندوق لفترة محددة"""
     own_conn = False
     if conn is None:
         conn = get_connection()
