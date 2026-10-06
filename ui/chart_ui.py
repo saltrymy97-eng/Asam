@@ -1,5 +1,9 @@
-# ui/chart_ui.py – واجهة شجرة الحسابات (v2.1)
-# ✅ v2.1: تمرير created_by + deleted_by لتسجيل التدقيق
+# ui/chart_ui.py – واجهة شجرة الحسابات (v3.0)
+# ✅ v3.0:
+#   - إخفاء الحسابات النظامية (is_system=1) افتراضياً
+#   - منع حذف الحسابات النظامية
+#   - خيار "عرض الحسابات النظامية" للمستخدم
+#   - تمرير created_by + deleted_by لتسجيل التدقيق
 import streamlit as st
 import pandas as pd
 from services.chart_service import (
@@ -72,7 +76,30 @@ def show():
     with tab1:
         st.markdown(f"<h3 style='color:{ACCENT_BLUE};'>شجرة الحسابات</h3>",
                     unsafe_allow_html=True)
-        accounts = get_accounts_tree()
+
+        # ✅ v3.0: خيار عرض الحسابات النظامية
+        col_title, col_toggle = st.columns([3, 1])
+        with col_toggle:
+            show_system = st.checkbox(
+                "🔧 عرض النظامية",
+                value=False,
+                help="عرض الحسابات النظامية (بنوك/صناديق فرعية)",
+                key="show_system_accounts"
+            )
+
+        all_accounts = get_accounts_tree()
+
+        # ✅ v3.0: فلترة الحسابات النظامية
+        if all_accounts:
+            if not show_system:
+                accounts = [
+                    a for a in all_accounts
+                    if not a.get('is_system', 0)
+                ]
+            else:
+                accounts = all_accounts
+        else:
+            accounts = []
 
         if accounts:
             # ✨ فرز الشجرة بترتيب هرمي دقيق
@@ -97,19 +124,31 @@ def show():
             if "functional_type" not in df.columns:
                 df["functional_type"] = "-"
 
+            # ✅ v3.0: إضافة عمود "نظامي"
+            if "is_system" not in df.columns:
+                df["is_system"] = 0
+            df["نظامي"] = df["is_system"].apply(
+                lambda x: "🔧" if x else ""
+            )
+
             df_display = df[[
                 "code", "display_name", "level",
-                "account_type", "functional_type", "يظهر في"
+                "account_type", "functional_type", "يظهر في", "نظامي"
             ]].rename(columns={
                 "code": "الكود",
                 "display_name": "اسم الحساب",
                 "level": "المستوى",
                 "account_type": "التصنيف",
                 "functional_type": "النوع الوظيفي",
-                "يظهر في": "يظهر في"
+                "يظهر في": "يظهر في",
+                "نظامي": "🔧"
             })
 
             st.dataframe(df_display, use_container_width=True, hide_index=True)
+
+            # ✅ v3.0: تنبيه
+            if show_system:
+                st.info("ℹ️ **الحسابات النظامية معروضة** — الحسابات المعلَّمة بـ 🔧 مُدارة تلقائياً من وحدات البنك/الصندوق.")
 
             st.markdown("---")
             st.subheader("🗑️ إدارة الحسابات")
@@ -119,19 +158,40 @@ def show():
                 st.session_state.delete_confirm = None
 
             for acc in accounts:
+                # ✅ v3.0: تمييز الحسابات النظامية
+                is_sys = acc.get('is_system', 0)
+
                 col1, col2 = st.columns([4, 1])
                 with col1:
-                    st.text(f"{acc['code']} - {acc['name']}")
+                    if is_sys:
+                        st.text(f"🔧 {acc['code']} - {acc['name']} (نظامي)")
+                    else:
+                        st.text(f"{acc['code']} - {acc['name']}")
+
                 with col2:
-                    if st.button("🗑️ حذف", key=f"del_{acc['id']}"):
-                        st.session_state.delete_confirm = acc['id']
-                        st.rerun()
+                    if is_sys:
+                        # ✅ v3.0: منع حذف الحسابات النظامية
+                        st.button(
+                            "🔒 محمي",
+                            key=f"del_{acc['id']}",
+                            disabled=True,
+                            help="حساب نظامي — يُدار تلقائياً"
+                        )
+                    else:
+                        if st.button("🗑️ حذف", key=f"del_{acc['id']}"):
+                            st.session_state.delete_confirm = acc['id']
+                            st.rerun()
 
             # ✅ نافذة تأكيد الحذف
             if st.session_state.delete_confirm:
                 acc_id = st.session_state.delete_confirm
                 acc = next((a for a in accounts if a['id'] == acc_id), None)
-                if acc:
+
+                # ✅ v3.0: حماية مزدوجة
+                if acc and acc.get('is_system', 0):
+                    st.error("⚠️ لا يمكن حذف حساب نظامي — استخدم وحدة البنك/الصندوق")
+                    st.session_state.delete_confirm = None
+                elif acc:
                     st.warning(
                         f"⚠️ هل أنت متأكد من حذف الحساب "
                         f"**{acc['code']} - {acc['name']}**؟"
@@ -140,7 +200,6 @@ def show():
                     with col_c1:
                         if st.button("✅ نعم، احذف", type="primary",
                                      key="confirm_delete_yes"):
-                            # ✅ تمرير deleted_by
                             success, message = delete_account(
                                 acc_id,
                                 deleted_by=_current_username(),
@@ -156,7 +215,10 @@ def show():
                             st.session_state.delete_confirm = None
                             st.rerun()
         else:
-            st.info("لا توجد حسابات. أضف حسابات جديدة من التبويب الثاني.")
+            if all_accounts:
+                st.info("لا توجد حسابات عادية للعرض — فعّل 'عرض النظامية' لرؤية جميع الحسابات.")
+            else:
+                st.info("لا توجد حسابات. أضف حسابات جديدة من التبويب الثاني.")
 
     # ============================================================
     # تبويب 2: إضافة حساب
@@ -166,8 +228,22 @@ def show():
                     unsafe_allow_html=True)
         account_options = get_account_options()
 
-        selected_parent = st.selectbox("الحساب الأب", list(account_options.keys()))
-        parent_id = account_options[selected_parent]
+        # ✅ v3.0: فلترة خيارات الحساب الأب — لا نُظهر النظامية كخيار
+        filtered_options = {}
+        for label, pid in account_options.items():
+            if pid is None:
+                filtered_options[label] = pid
+                continue
+            # نتحقق إذا كان الحساب نظامياً
+            acc = next(
+                (a for a in get_accounts_tree() if a['id'] == pid),
+                None
+            )
+            if acc and not acc.get('is_system', 0):
+                filtered_options[label] = pid
+
+        selected_parent = st.selectbox("الحساب الأب", list(filtered_options.keys()))
+        parent_id = filtered_options[selected_parent]
 
         col1, col2 = st.columns(2)
         code = col1.text_input("كود الحساب", key="add_acc_code")
@@ -204,7 +280,6 @@ def show():
             if not code or not name:
                 st.error("الكود والاسم مطلوبان")
             else:
-                # ✅ تمرير created_by
                 success, error = add_account(
                     code, name, parent_id,
                     selected_account_type,
