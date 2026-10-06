@@ -1,6 +1,7 @@
-# services/bank_service.py – منطق التعاملات البنكية (v7.0)
+# services/bank_service.py – منطق التعاملات البنكية (v8.0)
 # ✅ Connection Registry + حماية الرصيد + إصلاح Deadlock + التحقق قبل الإضافة
 # ✅ v7.0: توليد كود فريد لكل بنك + إنشاء حساب نظامي في شجرة الحسابات
+# ✅ v8.0: إضافة دالة transfer_funds الشاملة (4 حالات تحويل)
 import sqlite3
 from datetime import date, datetime
 from database import get_connection, close_connection
@@ -16,12 +17,7 @@ def _generate_unique_bank_code(conn):
     """
     توليد كود فريد للبنك بالشكل:
         1102.01, 1102.02, 1102.03, ...
-    
-    يعتمد على:
-        - الحساب الأب (functional_type='bank') → "1102"
-        - عدّ البنوك الحالية في bank_accounts
     """
-    # 1. إيجاد الحساب الأب للبنك
     parent = conn.execute("""
         SELECT id, code, level FROM accounts
         WHERE functional_type = 'bank' AND is_active = 1
@@ -39,13 +35,10 @@ def _generate_unique_bank_code(conn):
     parent_id = parent["id"]
     parent_level = parent["level"]
 
-    # 2. عدّ البنوك الحالية
     count = conn.execute(
         "SELECT COUNT(*) FROM bank_accounts"
     ).fetchone()[0]
 
-    # 3. توليد الكود
-    # → 1102.01, 1102.02, ...
     new_code = f"{parent_code}.{(count + 1):02d}"
 
     return {
@@ -64,7 +57,6 @@ def _create_system_account(conn, code, name, parent_id, parent_level,
     """
     إنشاء حساب نظامي في شجرة الحسابات.
     - is_system = 1 → مخفي افتراضياً من الواجهة
-    - account_type = 'Asset' (كل البنوك/الصناديق أصول)
     """
     conn.execute("""
         INSERT INTO accounts
@@ -128,11 +120,7 @@ def create_bank_account(bank_name, account_number, account_name="",
                         account_code=None, conn=None):
     """
     إضافة حساب بنكي جديد.
-    
-    ✅ v7.0:
-      - توليد كود فريد تلقائياً: 1102.01, 1102.02, ...
-      - إنشاء حساب نظامي في شجرة الحسابات (is_system=1)
-      - القيد الافتتاحي يستخدم الحساب الفرعي الجديد
+    ✅ v7.0: توليد كود فريد + إنشاء حساب نظامي
     """
     own_conn = False
     if conn is None:
@@ -143,18 +131,12 @@ def create_bank_account(bank_name, account_number, account_name="",
         if own_conn:
             conn.execute("BEGIN IMMEDIATE")
 
-        # ============================================================
-        # ✅ v7.0: توليد كود فريد تلقائياً
-        # ============================================================
         if account_code:
-            # كود مُمرَّر يدوياً (نادر)
             final_account_code = account_code
         else:
-            # توليد تلقائي
             code_info = _generate_unique_bank_code(conn)
             final_account_code = code_info["new_code"]
 
-            # إنشاء الحساب النظامي في شجرة الحسابات
             _create_system_account(
                 conn,
                 code=final_account_code,
@@ -164,7 +146,6 @@ def create_bank_account(bank_name, account_number, account_name="",
                 functional_type='bank',
             )
 
-        # التحقق من حساب رأس المال (لو فيه رصيد افتتاحي)
         capital_account_code = None
         if opening_balance > 0:
             capital_account_code = get_functional_account("capital")
@@ -174,7 +155,6 @@ def create_bank_account(bank_name, account_number, account_name="",
                     "أضف حساباً بالنوع الوظيفي 'capital' أولاً."
                 )
 
-        # إدراج البنك
         conn.execute(
             """INSERT INTO bank_accounts 
                (bank_name, account_number, account_name, currency_code, 
@@ -184,7 +164,6 @@ def create_bank_account(bank_name, account_number, account_name="",
              opening_balance, opening_balance, final_account_code)
         )
 
-        # القيد الافتتاحي
         if opening_balance > 0:
             lines = [
                 {
@@ -617,6 +596,229 @@ def transfer_between_banks(from_account_id, to_account_id, amount,
             close_connection(conn)
 
 
+# ============================================================
+# ✅ v8.0: دالة التحويل الشاملة — تدعم 4 حالات
+# ============================================================
+def transfer_funds(from_kind, from_id, to_kind, to_id, amount,
+                   transfer_date, description="تحويل", reference="",
+                   conn=None):
+    """
+    تحويل موحّد بين أي حسابين (بنك/صندوق).
+    
+    ✅ v8.0: تدعم 4 حالات:
+        - bank → bank    (تستدعي transfer_between_banks)
+        - bank → cash    (جديدة)
+        - cash → bank    (جديدة)
+        - cash → cash    (تستدعي transfer_between_cashes)
+    
+    Args:
+        from_kind: 'bank' أو 'cash'
+        from_id:   id الحساب المصدر
+        to_kind:   'bank' أو 'cash'
+        to_id:     id الحساب الهدف
+        amount:    المبلغ
+        transfer_date: التاريخ (YYYY-MM-DD)
+        description: البيان
+        reference: المرجع (اختياري — يُولَّد تلقائياً إذا فارغ)
+    
+    Returns:
+        (journal_id, None) عند النجاح
+        (None, "رسالة الخطأ") عند الفشل
+    """
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        return None, "المبلغ غير صحيح"
+
+    if amount <= 0:
+        return None, "المبلغ يجب أن يكون أكبر من صفر"
+
+    if from_kind == to_kind and from_id == to_id:
+        return None, "لا يمكن التحويل لنفس الحساب"
+
+    # ✅ 1. الحالة: بنك → بنك (استدعاء الدالة الموجودة)
+    if from_kind == 'bank' and to_kind == 'bank':
+        try:
+            journal_id = transfer_between_banks(
+                from_id, to_id, amount, transfer_date,
+                description=description, reference=reference, conn=conn
+            )
+            return journal_id, None
+        except Exception as e:
+            return None, str(e)
+
+    # ✅ 2. الحالة: صندوق → صندوق (استدعاء من cash_service)
+    if from_kind == 'cash' and to_kind == 'cash':
+        try:
+            from services.cash_service import transfer_between_cashes
+            ok, msg = transfer_between_cashes(
+                from_id, to_id, amount, transfer_date,
+                description=description, reference=reference
+            )
+            if not ok:
+                return None, msg
+            # نُعيد قيد رقم — لكن transfer_between_cashes لا تُعيده
+            # نُعيد True فقط
+            return True, None
+        except Exception as e:
+            return None, str(e)
+
+    # ✅ 3 و 4. الحالات: بنك ↔ صندوق (جديدة)
+    own_conn = False
+    if conn is None:
+        conn = get_connection()
+        own_conn = True
+
+    try:
+        if own_conn:
+            conn.execute("BEGIN IMMEDIATE")
+
+        # تحديد الحسابات
+        if from_kind == 'bank':
+            from_acc = get_bank_account_by_id(from_id, conn=conn)
+            from_table = 'bank_transactions'
+            from_id_col = 'bank_account_id'
+        else:
+            from services.cash_service import get_cash_account_by_id
+            from_acc = get_cash_account_by_id(from_id, conn=conn)
+            from_table = 'cash_transactions'
+            from_id_col = 'cash_account_id'
+
+        if to_kind == 'bank':
+            to_acc = get_bank_account_by_id(to_id, conn=conn)
+            to_table = 'bank_transactions'
+        else:
+            from services.cash_service import get_cash_account_by_id
+            to_acc = get_cash_account_by_id(to_id, conn=conn)
+            to_table = 'cash_transactions'
+
+        if not from_acc or not to_acc:
+            if own_conn:
+                conn.rollback()
+            return None, "أحد الحسابات غير موجود"
+
+        # فحص الرصيد
+        if from_kind == 'bank':
+            ok, err = check_bank_sufficient_balance(from_id, amount, conn=conn)
+            if not ok:
+                if own_conn:
+                    conn.rollback()
+                return None, err
+        else:
+            from services.cash_service import check_sufficient_balance
+            from_code = from_acc.get('account_code')
+            ok, err = check_sufficient_balance(from_code, amount, conn=conn)
+            if not ok:
+                if own_conn:
+                    conn.rollback()
+                return None, err
+
+        # الحسابات المحاسبية
+        from_code = from_acc.get('account_code') or get_functional_account(from_kind)
+        to_code = to_acc.get('account_code') or get_functional_account(to_kind)
+
+        from_curr = from_acc.get('currency_code', 'YER')
+        to_curr = to_acc.get('currency_code', 'YER')
+
+        from_rate = get_exchange_rate(from_curr)
+        to_rate = get_exchange_rate(to_curr)
+
+        base_amount = amount * from_rate
+        converted_to_amount = base_amount / to_rate if to_rate else amount
+
+        # القيد المحاسبي
+        lines = [
+            {
+                "account": to_code,
+                "debit": converted_to_amount,
+                "credit": 0.0,
+                "currency_code": to_curr,
+                "exchange_rate": to_rate
+            },
+            {
+                "account": from_code,
+                "debit": 0.0,
+                "credit": amount,
+                "currency_code": from_curr,
+                "exchange_rate": from_rate
+            }
+        ]
+
+        _journal_result = save_journal_entry(
+            entry_date=transfer_date,
+            description=description or "تحويل",
+            lines=lines,
+            conn=conn,
+            skip_period_check=True
+        )
+
+        if isinstance(_journal_result, tuple):
+            journal_id, jerr = _journal_result
+            if jerr:
+                if own_conn:
+                    conn.rollback()
+                return None, f"فشل القيد: {jerr}"
+        else:
+            journal_id = _journal_result
+
+        # ✅ تسجيل الحركتين في الجدولين المناسبين
+        # (بدون قيد محاسبي — لأن القيد أُنشئ أعلاه)
+        ref = reference or f"TR-{date.today().strftime('%Y%m%d')}-{journal_id}"
+
+        # الحركة الصادرة
+        conn.execute(f"""
+            INSERT INTO {from_table}
+            ({"cash_account_id" if from_kind == 'cash' else "bank_account_id"},
+             transaction_date, description, type, amount, reference, journal_id)
+            VALUES (?, ?, ?, 'withdrawal', ?, ?, ?)
+        """, (
+            from_id, transfer_date,
+            f"تحويل إلى {to_acc.get('bank_name') or to_acc.get('name', '')}",
+            amount, ref, journal_id
+        ))
+
+        # الحركة الواردة
+        conn.execute(f"""
+            INSERT INTO {to_table}
+            ({"cash_account_id" if to_kind == 'cash' else "bank_account_id"},
+             transaction_date, description, type, amount, reference, journal_id)
+            VALUES (?, ?, ?, 'deposit', ?, ?, ?)
+        """, (
+            to_id, transfer_date,
+            f"تحويل من {from_acc.get('bank_name') or from_acc.get('name', '')}",
+            converted_to_amount, ref, journal_id
+        ))
+
+        # تحديث الرصيدين
+        if from_kind == 'bank':
+            update_bank_balance(from_id, conn=conn)
+        else:
+            from services.cash_service import update_cash_balance
+            update_cash_balance(from_id, conn=conn)
+
+        if to_kind == 'bank':
+            update_bank_balance(to_id, conn=conn)
+        else:
+            from services.cash_service import update_cash_balance
+            update_cash_balance(to_id, conn=conn)
+
+        if own_conn:
+            conn.commit()
+
+        return journal_id, None
+
+    except Exception as e:
+        if own_conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return None, str(e)
+    finally:
+        if own_conn:
+            close_connection(conn)
+
+
 def get_bank_transactions(bank_account_id=None, limit=50, conn=None):
     """جلب الحركات البنكية"""
     own_conn = False
@@ -706,10 +908,7 @@ def get_unreconciled_transactions(bank_account_id, conn=None):
 
 def create_bank_reconciliation(bank_account_id, reconciliation_date,
                                 statement_balance, notes="", conn=None):
-    """
-    إنشاء تسوية بنكية جديدة.
-    ✅ يقبل notes (نص حر) لتوضيح أسباب الفرق.
-    """
+    """إنشاء تسوية بنكية جديدة."""
     own_conn = False
     if conn is None:
         conn = get_connection()
