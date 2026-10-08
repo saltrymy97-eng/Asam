@@ -1,5 +1,10 @@
-# services/inventory_adjustment_service.py – التسويات المخزنية والجرد (v2.0)
+# services/inventory_adjustment_service.py – التسويات المخزنية والجرد (v3.0)
 # ✅ Connection Registry + conn=None
+# ✅ v3.0: 
+#    - إزالة fallback غير النظيف للحسابات (استخدام _get_required_account)
+#    - إصلاح unit_cost في العجز — متسق مع FIFO
+#    - استخدام purchase_price بدل selling_price في الفائض
+#    - تحقق صارم من unit_cost اليدوي
 import sqlite3
 from datetime import date
 from database import get_connection, close_connection
@@ -11,6 +16,48 @@ from services.chart_service import get_functional_account
 from services.accounting_service import save_journal_entry
 
 
+# ============================================================
+# ✅ v3.0: دالة مساعدة — جلب حساب وظيفي إلزامي (بدون fallback)
+# ============================================================
+def _get_required_account(functional_type, purpose_ar):
+    """
+    جلب حساب وظيفي إلزامي — بدون fallback.
+    
+    Args:
+        functional_type: النوع الوظيفي (مثل "inventory_gain")
+        purpose_ar:      وصف الحساب بالعربية (للرسالة)
+    
+    Returns:
+        (code, None) عند النجاح
+        (None, "رسالة الخطأ") عند الفشل
+    """
+    try:
+        code = get_functional_account(functional_type)
+        if not code:
+            return None, (
+                f"⚠️ الحساب المحاسبي '{purpose_ar}' معرّف لكن بقيمة فارغة.\n"
+                f"النوع الوظيفي: `{functional_type}`"
+            )
+        return code, None
+    except ValueError as e:
+        return None, (
+            f"⚠️ الحساب المحاسبي '{purpose_ar}' غير مهيأ في شجرة الحسابات.\n\n"
+            f"النوع الوظيفي المطلوب: `{functional_type}`\n\n"
+            f"السبب: {str(e)}\n\n"
+            f"الحل:\n"
+            f"1. افتح شجرة الحسابات\n"
+            f"2. أضف حساباً بالنوع الوظيفي `{functional_type}`\n"
+            f"3. أعد المحاولة"
+        )
+    except Exception as e:
+        return None, (
+            f"⚠️ خطأ غير متوقع أثناء جلب حساب '{purpose_ar}': {str(e)}"
+        )
+
+
+# ============================================================
+# إنشاء الجداول
+# ============================================================
 def create_adjustments_table(conn=None):
     """إنشاء جدول التسويات إذا لم يكن موجوداً"""
     own_conn = False
@@ -60,6 +107,9 @@ def get_products_for_adjustment(conn=None):
             close_connection(conn)
 
 
+# ============================================================
+# ✅ v3.0: إنشاء تسوية مخزنية (جرد) — محدَّث
+# ============================================================
 def create_adjustment(product_id, expected_qty, actual_qty, unit_cost=None,
                       reason="", reference="", created_by="admin",
                       adjustment_date=None, conn=None):
@@ -69,28 +119,15 @@ def create_adjustment(product_id, expected_qty, actual_qty, unit_cost=None,
     - إذا actual > expected → فائض (قيد إيرادات فائض الجرد)
     - إذا actual < expected → عجز (قيد خسائر عجز الجرد)
     
-    ⚠️ ملاحظة: لا يمس الصندوق/البنك — لا يحتاج فحص رصيد.
+    ✅ v3.0:
+       - لا fallback للحسابات
+       - unit_cost في العجز = total_cost_FIFO / difference
+       - استخدام purchase_price بدل selling_price في الفائض
     """
     if adjustment_date is None:
         adjustment_date = date.today().strftime("%Y-%m-%d")
 
     create_adjustments_table(conn=conn)
-
-    # الحسابات الوظيفية
-    inventory_acc = get_functional_account("inventory")
-    inventory_gain_acc = (
-        get_functional_account("inventory_gain")
-        or get_functional_account("other_income")
-        or get_functional_account("cogs")
-    )
-    inventory_loss_acc = (
-        get_functional_account("inventory_loss")
-        or get_functional_account("cogs")
-        or get_functional_account("other_expense")
-    )
-
-    if not inventory_acc:
-        return None, "حساب المخزون الوظيفي (inventory) غير معرف في شجرة الحسابات"
 
     own_conn = False
     if conn is None:
@@ -101,57 +138,99 @@ def create_adjustment(product_id, expected_qty, actual_qty, unit_cost=None,
         if own_conn:
             conn.execute("BEGIN")
 
+        # ============================================================
         # 1. جلب بيانات المنتج
+        # ============================================================
         product = conn.execute(
-            "SELECT id, name, quantity, selling_price FROM products WHERE id=?",
+            "SELECT id, name, quantity, purchase_price FROM products WHERE id=?",
             (product_id,)
         ).fetchone()
         if not product:
-            raise Exception("المنتج غير موجود")
+            if own_conn:
+                conn.rollback()
+            return None, "المنتج غير موجود"
 
-        system_qty = product["quantity"]
+        product_name = product["name"]
+        system_qty = float(product["quantity"] or 0)
+        system_purchase_price = float(product["purchase_price"] or 0)
+
+        # تحقق من الكميات
+        expected_qty = float(expected_qty)
+        actual_qty = float(actual_qty)
         difference = actual_qty - expected_qty
 
-        if difference == 0:
-            raise Exception("لا يوجد فرق بين الكمية الفعلية والمتوقعة")
+        if abs(difference) < 0.0001:
+            if own_conn:
+                conn.rollback()
+            return None, "لا يوجد فرق بين الكمية الفعلية والمتوقعة"
 
-        # 2. تحديد التكلفة
-        if unit_cost is None:
-            if difference > 0:
+        # ============================================================
+        # 2. جلب الحسابات الوظيفية (بدون fallback)
+        # ============================================================
+        inventory_acc, err = _get_required_account("inventory", "المخزون")
+        if err:
+            if own_conn:
+                conn.rollback()
+            return None, err
+
+        # ============================================================
+        # 3. تحديد الحساب المقابل + التكلفة حسب نوع الفرق
+        # ============================================================
+        if difference > 0:
+            # ===== فائض =====
+            inventory_gain_acc, err = _get_required_account(
+                "inventory_gain", "أرباح/فائض الجرد"
+            )
+            if err:
+                if own_conn:
+                    conn.rollback()
+                return None, err
+
+            # تحديد unit_cost للفائض
+            if unit_cost is None:
+                # أولوية 1: آخر دفعة FIFO
                 batches = get_available_batches(product_id, conn)
                 if batches:
-                    unit_cost = batches[-1]["unit_cost"]
+                    unit_cost = float(batches[-1]["unit_cost"])
                 else:
-                    unit_cost = (
-                        product["selling_price"]
-                        if product["selling_price"] else 1.0
-                    )
+                    # أولوية 2: purchase_price من المنتج
+                    if system_purchase_price > 0:
+                        unit_cost = system_purchase_price
+                    else:
+                        if own_conn:
+                            conn.rollback()
+                        return None, (
+                            "لا توجد دفعات FIFO ولا سعر شراء معرّف للمنتج. "
+                            "لا يمكن تحديد تكلفة الفائض."
+                        )
             else:
-                fifo_cost = get_fifo_cost(product_id, abs(difference), conn)
-                if fifo_cost is None:
-                    raise Exception("لا توجد دفعات كافية لحساب تكلفة العجز")
-                unit_cost = fifo_cost / abs(difference)
-        else:
-            unit_cost = float(unit_cost)
+                try:
+                    unit_cost = float(unit_cost)
+                except (TypeError, ValueError):
+                    if own_conn:
+                        conn.rollback()
+                    return None, "قيمة unit_cost يجب أن تكون رقماً"
 
-        total_cost = round(abs(difference) * unit_cost, 2)
+                if unit_cost < 0:
+                    if own_conn:
+                        conn.rollback()
+                    return None, "قيمة unit_cost لا يمكن أن تكون سالبة"
 
-        # 3. تحديث المخزون و FIFO وإعداد سطور القيد
-        if difference > 0:
-            if not inventory_gain_acc:
-                raise Exception("حساب أرباح/فائض الجرد (inventory_gain) غير معرف")
+            total_cost = round(abs(difference) * unit_cost, 2)
 
-            # فائض
+            # تحديث الكمية + stock_movement
             conn.execute(
                 "UPDATE products SET quantity = quantity + ? WHERE id = ?",
                 (difference, product_id)
             )
             conn.execute("""
-                INSERT INTO stock_movements (product_id, type, quantity, date, reference)
+                INSERT INTO stock_movements
+                (product_id, type, quantity, date, reference)
                 VALUES (?, 'in', ?, ?, ?)
             """, (product_id, difference, adjustment_date,
                   f"تسوية جرد (فائض) - مرجع: {reference}"))
 
+            # إضافة دفعة FIFO
             add_batch(
                 product_id, difference, unit_cost, adjustment_date,
                 reference=f"تسوية جرد (فائض) - {reference}", conn=conn
@@ -173,35 +252,66 @@ def create_adjustment(product_id, expected_qty, actual_qty, unit_cost=None,
                     "exchange_rate": 1.0,
                 },
             ]
-            desc = f"فائض جرد - {product['name']} (+{difference})"
-        else:
-            if not inventory_loss_acc:
-                raise Exception("حساب خسائر/عجز الجرد (inventory_loss) غير معرف")
+            desc = f"فائض جرد - {product_name} (+{difference})"
 
-            # عجز
+        else:
+            # ===== عجز =====
+            inventory_loss_acc, err = _get_required_account(
+                "inventory_loss", "خسائر/عجز الجرد"
+            )
+            if err:
+                if own_conn:
+                    conn.rollback()
+                return None, err
+
             qty_to_remove = abs(difference)
-            if system_qty < qty_to_remove:
-                raise Exception(
-                    f"الكمية المتاحة ({system_qty}) أقل من العجز ({qty_to_remove})"
+
+            # ✅ فحص الكمية المتاحة
+            if system_qty < qty_to_remove - 0.0001:
+                if own_conn:
+                    conn.rollback()
+                return None, (
+                    f"الكمية المتاحة في النظام ({system_qty:,.2f}) "
+                    f"أقل من العجز ({qty_to_remove:,.2f})"
                 )
 
+            # ✅ فحص FIFO كافٍ — قبل أي تعديل
+            fifo_cost_check = get_fifo_cost(product_id, qty_to_remove, conn)
+            if fifo_cost_check is None:
+                if own_conn:
+                    conn.rollback()
+                return None, (
+                    "لا توجد دفعات FIFO كافية لحساب تكلفة العجز. "
+                    "تأكد من وجود دفعات شراء كافية في المخزون."
+                )
+
+            # ✅ الآن: تحديث الكمية + stock_movement
             conn.execute(
                 "UPDATE products SET quantity = quantity - ? WHERE id = ?",
                 (qty_to_remove, product_id)
             )
             conn.execute("""
-                INSERT INTO stock_movements (product_id, type, quantity, date, reference)
+                INSERT INTO stock_movements
+                (product_id, type, quantity, date, reference)
                 VALUES (?, 'out', ?, ?, ?)
             """, (product_id, qty_to_remove, adjustment_date,
                   f"تسوية جرد (عجز) - مرجع: {reference}"))
 
-            cost, err = consume_fifo(
+            # ✅ استهلاك FIFO الفعلي
+            cost, fifo_err = consume_fifo(
                 product_id, qty_to_remove, conn=conn,
                 reference=f"تسوية جرد (عجز) - {reference}"
             )
             if cost is None:
-                raise Exception(f"فشل استهلاك FIFO: {err}")
+                if own_conn:
+                    conn.rollback()
+                return None, f"فشل استهلاك FIFO: {fifo_err}"
+
             total_cost = round(cost, 2)
+
+            # ✅ v3.0: إعادة حساب unit_cost — متسق مع FIFO الفعلي
+            # (يتم تجاهل unit_cost اليدوي في العجز — لأن FIFO هو المرجع)
+            unit_cost = round(total_cost / qty_to_remove, 4) if qty_to_remove > 0 else 0
 
             lines = [
                 {
@@ -219,9 +329,11 @@ def create_adjustment(product_id, expected_qty, actual_qty, unit_cost=None,
                     "exchange_rate": 1.0,
                 },
             ]
-            desc = f"عجز جرد - {product['name']} (-{abs(difference)})"
+            desc = f"عجز جرد - {product_name} (-{qty_to_remove})"
 
+        # ============================================================
         # 4. إدراج سجل التسوية
+        # ============================================================
         cur = conn.execute("""
             INSERT INTO inventory_adjustments 
                 (date, product_id, expected_qty, actual_qty, difference,
@@ -231,7 +343,9 @@ def create_adjustment(product_id, expected_qty, actual_qty, unit_cost=None,
               unit_cost, total_cost, reason, reference, created_by))
         adj_id = cur.lastrowid
 
-        # 5. إنشاء القيد
+        # ============================================================
+        # 5. إنشاء القيد المحاسبي
+        # ============================================================
         entry_id, error = save_journal_entry(
             description=f"{desc} - تسوية #{adj_id}",
             lines=lines,
@@ -254,7 +368,10 @@ def create_adjustment(product_id, expected_qty, actual_qty, unit_cost=None,
             action="تسوية مخزنية",
             table_name="inventory_adjustments",
             record_id=adj_id,
-            new_value=f"{product['name']}: {difference:+.2f} وحدة، التكلفة: {total_cost:,.2f}"
+            new_value=(
+                f"{product_name}: {difference:+.2f} وحدة، "
+                f"التكلفة: {total_cost:,.2f}، القيد: #{entry_id}"
+            )
         )
 
         return adj_id, None
