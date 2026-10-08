@@ -1,5 +1,8 @@
-# ui/inventory_adjustment_ui.py – واجهة التسويات المخزنية (v2.0)
+# ui/inventory_adjustment_ui.py – واجهة التسويات المخزنية (v3.0)
 # ✅ إصلاح حساب إجمالي العجز + تحسين العرض
+# ✅ v3.0:
+#    - تصحيح عرض التكلفة التقديرية (متوافق مع FIFO في العجز)
+#    - إصلاح تدفق زر الحفظ (تنفيذ مباشر بدون rerun مزدوج)
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -10,6 +13,7 @@ from services.inventory_adjustment_service import (
     create_adjustment,
     get_adjustments,
 )
+from services.fifo_service import get_fifo_cost
 
 
 # ========== ألوان التصميم ==========
@@ -123,7 +127,10 @@ def show():
                     min_value=0.0, step=0.01,
                     value=0.0,
                     key="unit_cost_adj",
-                    help="إذا تركت 0 سيحسبها النظام تلقائياً"
+                    help=(
+                        "إذا تركت 0 سيحسبها النظام تلقائياً.\n"
+                        "⚠️ في حالة العجز: يُستخدم FIFO دائماً بغض النظر عن القيمة المُدخلة."
+                    )
                 )
             with col_c2:
                 adj_date = st.date_input(
@@ -144,66 +151,98 @@ def show():
             )
 
             if difference != 0:
-                # ✅ حساب التكلفة التقديرية
-                default_unit_price = (
-                    product['purchase_price']
-                    or product['selling_price']
-                    or 0
+                # ============================================================
+                # ✅ v3.0: عرض التكلفة التقديرية — متوافق مع FIFO في العجز
+                # ============================================================
+                if difference > 0:
+                    # فائض: التكلفة = difference × (unit_cost_input أو purchase_price)
+                    effective_unit_cost = unit_cost_input if unit_cost_input > 0 else (
+                        product['purchase_price'] or 0
+                    )
+                    total_cost = abs(difference) * effective_unit_cost
+                    cost_label = "التكلفة التقديرية"
+                    cost_note = (
+                        f"({abs(difference):g} × {effective_unit_cost:,.2f})"
+                    )
+                else:
+                    # ✅ عجز: استخدام FIFO الحقيقي
+                    fifo_cost = get_fifo_cost(product['id'], abs(difference))
+
+                    if fifo_cost is not None:
+                        total_cost = fifo_cost
+                        effective_unit_cost = (
+                            fifo_cost / abs(difference)
+                            if abs(difference) > 0 else 0
+                        )
+                        cost_label = "تكلفة FIFO الفعلية"
+                        cost_note = (
+                            f"({abs(difference):g} × "
+                            f"{effective_unit_cost:,.2f} — متوسط FIFO)"
+                        )
+                    else:
+                        # لا توجد دفعات FIFO كافية
+                        total_cost = None
+                        cost_label = "⚠️ لا يمكن تحديد التكلفة"
+                        cost_note = (
+                            "لا توجد دفعات FIFO كافية لحساب تكلفة العجز"
+                        )
+
+                if total_cost is not None:
+                    st.markdown(f"""
+                    <div style="background:{GLASS_BG}; border-radius:8px; padding:10px; 
+                         text-align:center; margin:10px 0;">
+                        <span style="color:{OR}; font-weight:700;">
+                            {cost_label}: {total_cost:,.2f}
+                        </span>
+                        <br>
+                        <span style="color:{S}; font-size:0.85rem;">
+                            {cost_note}
+                        </span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.warning(f"⚠️ {cost_note}")
+
+                # ============================================================
+                # ✅ v3.0: إصلاح تدفق زر الحفظ — تنفيذ مباشر
+                # ============================================================
+                unit_cost_to_send = (
+                    unit_cost_input if unit_cost_input > 0 else None
                 )
-                effective_unit_cost = (
-                    unit_cost_input
-                    if unit_cost_input > 0
-                    else float(default_unit_price)
-                )
-                total_cost = abs(difference) * effective_unit_cost
-
-                st.markdown(f"""
-                <div style="background:{GLASS_BG}; border-radius:8px; padding:10px; 
-                     text-align:center; margin:10px 0;">
-                    <span style="color:{OR}; font-weight:700;">
-                        التكلفة التقديرية: {total_cost:,.2f}
-                    </span>
-                </div>
-                """, unsafe_allow_html=True)
-
-                # ✅ حماية من التكرار
-                if "saving_adjustment" not in st.session_state:
-                    st.session_state.saving_adjustment = False
-
-                can_save = not st.session_state.saving_adjustment
 
                 if st.button(
                     "💾 حفظ التسوية",
                     type="primary",
                     use_container_width=True,
                     key="save_adj",
-                    disabled=not can_save
+                    disabled=(total_cost is None)
                 ):
-                    st.session_state.saving_adjustment = True
-                    st.rerun()
+                    username = st.session_state.get(
+                        'user', {}
+                    ).get('username', 'admin')
 
-                if st.session_state.saving_adjustment:
-                    try:
-                        unit_cost = unit_cost_input if unit_cost_input > 0 else None
-                        adj_id, err = create_adjustment(
-                            product_id=product['id'],
-                            expected_qty=product['quantity'],
-                            actual_qty=actual_qty,
-                            unit_cost=unit_cost,
-                            reason=reason,
-                            reference=reference,
-                            created_by=st.session_state.user.get('username', 'admin'),
-                            adjustment_date=adj_date.strftime("%Y-%m-%d")
-                        )
-                        if err:
-                            st.error(f"❌ فشل: {err}")
-                        else:
-                            st.success(f"✅ تم تسجيل التسوية رقم {adj_id}")
-                    except Exception as e:
-                        st.error(f"❌ خطأ غير متوقع: {e}")
-                    finally:
-                        st.session_state.saving_adjustment = False
-                        st.rerun()
+                    with st.spinner("⏳ جاري حفظ التسوية وإنشاء القيد..."):
+                        try:
+                            adj_id, err = create_adjustment(
+                                product_id=product['id'],
+                                expected_qty=product['quantity'],
+                                actual_qty=actual_qty,
+                                unit_cost=unit_cost_to_send,
+                                reason=reason,
+                                reference=reference,
+                                created_by=username,
+                                adjustment_date=adj_date.strftime("%Y-%m-%d")
+                            )
+                            if err:
+                                st.error(f"❌ فشل: {err}")
+                            else:
+                                st.success(
+                                    f"✅ تم تسجيل التسوية رقم {adj_id} "
+                                    f"مع إنشاء القيد المحاسبي"
+                                )
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ خطأ غير متوقع: {e}")
             else:
                 st.info("الكمية الفعلية تطابق المتوقعة، لا حاجة لتسوية")
 
@@ -250,9 +289,7 @@ def show():
                 }
             )
 
-            # ============================================================
-            # ✅ إصلاح: حساب إجمالي الفائض والعجز بشكل صحيح
-            # ============================================================
+            # حساب إجمالي الفائض والعجز
             total_gain = 0.0
             total_loss = 0.0
 
