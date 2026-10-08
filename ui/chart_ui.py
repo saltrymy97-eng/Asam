@@ -46,7 +46,7 @@ FUNCTIONAL_TYPES = {
     "مجمع الإهلاك (accumulated_depreciation)": "accumulated_depreciation",
     "مصروف الرواتب (salaries_expense)": "salaries_expense",
     "المصروفات المستحقة (accrued_expenses)": "accrued_expenses",
-    "عجز/خسائر المخزون (inventory_gain)": "inventory_gain",
+    "أرباح/زيادة المخزون (inventory_gain)": "inventory_gain",
     "خسائر/نقص الجرد (inventory_loss)": "inventory_loss",
     "فروق أسعار الصرف (exchange_difference)": "exchange_difference",
 }
