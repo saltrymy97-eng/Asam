@@ -1,9 +1,10 @@
-# app_desktop.py — مشغل نظام حوكمة ERP كتطبيق سطح مكتب (v2.1)
-# v2.1:
-# - إزالة استدعاءات chcp التي قد تسبب ظهور نوافذ Console سوداء أثناء التشغيل
-# - الإبقاء على إعدادات UTF-8 عبر متغيرات البيئة
-# - الحفاظ على multiprocessing + Streamlit + WebView2 كما هي
-# - لا تغيير في منطق النظام أو قاعدة البيانات
+# app_desktop.py — مشغل نظام حوكمة ERP كتطبيق سطح مكتب (v3.0 - Edge App Mode)
+# ✅ v3.0:
+#    - التخلص التام من pywebview (يستخدم Edge App Mode بدلاً منه)
+#    - إصلاح دورة حياة السيرفر (إزالة daemon=True)
+#    - فحص جاهزية HTTP حقيقي بدلاً من TCP
+#    - تسجيل الأخطاء في ملف app_error_log.txt
+#    - الإبقاء على إعدادات UTF-8 ودعم multiprocessing
 
 import os
 import sys
@@ -12,65 +13,35 @@ import time
 import socket
 import multiprocessing
 import asyncio
+import subprocess
 import traceback
-
+import urllib.request
 
 # ═══════════════════════════════════════════════════════════
 # إعداد UTF-8 على Windows
-# ملاحظة:
-# لا نستخدم os.system("chcp ...") حتى لا تظهر نوافذ Console
-# أثناء تشغيل التطبيق.
 # ═══════════════════════════════════════════════════════════
 
 if sys.platform == 'win32':
-    # إعداد متغيرات البيئة لدعم UTF-8
     os.environ["PYTHONIOENCODING"] = "utf-8"
     os.environ["PYTHONUTF8"] = "1"
 
-    # إعادة ضبط stdout/stderr إن كانت متاحة
     try:
         if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
-            sys.stdout.reconfigure(
-                encoding='utf-8',
-                errors='replace'
-            )
-
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
         if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
-            sys.stderr.reconfigure(
-                encoding='utf-8',
-                errors='replace'
-            )
-
+            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
     except Exception:
-        # fallback آمن
         try:
             if sys.stdout and hasattr(sys.stdout, 'buffer'):
                 sys.stdout = io.TextIOWrapper(
-                    sys.stdout.buffer,
-                    encoding='utf-8',
-                    errors='replace',
-                    line_buffering=True
+                    sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True
                 )
-
             if sys.stderr and hasattr(sys.stderr, 'buffer'):
                 sys.stderr = io.TextIOWrapper(
-                    sys.stderr.buffer,
-                    encoding='utf-8',
-                    errors='replace',
-                    line_buffering=True
+                    sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True
                 )
-
         except Exception:
             pass
-
-
-# ═══════════════════════════════════════════════════════════
-# Imports
-# ═══════════════════════════════════════════════════════════
-
-import webview
-from streamlit.web import cli as stcli
-
 
 # ═══════════════════════════════════════════════════════════
 # دوال مساعدة
@@ -83,329 +54,143 @@ def find_free_port():
         s.listen(1)
         return s.getsockname()[1]
 
-
-def is_server_running(host, port):
-    """التحقق من أن السيرفر أصبح جاهزاً"""
-    try:
-        with socket.create_connection((host, port), timeout=0.5):
-            return True
-
-    except (socket.error, TimeoutError, OSError):
-        return False
-
+def wait_for_server_http(host, port, timeout=60):
+    """التحقق من جاهزية Streamlit عبر HTTP حقيقي"""
+    url = f"http://{host}:{port}/_stcore/health"
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            with urllib.request.urlopen(url, timeout=1) as response:
+                if response.status == 200:
+                    return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
 
 def get_base_path():
     """المسار الآمن للملفات المدمجة داخل الـ EXE"""
-
     if getattr(sys, 'frozen', False):
         return sys._MEIPASS
-
     return os.path.dirname(os.path.abspath(__file__))
 
-
-def resource_path(relative_path):
-    """تحديد مسار الملفات الخارجية بدقة"""
-
+def log_error(context, error=None):
+    """تسجيل الأخطاء في ملف بجانب EXE"""
     try:
-        base_path = sys._MEIPASS
-
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable)) if getattr(sys, 'frozen', False) else os.getcwd()
+        with open(os.path.join(exe_dir, "app_error_log.txt"), "a", encoding="utf-8") as f:
+            f.write(f"\n--- [{time.strftime('%Y-%m-%d %H:%M:%S')}] {context} ---\n")
+            if error:
+                f.write(str(error) + "\n")
+            f.write(traceback.format_exc())
     except Exception:
-        base_path = os.path.abspath(".")
-
-    return os.path.join(base_path, relative_path)
-
+        pass
 
 # ═══════════════════════════════════════════════════════════
 # تشغيل Streamlit في عملية منفصلة
 # ═══════════════════════════════════════════════════════════
 
 def run_streamlit(port, app_path):
-    """تشغيل Streamlit في عملية منفصلة تماماً"""
-
-    # -------------------------------------------------------
-    # إعداد UTF-8 للعملية الجديدة
-    # لا نستخدم chcp هنا حتى لا تظهر نافذة Console
-    # -------------------------------------------------------
-
+    """تشغيل Streamlit في عملية منفصلة"""
     if sys.platform == 'win32':
-
         os.environ["PYTHONIOENCODING"] = "utf-8"
         os.environ["PYTHONUTF8"] = "1"
 
-        try:
-            if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
-                sys.stdout.reconfigure(
-                    encoding='utf-8',
-                    errors='replace'
-                )
-
-            if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
-                sys.stderr.reconfigure(
-                    encoding='utf-8',
-                    errors='replace'
-                )
-
-        except Exception:
-            pass
-
-    # -------------------------------------------------------
-    # منع ظهور مخرجات Streamlit في Console
-    # -------------------------------------------------------
-
     try:
-        sys.stdout = open(
-            os.devnull,
-            "w",
-            encoding='utf-8'
-        )
-
-        sys.stderr = open(
-            os.devnull,
-            "w",
-            encoding='utf-8'
-        )
-
+        sys.stdout = open(os.devnull, "w", encoding='utf-8')
+        sys.stderr = open(os.devnull, "w", encoding='utf-8')
     except Exception:
         pass
 
     try:
-
-        # ---------------------------------------------------
-        # ضبط مجلد العمل بجانب EXE
-        # ---------------------------------------------------
+        from streamlit.web import cli as stcli
 
         if getattr(sys, 'frozen', False):
-
             exe_dir = os.path.dirname(sys.executable)
-
             os.chdir(exe_dir)
-
-            os.makedirs(
-                os.path.join(exe_dir, "data"),
-                exist_ok=True
-            )
-
-        # ---------------------------------------------------
-        # إعداد Event Loop على Windows
-        # ---------------------------------------------------
+            os.makedirs(os.path.join(exe_dir, "data"), exist_ok=True)
 
         if sys.platform == 'win32':
-            asyncio.set_event_loop_policy(
-                asyncio.WindowsSelectorEventLoopPolicy()
-            )
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-        asyncio.set_event_loop(
-            asyncio.new_event_loop()
-        )
-
-        # ---------------------------------------------------
-        # إعداد Streamlit
-        # ---------------------------------------------------
+        asyncio.set_event_loop(asyncio.new_event_loop())
 
         sys.argv = [
-            "streamlit",
-            "run",
-            app_path,
-
+            "streamlit", "run", app_path,
             f"--server.port={port}",
-
             "--server.headless=true",
-
             "--server.allowRunOnSave=false",
-
             "--browser.gatherUsageStats=false",
-
             "--global.developmentMode=false"
         ]
-
-        # ---------------------------------------------------
-        # تشغيل Streamlit
-        # ---------------------------------------------------
-
         stcli.main()
-
     except Exception as e:
-
-        # ---------------------------------------------------
-        # تسجيل الخطأ في ملف بجانب EXE
-        # ---------------------------------------------------
-
-        try:
-
-            exe_dir = os.path.dirname(
-                os.path.abspath(sys.executable)
-            )
-
-            with open(
-                os.path.join(
-                    exe_dir,
-                    "server_error_log.txt"
-                ),
-                "w",
-                encoding="utf-8"
-            ) as f:
-
-                f.write(
-                    "خطأ في عملية Streamlit المستقلة:\n"
-                )
-
-                f.write(
-                    str(e) + "\n"
-                )
-
-                f.write(
-                    traceback.format_exc()
-                )
-
-        except Exception:
-            pass
-
-    except SystemExit:
-        pass
-
+        log_error("run_streamlit", e)
+        sys.exit(1)
 
 # ═══════════════════════════════════════════════════════════
 # الدالة الرئيسية
 # ═══════════════════════════════════════════════════════════
 
 def main():
-
-    # -------------------------------------------------------
-    # تحديد مسار التطبيق
-    # -------------------------------------------------------
-
     base_path = get_base_path()
-
-    app_py_path = os.path.join(
-        base_path,
-        "app.py"
-    )
-
-    # -------------------------------------------------------
-    # إعداد السيرفر المحلي
-    # -------------------------------------------------------
+    app_py_path = os.path.join(base_path, "app.py")
 
     host = "127.0.0.1"
-
     port = find_free_port()
-
     url = f"http://{host}:{port}"
 
-    # -------------------------------------------------------
-    # تشغيل Streamlit في عملية منفصلة
-    # -------------------------------------------------------
-
-    p = multiprocessing.Process(
-        target=run_streamlit,
-        args=(
-            port,
-            app_py_path
-        ),
-        daemon=True
-    )
-
+    # 1. تشغيل Streamlit (بدون daemon=True)
+    p = multiprocessing.Process(target=run_streamlit, args=(port, app_py_path))
     p.start()
 
-    # -------------------------------------------------------
-    # انتظار جاهزية Streamlit
-    # -------------------------------------------------------
+    # 2. انتظار جاهزية HTTP
+    if not wait_for_server_http(host, port, timeout=60):
+        log_error("Timeout: Streamlit did not respond within 60s")
+        p.terminate()
+        p.join()
+        return
 
-    max_retries = 80
+    # 3. تحديد مسار Edge
+    edge_paths = [
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"
+    ]
+    edge_exe = "msedge"  # fallback (يبحث في PATH)
+    for path in edge_paths:
+        if os.path.exists(path):
+            edge_exe = path
+            break
 
-    retries = 0
+    # 4. تشغيل Edge App Mode
+    try:
+        browser_process = subprocess.Popen([
+            edge_exe,
+            f"--app={url}",
+            "--window-size=1366,768",
+            "--window-position=0,0"
+        ])
+        
+        # الانتظار حتى يغلق المستخدم النافذة
+        browser_process.wait()
 
-    while (
-        not is_server_running(host, port)
-        and retries < max_retries
-    ):
+    except FileNotFoundError:
+        log_error("Edge not found - falling back to default browser")
+        import webbrowser
+        webbrowser.open(url)
+    except Exception as e:
+        log_error("Failed to launch Edge", e)
 
-        time.sleep(0.5)
-
-        retries += 1
-
-    # -------------------------------------------------------
-    # إذا لم يستجب السيرفر
-    # -------------------------------------------------------
-
-    if retries >= max_retries:
-
-        try:
-
-            exe_dir = os.path.dirname(
-                os.path.abspath(sys.executable)
-            )
-
-            with open(
-                os.path.join(
-                    exe_dir,
-                    "server_error_log.txt"
-                ),
-                "a",
-                encoding="utf-8"
-            ) as f:
-
-                f.write(
-                    f"\nانتهى الوقت (Timeout): "
-                    f"السيرفر لم يستجب بعد "
-                    f"{max_retries / 2} ثانية."
-                )
-
-        except Exception:
-            pass
-
-    # ═══════════════════════════════════════════════════════
-    # إعداد نافذة التطبيق
-    # ═══════════════════════════════════════════════════════
-
-    window_title = "ERP Governance System - Asam"
-
-    webview.create_window(
-
-        title=window_title,
-
-        url=url,
-
-        width=1280,
-
-        height=800,
-
-        min_size=(800, 600),
-
-        resizable=True,
-
-        maximized=True,
-
-        fullscreen=False,
-
-        confirm_close=False,
-
-        text_select=True,
-
-        easy_drag=False,
-    )
-
-    # ═══════════════════════════════════════════════════════
-    # تشغيل WebView2 / Edge
-    # ═══════════════════════════════════════════════════════
-
-    webview.start(
-
-        private_mode=False,
-
-        storage_path=None,
-
-        debug=False,
-
-        gui='edgechromium',
-    )
-
+    finally:
+        # 5. إغلاق Streamlit عند إغلاق النافذة
+        if p.is_alive():
+            p.terminate()
+            p.join()
 
 # ═══════════════════════════════════════════════════════════
 # نقطة تشغيل البرنامج
 # ═══════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-
     multiprocessing.freeze_support()
-
     main()
