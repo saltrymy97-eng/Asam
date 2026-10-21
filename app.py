@@ -1,7 +1,8 @@
-
-
 import streamlit as st
 import database
+
+# ✅ يجب أن يكون هذا السطر هو الأول بعد استيراد streamlit مباشرة
+st.set_page_config(page_title="حوكمة ERP", layout="wide")
 
 # تهيئة قاعدة البيانات
 database.init_db()
@@ -59,8 +60,6 @@ from ui.backup import show as backup_show
 from ui.pdf_reports import show as pdf_show
 from ui.ai_ui import show as ai_show
 from ui.cash_ui import show as cash_show
-
-st.set_page_config(page_title="حوكمة ERP", layout="wide")
 
 # ========== تصميم القائمة الجانبية الفاخرة ==========
 st.markdown("""
