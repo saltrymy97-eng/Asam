@@ -60,11 +60,82 @@ from ui.cash_ui import show as cash_show
 
 st.set_page_config(page_title="حوكمة ERP", layout="wide")
 
-# ========== تصميم القائمة الجانبية الفاخرة ==========
+# ============================================================
+# ✅ CSS لتجربة تطبيق ويندوز حقيقي
+# ============================================================
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap');
-    
+
+    /* ============================================ */
+    /* ✅ 1. إخفاء عناصر المتصفح                     */
+    /* ============================================ */
+    #MainMenu { visibility: hidden; }
+    footer { visibility: hidden; }
+    header { visibility: hidden; }
+    [data-testid="stStatusWidget"] { display: none !important; }
+    [data-testid="stToolbar"] { display: none !important; }
+    [data-testid="stDecoration"] { display: none !important; }
+
+    /* ============================================ */
+    /* ✅ 2. شريط تمرير أنيق (بدل شريط المتصفح)     */
+    /* ============================================ */
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.05);
+    }
+    ::-webkit-scrollbar-thumb {
+        background: rgba(167, 139, 250, 0.5);
+        border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+        background: rgba(167, 139, 250, 0.8);
+    }
+
+    /* ============================================ */
+    /* ✅ 3. منع تحديد النصوص (إلا في الحقول)        */
+    /* ============================================ */
+    *:not(input):not(textarea):not([contenteditable="true"]) {
+        user-select: none;
+        -webkit-user-select: none;
+        -ms-user-select: none;
+    }
+    input, textarea, [contenteditable="true"], code, pre, .stCodeBlock {
+        user-select: text !important;
+        -webkit-user-select: text !important;
+    }
+
+    /* ============================================ */
+    /* ✅ 4. منع سحب الصور                          */
+    /* ============================================ */
+    img {
+        -webkit-user-drag: none;
+        user-drag: none;
+    }
+
+    /* ============================================ */
+    /* ✅ 5. منع تكبير/تصغير الصفحة بـ Ctrl+Scroll  */
+    /* ============================================ */
+    body {
+        overscroll-behavior: none;
+    }
+
+    /* ============================================ */
+    /* ✅ 6. تحسين الأزرار                          */
+    /* ============================================ */
+    .stButton > button {
+        transition: all 0.2s ease-in-out;
+    }
+    .stButton > button:active {
+        transform: scale(0.98);
+    }
+
+    /* ============================================ */
+    /* ✅ 7. تصميم القائمة الجانبية الفاخرة        */
+    /* ============================================ */
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, rgba(20,20,40,0.95) 0%, rgba(10,10,30,0.98) 100%);
         backdrop-filter: blur(20px);
@@ -122,6 +193,52 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# ============================================================
+# ✅ JavaScript لمنع قائمة المتصفح ومفاتيحه
+# ============================================================
+st.markdown("""
+<script>
+    // 1. منع قائمة Right-click
+    document.addEventListener('contextmenu', function(e) {
+        e.preventDefault();
+    }, false);
+
+    // 2. منع مفاتيح المتصفح غير المرغوبة
+    document.addEventListener('keydown', function(e) {
+        // F5 / Ctrl+R (تحديث)
+        if (e.key === 'F5' || (e.ctrlKey && e.key === 'r')) {
+            e.preventDefault();
+        }
+        // F12 (أدوات المطور)
+        if (e.key === 'F12') {
+            e.preventDefault();
+        }
+        // Ctrl+P (طباعة)
+        if (e.ctrlKey && e.key === 'p') {
+            e.preventDefault();
+        }
+        // Ctrl+S (حفظ)
+        if (e.ctrlKey && e.key === 's') {
+            e.preventDefault();
+        }
+        // Ctrl+U (عرض المصدر)
+        if (e.ctrlKey && e.key === 'u') {
+            e.preventDefault();
+        }
+    }, false);
+
+    // 3. منع سحب الصور
+    document.addEventListener('dragstart', function(e) {
+        if (e.target.tagName === 'IMG') {
+            e.preventDefault();
+        }
+    }, false);
+</script>
+""", unsafe_allow_html=True)
+
+# ============================================================
+# الجلسة
+# ============================================================
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 if 'user' not in st.session_state:
