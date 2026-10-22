@@ -1,5 +1,5 @@
-# app_desktop.py — مشغل نظام حوكمة ERP كتطبيق سطح مكتب (v3.0)
-# v3.0: الانتقال إلى PySide6 (محرك Chromium) + فحص الصحة + تفعيل أدوات المطور
+# app_desktop.py — مشغل نظام حوكمة ERP كتطبيق سطح مكتب (v3.1)
+# v3.1: إصلاح خطأ DeveloperExtrasEnabled (تم تعطيله لأن PySide6 يدعم F12 تلقائياً)
 
 import os
 import sys
@@ -187,7 +187,8 @@ def main():
     
     # ✅ تفعيل أدوات المطور (F12 / Right-Click -> Inspect)
     settings = browser.settings()
-    settings.setAttribute(QWebEngineSettings.WebAttribute.DeveloperExtrasEnabled, True)
+    # تم تعطيل هذا السطر بسبب خطأ AttributeError في PySide6
+    # settings.setAttribute(QWebEngineSettings.WebAttribute.DeveloperExtrasEnabled, True)
     settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
     
     browser.setUrl(QUrl(url))
