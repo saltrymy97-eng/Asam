@@ -1,40 +1,21 @@
-# app_desktop.py — مشغل نظام حوكمة ERP كتطبيق سطح مكتب (v3.1)
-# v3.1: إصلاح خطأ DeveloperExtrasEnabled (تم تعطيله لأن PySide6 يدعم F12 تلقائياً)
+# app_desktop.py — النسخة الاحترافية (v4.1)
+# v4.1: منفذ ديناميكي (يختار منفذاً فارغاً ويمرره للخادم والنافذة معاً)
 
 import os
 import sys
-import io
 import time
 import socket
 import multiprocessing
 import asyncio
 import traceback
 import urllib.request
+import threading
 
-# ═══════════════════════════════════════════════════════════
-# إعداد UTF-8 على Windows
-# ═══════════════════════════════════════════════════════════
+# إعداد UTF-8
 if sys.platform == 'win32':
     os.environ["PYTHONIOENCODING"] = "utf-8"
     os.environ["PYTHONUTF8"] = "1"
 
-    try:
-        if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
-            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-        if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
-            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-    except Exception:
-        try:
-            if sys.stdout and hasattr(sys.stdout, 'buffer'):
-                sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
-            if sys.stderr and hasattr(sys.stderr, 'buffer'):
-                sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
-        except Exception:
-            pass
-
-# ═══════════════════════════════════════════════════════════
-# Imports
-# ═══════════════════════════════════════════════════════════
 from streamlit.web import cli as stcli
 from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import QApplication, QMainWindow
@@ -42,16 +23,23 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEngineSettings
 
 # ═══════════════════════════════════════════════════════════
-# دوال مساعدة
+# دالة البحث عن منفذ فارغ
 # ═══════════════════════════════════════════════════════════
 def find_free_port():
+    """يبحث عن منفذ فارغ ويعيده"""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(('127.0.0.1', 0))
         s.listen(1)
-        return s.getsockname()[1]
+        port = s.getsockname()[1]
+    return port
+
+def get_base_path():
+    if getattr(sys, 'frozen', False):
+        return sys._MEIPASS
+    return os.path.dirname(os.path.abspath(__file__))
 
 def is_streamlit_ready(host, port):
-    """فحص صحة Streamlit بدلاً من فحص المنفذ فقط (يمنع الشاشة البيضاء)"""
+    """فحص جاهزية Streamlit"""
     try:
         url = f"http://{host}:{port}/_stcore/health"
         with urllib.request.urlopen(url, timeout=1) as response:
@@ -59,33 +47,10 @@ def is_streamlit_ready(host, port):
     except Exception:
         return False
 
-def get_base_path():
-    if getattr(sys, 'frozen', False):
-        return sys._MEIPASS
-    return os.path.dirname(os.path.abspath(__file__))
-
-def resource_path(relative_path):
-    try:
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
-
 # ═══════════════════════════════════════════════════════════
-# تشغيل Streamlit في عملية منفصلة
+# تشغيل Streamlit في Thread
 # ═══════════════════════════════════════════════════════════
 def run_streamlit(port, app_path):
-    if sys.platform == 'win32':
-        os.environ["PYTHONIOENCODING"] = "utf-8"
-        os.environ["PYTHONUTF8"] = "1"
-        try:
-            if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
-                sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-            if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
-                sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-        except Exception:
-            pass
-
     try:
         sys.stdout = open(os.devnull, "w", encoding='utf-8')
         sys.stderr = open(os.devnull, "w", encoding='utf-8')
@@ -100,7 +65,6 @@ def run_streamlit(port, app_path):
 
         if sys.platform == 'win32':
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
         asyncio.set_event_loop(asyncio.new_event_loop())
 
         sys.argv = [
@@ -111,16 +75,12 @@ def run_streamlit(port, app_path):
             "--browser.gatherUsageStats=false",
             "--global.developmentMode=false"
         ]
-
         stcli.main()
-
     except Exception as e:
         try:
             exe_dir = os.path.dirname(os.path.abspath(sys.executable))
             with open(os.path.join(exe_dir, "server_error_log.txt"), "w", encoding="utf-8") as f:
-                f.write("خطأ في عملية Streamlit المستقلة:\n")
-                f.write(str(e) + "\n")
-                f.write(traceback.format_exc())
+                f.write("خطأ:\n" + str(e) + "\n" + traceback.format_exc())
         except Exception:
             pass
     except SystemExit:
@@ -133,20 +93,19 @@ def main():
     base_path = get_base_path()
     app_py_path = os.path.join(base_path, "app.py")
     host = "127.0.0.1"
+
+    # 1. البحث عن منفذ فارغ (مرة واحدة)
     port = find_free_port()
     url = f"http://{host}:{port}"
+    
+    print(f"🔍 تم اختيار المنفذ الفارغ: {port}")
 
-    p = multiprocessing.Process(
-        target=run_streamlit,
-        args=(port, app_py_path),
-        daemon=True
-    )
-    p.start()
+    # 2. تشغيل الخادم على المنفذ المحدد
+    server_thread = threading.Thread(target=run_streamlit, args=(port, app_py_path), daemon=True)
+    server_thread.start()
 
-    # ═══════════════════════════════════════════════════════════
-    # الانتظار الذكي (فحص الصحة + فحص العملية)
-    # ═══════════════════════════════════════════════════════════
-    max_retries = 120 # مهلة 60 ثانية
+    # 3. الانتظار حتى يصبح الخادم جاهزاً (فحص الصحة)
+    max_retries = 120
     retries = 0
     server_ready = False
     
@@ -155,53 +114,38 @@ def main():
         if is_streamlit_ready(host, port):
             server_ready = True
             break
-        
-        # إذا ماتت عملية الخادم فجأة (حدث خطأ داخلي)، نتوقف فوراً
-        if not p.is_alive():
-            print("❌ خطأ: توقفت عملية الخادم فجأة قبل أن تصبح جاهزة.")
-            break
-            
         time.sleep(0.5)
         retries += 1
 
     if not server_ready:
+        print("❌ فشل تشغيل الخادم.")
         try:
             exe_dir = os.path.dirname(os.path.abspath(sys.executable))
             with open(os.path.join(exe_dir, "server_error_log.txt"), "a", encoding="utf-8") as f:
-                f.write(f"\nفشل التشغيل: الخادم لم يستجب أو توقف (Timeout/Process died).")
+                f.write(f"\nفشل التشغيل: الخادم لم يستجب (Timeout).")
         except Exception:
             pass
         sys.exit(1)
 
-    print("✅ الخادم جاهز، جاري فتح النافذة...")
+    print(f"✅ الخادم جاهز على المنفذ {port}، جاري فتح النافذة...")
 
-    # ═══════════════════════════════════════════════════════════
-    # تشغيل نافذة PySide6
-    # ═══════════════════════════════════════════════════════════
+    # 4. تشغيل نافذة PySide6 على نفس المنفذ (نمرر نفس المتغير port)
     app = QApplication(sys.argv)
     window = QMainWindow()
     window.setWindowTitle("ERP Governance System - Asam")
     window.setGeometry(100, 100, 1280, 800)
     
     browser = QWebEngineView()
-    
-    # ✅ تفعيل أدوات المطور (F12 / Right-Click -> Inspect)
     settings = browser.settings()
-    # تم تعطيل هذا السطر بسبب خطأ AttributeError في PySide6
-    # settings.setAttribute(QWebEngineSettings.WebAttribute.DeveloperExtrasEnabled, True)
     settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
     
+    # ✅ الرابط هنا يحتوي على نفس المنفذ الذي اخترناه للخادم
     browser.setUrl(QUrl(url))
     window.setCentralWidget(browser)
-    
-    # فتح النافذة بحجم الشاشة الكامل
     window.showMaximized()
     
     sys.exit(app.exec())
 
-# ═══════════════════════════════════════════════════════════
-# نقطة تشغيل البرنامج
-# ═══════════════════════════════════════════════════════════
 if __name__ == "__main__":
     multiprocessing.freeze_support()
     main()
