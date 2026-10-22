@@ -1,5 +1,5 @@
-# app_desktop.py — مشغل نظام حوكمة ERP كتطبيق سطح مكتب (v2.2)
-# v2.2: إضافة إصلاح أبعاد الشاشات الكبيرة والقوائم المنسدلة عبر JavaScript
+# app_desktop.py — مشغل نظام حوكمة ERP كتطبيق سطح مكتب (v3.0)
+# v3.0: الانتقال إلى PySide6 (محرك Chromium) + فحص الصحة + تفعيل أدوات المطور
 
 import os
 import sys
@@ -9,6 +9,7 @@ import socket
 import multiprocessing
 import asyncio
 import traceback
+import urllib.request
 
 # ═══════════════════════════════════════════════════════════
 # إعداد UTF-8 على Windows
@@ -34,8 +35,11 @@ if sys.platform == 'win32':
 # ═══════════════════════════════════════════════════════════
 # Imports
 # ═══════════════════════════════════════════════════════════
-import webview
 from streamlit.web import cli as stcli
+from PySide6.QtCore import QUrl
+from PySide6.QtWidgets import QApplication, QMainWindow
+from PySide6.QtWebEngineWidgets import QWebEngineView
+from PySide6.QtWebEngineCore import QWebEngineSettings
 
 # ═══════════════════════════════════════════════════════════
 # دوال مساعدة
@@ -46,11 +50,13 @@ def find_free_port():
         s.listen(1)
         return s.getsockname()[1]
 
-def is_server_running(host, port):
+def is_streamlit_ready(host, port):
+    """فحص صحة Streamlit بدلاً من فحص المنفذ فقط (يمنع الشاشة البيضاء)"""
     try:
-        with socket.create_connection((host, port), timeout=0.5):
-            return True
-    except (socket.error, TimeoutError, OSError):
+        url = f"http://{host}:{port}/_stcore/health"
+        with urllib.request.urlopen(url, timeout=1) as response:
+            return response.status == 200
+    except Exception:
         return False
 
 def get_base_path():
@@ -137,61 +143,60 @@ def main():
     )
     p.start()
 
-    max_retries = 80
+    # ═══════════════════════════════════════════════════════════
+    # الانتظار الذكي (فحص الصحة + فحص العملية)
+    # ═══════════════════════════════════════════════════════════
+    max_retries = 120 # مهلة 60 ثانية
     retries = 0
-    while not is_server_running(host, port) and retries < max_retries:
+    server_ready = False
+    
+    print("⏳ جاري انتظار الخادم...")
+    while retries < max_retries:
+        if is_streamlit_ready(host, port):
+            server_ready = True
+            break
+        
+        # إذا ماتت عملية الخادم فجأة (حدث خطأ داخلي)، نتوقف فوراً
+        if not p.is_alive():
+            print("❌ خطأ: توقفت عملية الخادم فجأة قبل أن تصبح جاهزة.")
+            break
+            
         time.sleep(0.5)
         retries += 1
 
-    if retries >= max_retries:
+    if not server_ready:
         try:
             exe_dir = os.path.dirname(os.path.abspath(sys.executable))
             with open(os.path.join(exe_dir, "server_error_log.txt"), "a", encoding="utf-8") as f:
-                f.write(f"\nانتهى الوقت (Timeout): السيرفر لم يستجب بعد {max_retries / 2} ثانية.")
+                f.write(f"\nفشل التشغيل: الخادم لم يستجب أو توقف (Timeout/Process died).")
         except Exception:
             pass
+        sys.exit(1)
 
-    window_title = "ERP Governance System - Asam"
+    print("✅ الخادم جاهز، جاري فتح النافذة...")
 
-    window = webview.create_window(
-        title=window_title,
-        url=url,
-        width=1280,
-        height=800,
-        min_size=(800, 600),
-        resizable=True,
-        maximized=True,
-        fullscreen=False,
-        confirm_close=False,
-        text_select=True,
-        easy_drag=False,
-    )
-
-    # 🎯 السحر هنا: إصلاح العرض والقوائم المنسدلة بمجرد تحميل النافذة
-    def on_loaded():
-        js_code = """
-        // 1. إجبار الحاويات على التمدد لملء الشاشة
-        var style = document.createElement('style');
-        style.innerHTML = `
-            .block-container { max-width: 100% !important; padding: 1rem 2rem !important; }
-            [data-baseweb="popover"], ul[role="listbox"] { z-index: 9999999 !important; }
-            html, body { overflow-y: auto !important; }
-        `;
-        document.head.appendChild(style);
-
-        // 2. إجبار محرك WebView2 على إعادة حساب أبعاد الشاشة الكبيرة
-        window.dispatchEvent(new Event('resize'));
-        """
-        window.evaluate_js(js_code)
-
-    window.events.loaded += on_loaded
-
-    webview.start(
-        private_mode=False,
-        storage_path=None,
-        debug=False,
-        gui='edgechromium',
-    )
+    # ═══════════════════════════════════════════════════════════
+    # تشغيل نافذة PySide6
+    # ═══════════════════════════════════════════════════════════
+    app = QApplication(sys.argv)
+    window = QMainWindow()
+    window.setWindowTitle("ERP Governance System - Asam")
+    window.setGeometry(100, 100, 1280, 800)
+    
+    browser = QWebEngineView()
+    
+    # ✅ تفعيل أدوات المطور (F12 / Right-Click -> Inspect)
+    settings = browser.settings()
+    settings.setAttribute(QWebEngineSettings.WebAttribute.DeveloperExtrasEnabled, True)
+    settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
+    
+    browser.setUrl(QUrl(url))
+    window.setCentralWidget(browser)
+    
+    # فتح النافذة بحجم الشاشة الكامل
+    window.showMaximized()
+    
+    sys.exit(app.exec())
 
 # ═══════════════════════════════════════════════════════════
 # نقطة تشغيل البرنامج
