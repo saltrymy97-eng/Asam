@@ -1,5 +1,5 @@
-# app_desktop.py — النسخة الاحترافية (v4.1)
-# v4.1: منفذ ديناميكي (يختار منفذاً فارغاً ويمرره للخادم والنافذة معاً)
+# app_desktop.py — النسخة النهائية (v4.2)
+# v4.2: منفذ ديناميكي + فحص صحة + ملف تصحيح (debug_url.txt) + Threading
 
 import os
 import sys
@@ -11,11 +11,23 @@ import traceback
 import urllib.request
 import threading
 
+# ═══════════════════════════════════════════════════════════
 # إعداد UTF-8
+# ═══════════════════════════════════════════════════════════
 if sys.platform == 'win32':
     os.environ["PYTHONIOENCODING"] = "utf-8"
     os.environ["PYTHONUTF8"] = "1"
+    try:
+        if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 
+# ═══════════════════════════════════════════════════════════
+# Imports
+# ═══════════════════════════════════════════════════════════
 from streamlit.web import cli as stcli
 from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import QApplication, QMainWindow
@@ -23,10 +35,10 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEngineSettings
 
 # ═══════════════════════════════════════════════════════════
-# دالة البحث عن منفذ فارغ
+# دوال مساعدة
 # ═══════════════════════════════════════════════════════════
 def find_free_port():
-    """يبحث عن منفذ فارغ ويعيده"""
+    """البحث عن منفذ فارغ تماماً"""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(('127.0.0.1', 0))
         s.listen(1)
@@ -94,22 +106,27 @@ def main():
     app_py_path = os.path.join(base_path, "app.py")
     host = "127.0.0.1"
 
-    # 1. البحث عن منفذ فارغ (مرة واحدة)
+    # 1. البحث عن منفذ فارغ
     port = find_free_port()
     url = f"http://{host}:{port}"
-    
-    print(f"🔍 تم اختيار المنفذ الفارغ: {port}")
 
-    # 2. تشغيل الخادم على المنفذ المحدد
+    # ✅ كتابة معلومات التصحيح في ملف نصي
+    try:
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        with open(os.path.join(exe_dir, "debug_url.txt"), "w", encoding="utf-8") as f:
+            f.write(f"URL: {url}\nPort: {port}\nStatus: Starting...\n")
+    except Exception:
+        pass
+
+    # 2. تشغيل الخادم
     server_thread = threading.Thread(target=run_streamlit, args=(port, app_py_path), daemon=True)
     server_thread.start()
 
-    # 3. الانتظار حتى يصبح الخادم جاهزاً (فحص الصحة)
+    # 3. الانتظار الذكي
     max_retries = 120
     retries = 0
     server_ready = False
-    
-    print("⏳ جاري انتظار الخادم...")
+
     while retries < max_retries:
         if is_streamlit_ready(host, port):
             server_ready = True
@@ -118,32 +135,36 @@ def main():
         retries += 1
 
     if not server_ready:
-        print("❌ فشل تشغيل الخادم.")
         try:
             exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-            with open(os.path.join(exe_dir, "server_error_log.txt"), "a", encoding="utf-8") as f:
-                f.write(f"\nفشل التشغيل: الخادم لم يستجب (Timeout).")
+            with open(os.path.join(exe_dir, "debug_url.txt"), "a", encoding="utf-8") as f:
+                f.write(f"\nStatus: Server failed to respond (Timeout).")
         except Exception:
             pass
         sys.exit(1)
 
-    print(f"✅ الخادم جاهز على المنفذ {port}، جاري فتح النافذة...")
+    # ✅ تحديث ملف التصحيح بأن الخادم جاهز
+    try:
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        with open(os.path.join(exe_dir, "debug_url.txt"), "a", encoding="utf-8") as f:
+            f.write(f"\nStatus: Server Ready! Opening Window on {url}")
+    except Exception:
+        pass
 
-    # 4. تشغيل نافذة PySide6 على نفس المنفذ (نمرر نفس المتغير port)
+    # 4. تشغيل نافذة PySide6
     app = QApplication(sys.argv)
     window = QMainWindow()
     window.setWindowTitle("ERP Governance System - Asam")
     window.setGeometry(100, 100, 1280, 800)
-    
+
     browser = QWebEngineView()
     settings = browser.settings()
     settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
-    
-    # ✅ الرابط هنا يحتوي على نفس المنفذ الذي اخترناه للخادم
+
     browser.setUrl(QUrl(url))
     window.setCentralWidget(browser)
     window.showMaximized()
-    
+
     sys.exit(app.exec())
 
 if __name__ == "__main__":
