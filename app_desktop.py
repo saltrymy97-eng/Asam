@@ -1,5 +1,6 @@
-# app_desktop.py — النسخة النهائية الاحترافية (v8.0)
-# v8.0: تعطيل تسريع كرت الشاشة (لحل الشاشة السوداء) + منفذ ديناميكي + فحص صحة
+# app_desktop.py — النسخة النهائية (v9.0)
+# v9.0: استخدام كرت الشاشة (DirectX) للسرعة القصوى + منع الشاشة السوداء
+# + منفذ ديناميكي + فحص صحة
 
 import os
 import sys
@@ -25,10 +26,16 @@ if sys.platform == 'win32':
         pass
 
 # ═══════════════════════════════════════════════════════════
-# 🎯 السر هنا: تعطيل تسريع كرت الشاشة لمحرك Chromium
-# يجب أن يكون هذا قبل استيراد PySide6
+# 🎯 السر هنا: إجبار Chromium على استخدام كرت الشاشة بأقصى سرعة
+# مع تغيير طريقة الرسم لمنع الشاشة السوداء
 # ═══════════════════════════════════════════════════════════
-os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --disable-software-rasterizer --no-sandbox"
+os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+    "--no-sandbox "
+    "--ignore-gpu-blocklist "          # تجاهل حظر الكروت القديمة (يجبره على استخدام الكرت)
+    "--enable-gpu-rasterization "      # تسريع رسم العناصر بالكرت
+    "--use-angle=d3d11 "               # استخدام DirectX 11 (الأكثر استقراراً على ويندوز)
+    "--disable-gpu-compositing"        # 🎯 سر منع الشاشة السوداء: اجعل المعالج يثبت الصورة النهائية
+)
 
 # ═══════════════════════════════════════════════════════════
 # Imports
@@ -109,16 +116,13 @@ def main():
     app_py_path = os.path.join(base_path, "app.py")
     host = "127.0.0.1"
 
-    # 1. اختيار منفذ فارغ
     port = find_free_port()
     url = f"http://{host}:{port}"
 
-    # 2. تشغيل الخادم في Process (لأن Streamlit لا يعمل في Thread)
     p = multiprocessing.Process(target=run_streamlit, args=(port, app_py_path), daemon=True)
     p.start()
 
-    # 3. الانتظار الذكي (فحص الصحة)
-    max_retries = 120 # 60 ثانية
+    max_retries = 120
     retries = 0
     server_ready = False
 
@@ -131,7 +135,6 @@ def main():
         time.sleep(0.5)
         retries += 1
 
-    # 4. معالجة الفشل
     if not server_ready:
         try:
             exe_dir = os.path.dirname(os.path.abspath(sys.executable))
@@ -141,21 +144,24 @@ def main():
             pass
         sys.exit(1)
 
-    # 5. تشغيل نافذة PySide6
+    # ═══════════════════════════════════════════════════════════
+    # تشغيل نافذة PySide6 (بأقصى سرعة)
+    # ═══════════════════════════════════════════════════════════
     app = QApplication(sys.argv)
     window = QMainWindow()
     window.setWindowTitle("ERP Governance System - Asam")
     window.setGeometry(100, 100, 1280, 800)
 
     browser = QWebEngineView()
-    
-    # إعدادات إضافية لضمان الأمان وتجاوز الحظر
     settings = browser.settings()
+    
+    # السماح للمحتوى المحلي
     settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
     settings.setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, True)
-    # تعطيل تسريع الرسم (لتجنب الشاشة السوداء نهائياً)
-    settings.setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, False)
-    settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, False)
+    
+    # تفعيل تسريع الرسم (للسرعة)
+    settings.setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, True)
+    settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
 
     browser.setUrl(QUrl(url))
     window.setCentralWidget(browser)
