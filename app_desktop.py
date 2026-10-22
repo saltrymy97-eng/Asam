@@ -1,5 +1,5 @@
-# app_desktop.py — النسخة النهائية (v4.2)
-# v4.2: منفذ ديناميكي + فحص صحة + ملف تصحيح (debug_url.txt) + Threading
+# app_desktop.py — النسخة النهائية (v5.0)
+# v5.0: العودة إلى multiprocessing + freeze_support + منفذ ديناميكي + ملف تصحيح
 
 import os
 import sys
@@ -9,7 +9,6 @@ import multiprocessing
 import asyncio
 import traceback
 import urllib.request
-import threading
 
 # ═══════════════════════════════════════════════════════════
 # إعداد UTF-8
@@ -38,7 +37,6 @@ from PySide6.QtWebEngineCore import QWebEngineSettings
 # دوال مساعدة
 # ═══════════════════════════════════════════════════════════
 def find_free_port():
-    """البحث عن منفذ فارغ تماماً"""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(('127.0.0.1', 0))
         s.listen(1)
@@ -51,7 +49,6 @@ def get_base_path():
     return os.path.dirname(os.path.abspath(__file__))
 
 def is_streamlit_ready(host, port):
-    """فحص جاهزية Streamlit"""
     try:
         url = f"http://{host}:{port}/_stcore/health"
         with urllib.request.urlopen(url, timeout=1) as response:
@@ -60,7 +57,7 @@ def is_streamlit_ready(host, port):
         return False
 
 # ═══════════════════════════════════════════════════════════
-# تشغيل Streamlit في Thread
+# تشغيل Streamlit (في Process)
 # ═══════════════════════════════════════════════════════════
 def run_streamlit(port, app_path):
     try:
@@ -110,7 +107,7 @@ def main():
     port = find_free_port()
     url = f"http://{host}:{port}"
 
-    # ✅ كتابة معلومات التصحيح في ملف نصي
+    # ملف التصحيح
     try:
         exe_dir = os.path.dirname(os.path.abspath(sys.executable))
         with open(os.path.join(exe_dir, "debug_url.txt"), "w", encoding="utf-8") as f:
@@ -118,9 +115,9 @@ def main():
     except Exception:
         pass
 
-    # 2. تشغيل الخادم
-    server_thread = threading.Thread(target=run_streamlit, args=(port, app_py_path), daemon=True)
-    server_thread.start()
+    # 2. تشغيل الخادم في Process (مع freeze_support)
+    p = multiprocessing.Process(target=run_streamlit, args=(port, app_py_path), daemon=True)
+    p.start()
 
     # 3. الانتظار الذكي
     max_retries = 120
@@ -131,6 +128,8 @@ def main():
         if is_streamlit_ready(host, port):
             server_ready = True
             break
+        if not p.is_alive():
+            break
         time.sleep(0.5)
         retries += 1
 
@@ -138,12 +137,11 @@ def main():
         try:
             exe_dir = os.path.dirname(os.path.abspath(sys.executable))
             with open(os.path.join(exe_dir, "debug_url.txt"), "a", encoding="utf-8") as f:
-                f.write(f"\nStatus: Server failed to respond (Timeout).")
+                f.write(f"\nStatus: Server failed to respond or died.")
         except Exception:
             pass
         sys.exit(1)
 
-    # ✅ تحديث ملف التصحيح بأن الخادم جاهز
     try:
         exe_dir = os.path.dirname(os.path.abspath(sys.executable))
         with open(os.path.join(exe_dir, "debug_url.txt"), "a", encoding="utf-8") as f:
@@ -167,6 +165,9 @@ def main():
 
     sys.exit(app.exec())
 
+# ═══════════════════════════════════════════════════════════
+# نقطة التشغيل
+# ═══════════════════════════════════════════════════════════
 if __name__ == "__main__":
     multiprocessing.freeze_support()
     main()
