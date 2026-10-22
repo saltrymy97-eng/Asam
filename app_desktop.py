@@ -1,7 +1,4 @@
-# app_desktop.py — النسخة النهائية (v9.0)
-# v9.0: استخدام كرت الشاشة (DirectX) للسرعة القصوى + منع الشاشة السوداء
-# + منفذ ديناميكي + فحص صحة
-
+# app_desktop.py — النسخة النهائية (v12.0) - اختبار كرت الشاشة الطبيعي
 import os
 import sys
 import time
@@ -11,9 +8,7 @@ import asyncio
 import traceback
 import urllib.request
 
-# ═══════════════════════════════════════════════════════════
 # إعداد UTF-8
-# ═══════════════════════════════════════════════════════════
 if sys.platform == 'win32':
     os.environ["PYTHONIOENCODING"] = "utf-8"
     os.environ["PYTHONUTF8"] = "1"
@@ -26,16 +21,9 @@ if sys.platform == 'win32':
         pass
 
 # ═══════════════════════════════════════════════════════════
-# 🎯 السر هنا: إجبار Chromium على استخدام كرت الشاشة بأقصى سرعة
-# مع تغيير طريقة الرسم لمنع الشاشة السوداء
+# 🎯 إعدادات كرت الشاشة الطبيعية (بناءً على نصيحة ChatGPT)
 # ═══════════════════════════════════════════════════════════
-os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
-    "--no-sandbox "
-    "--ignore-gpu-blocklist "          # تجاهل حظر الكروت القديمة (يجبره على استخدام الكرت)
-    "--enable-gpu-rasterization "      # تسريع رسم العناصر بالكرت
-    "--use-angle=d3d11 "               # استخدام DirectX 11 (الأكثر استقراراً على ويندوز)
-    "--disable-gpu-compositing"        # 🎯 سر منع الشاشة السوداء: اجعل المعالج يثبت الصورة النهائية
-)
+os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--use-gl=angle --use-angle=default"
 
 # ═══════════════════════════════════════════════════════════
 # Imports
@@ -44,11 +32,8 @@ from streamlit.web import cli as stcli
 from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import QApplication, QMainWindow
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWebEngineCore import QWebEngineSettings
+# (تمت إزالة استيراد QWebEngineSettings لأننا سنستخدم الإعدادات الافتراضية)
 
-# ═══════════════════════════════════════════════════════════
-# دوال مساعدة
-# ═══════════════════════════════════════════════════════════
 def find_free_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(('127.0.0.1', 0))
@@ -69,31 +54,27 @@ def is_streamlit_ready(host, port):
     except Exception:
         return False
 
-# ═══════════════════════════════════════════════════════════
-# تشغيل Streamlit
-# ═══════════════════════════════════════════════════════════
 def run_streamlit(port, app_path):
     try:
         sys.stdout = open(os.devnull, "w", encoding='utf-8')
         sys.stderr = open(os.devnull, "w", encoding='utf-8')
     except Exception:
         pass
-
     try:
         if getattr(sys, 'frozen', False):
             exe_dir = os.path.dirname(sys.executable)
             os.chdir(exe_dir)
             os.makedirs(os.path.join(exe_dir, "data"), exist_ok=True)
-
         if sys.platform == 'win32':
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         asyncio.set_event_loop(asyncio.new_event_loop())
-
+        
         sys.argv = [
             "streamlit", "run", app_path,
             f"--server.port={port}",
             "--server.headless=true",
             "--server.allowRunOnSave=false",
+            "--server.fileWatcherType=none", # يقلل استهلاك المعالج
             "--browser.gatherUsageStats=false",
             "--global.developmentMode=false"
         ]
@@ -102,20 +83,16 @@ def run_streamlit(port, app_path):
         try:
             exe_dir = os.path.dirname(os.path.abspath(sys.executable))
             with open(os.path.join(exe_dir, "server_error_log.txt"), "w", encoding="utf-8") as f:
-                f.write("خطأ في Streamlit:\n" + str(e) + "\n" + traceback.format_exc())
+                f.write("خطأ:\n" + str(e) + "\n" + traceback.format_exc())
         except Exception:
             pass
     except SystemExit:
         pass
 
-# ═══════════════════════════════════════════════════════════
-# الدالة الرئيسية
-# ═══════════════════════════════════════════════════════════
 def main():
     base_path = get_base_path()
     app_py_path = os.path.join(base_path, "app.py")
     host = "127.0.0.1"
-
     port = find_free_port()
     url = f"http://{host}:{port}"
 
@@ -125,7 +102,6 @@ def main():
     max_retries = 120
     retries = 0
     server_ready = False
-
     while retries < max_retries:
         if is_streamlit_ready(host, port):
             server_ready = True
@@ -136,16 +112,10 @@ def main():
         retries += 1
 
     if not server_ready:
-        try:
-            exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-            with open(os.path.join(exe_dir, "server_error_log.txt"), "a", encoding="utf-8") as f:
-                f.write(f"\nفشل التشغيل: الخادم لم يستجب (Timeout).")
-        except Exception:
-            pass
         sys.exit(1)
 
     # ═══════════════════════════════════════════════════════════
-    # تشغيل نافذة PySide6 (بأقصى سرعة)
+    # تشغيل النافذة (بإعدادات افتراضية نظيفة)
     # ═══════════════════════════════════════════════════════════
     app = QApplication(sys.argv)
     window = QMainWindow()
@@ -153,16 +123,8 @@ def main():
     window.setGeometry(100, 100, 1280, 800)
 
     browser = QWebEngineView()
-    settings = browser.settings()
+    # لا توجد إعدادات إضافية هنا.. اتركنا Qt و Chromium يعملان بطبيعتهما
     
-    # السماح للمحتوى المحلي
-    settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
-    settings.setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, True)
-    
-    # تفعيل تسريع الرسم (للسرعة)
-    settings.setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, True)
-    settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
-
     browser.setUrl(QUrl(url))
     window.setCentralWidget(browser)
     window.showMaximized()
