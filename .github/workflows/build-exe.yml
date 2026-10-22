@@ -50,7 +50,6 @@ jobs:
       - name: Cleanup tests and pycache
         shell: pwsh
         run: |
-          # 1. حذف مجلدات الاختبارات والكاش
           Get-ChildItem -Path dist/HokamaERP -Recurse -Directory |
             Where-Object { $_.Name -eq '__pycache__' -or $_.Name -eq 'tests' } |
             Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
@@ -59,41 +58,15 @@ jobs:
             Where-Object { $_.FullName -match 'tests|test_' } |
             Remove-Item -Force -ErrorAction SilentlyContinue
       
-      - name: Cleanup PySide6 Unnecessary Files (تقليل المساحة)
-        shell: pwsh
-        run: |
-          $pyside_dir = "dist/HokamaERP/_internal/PySide6"
-          
-          if (Test-Path $pyside_dir) {
-            Write-Host "تقليل حجم PySide6..."
-            
-            # 1. حذف ملفات الترجمة (Translations) - لا يحتاجها التطبيق
-            Remove-Item -Path "$pyside_dir/translations" -Recurse -Force -ErrorAction SilentlyContinue
-            Remove-Item -Path "$pyside_dir/translations.qrc" -Force -ErrorAction SilentlyContinue
-            
-            # 2. حذف ملفات التطوير والدعم (Headers, qml, plugins التجريبية)
-            Remove-Item -Path "$pyside_dir/include" -Recurse -Force -ErrorAction SilentlyContinue
-            Remove-Item -Path "$pyside_dir/typesystems" -Recurse -Force -ErrorAction SilentlyContinue
-            Remove-Item -Path "$pyside_dir/qml" -Recurse -Force -ErrorAction SilentlyContinue
-            
-            # 3. حذف ملفات الـ DLLs الضخمة غير المستخدمة
-            Remove-Item -Path "$pyside_dir/Qt6Pdf.dll" -Force -ErrorAction SilentlyContinue
-            Remove-Item -Path "$pyside_dir/Qt6Qml.dll" -Force -ErrorAction SilentlyContinue
-            Remove-Item -Path "$pyside_dir/Qt6Quick.dll" -Force -ErrorAction SilentlyContinue
-            Remove-Item -Path "$pyside_dir/Qt6Designer.dll" -Force -ErrorAction SilentlyContinue
-            Remove-Item -Path "$pyside_dir/Qt6WebView.dll" -Force -ErrorAction SilentlyContinue
-            
-            Write-Host "تم تقليل الحجم بنجاح."
-          }
-          
       - name: Install 7-Zip
         run: |
           choco install 7zip -y
       
-      - name: Create ZIP with 7-Zip (compatible)
+      - name: Create ZIP with 7-Zip (Ultra Compression for smaller download)
         shell: pwsh
         run: |
-          & "C:\Program Files\7-Zip\7z.exe" a -tzip -mx=5 HokamaERP-Windows.zip .\dist\HokamaERP\*
+          # نستخدم -mx=9 لضغط الملف النهائي بأقصى درجة (يقلل حجم التحميل دون التأثير على عمل التطبيق)
+          & "C:\Program Files\7-Zip\7z.exe" a -tzip -mx=9 HokamaERP-Windows.zip .\dist\HokamaERP\*
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
