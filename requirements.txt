@@ -11,5 +11,5 @@ uvicorn[standard]
 scalar-fastapi
 psycopg2-binary
 cryptography
-pywebview
+PySide6
 pyinstaller
