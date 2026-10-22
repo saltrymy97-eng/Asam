@@ -1,5 +1,5 @@
-# app_desktop.py — النسخة النهائية (v5.0)
-# v5.0: العودة إلى multiprocessing + freeze_support + منفذ ديناميكي + ملف تصحيح
+# app_desktop.py — النسخة النهائية الاحترافية (v8.0)
+# v8.0: تعطيل تسريع كرت الشاشة (لحل الشاشة السوداء) + منفذ ديناميكي + فحص صحة
 
 import os
 import sys
@@ -23,6 +23,12 @@ if sys.platform == 'win32':
             sys.stderr.reconfigure(encoding='utf-8', errors='replace')
     except Exception:
         pass
+
+# ═══════════════════════════════════════════════════════════
+# 🎯 السر هنا: تعطيل تسريع كرت الشاشة لمحرك Chromium
+# يجب أن يكون هذا قبل استيراد PySide6
+# ═══════════════════════════════════════════════════════════
+os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu --disable-software-rasterizer --no-sandbox"
 
 # ═══════════════════════════════════════════════════════════
 # Imports
@@ -57,7 +63,7 @@ def is_streamlit_ready(host, port):
         return False
 
 # ═══════════════════════════════════════════════════════════
-# تشغيل Streamlit (في Process)
+# تشغيل Streamlit
 # ═══════════════════════════════════════════════════════════
 def run_streamlit(port, app_path):
     try:
@@ -89,7 +95,7 @@ def run_streamlit(port, app_path):
         try:
             exe_dir = os.path.dirname(os.path.abspath(sys.executable))
             with open(os.path.join(exe_dir, "server_error_log.txt"), "w", encoding="utf-8") as f:
-                f.write("خطأ:\n" + str(e) + "\n" + traceback.format_exc())
+                f.write("خطأ في Streamlit:\n" + str(e) + "\n" + traceback.format_exc())
         except Exception:
             pass
     except SystemExit:
@@ -103,24 +109,16 @@ def main():
     app_py_path = os.path.join(base_path, "app.py")
     host = "127.0.0.1"
 
-    # 1. البحث عن منفذ فارغ
+    # 1. اختيار منفذ فارغ
     port = find_free_port()
     url = f"http://{host}:{port}"
 
-    # ملف التصحيح
-    try:
-        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-        with open(os.path.join(exe_dir, "debug_url.txt"), "w", encoding="utf-8") as f:
-            f.write(f"URL: {url}\nPort: {port}\nStatus: Starting...\n")
-    except Exception:
-        pass
-
-    # 2. تشغيل الخادم في Process (مع freeze_support)
+    # 2. تشغيل الخادم في Process (لأن Streamlit لا يعمل في Thread)
     p = multiprocessing.Process(target=run_streamlit, args=(port, app_py_path), daemon=True)
     p.start()
 
-    # 3. الانتظار الذكي
-    max_retries = 120
+    # 3. الانتظار الذكي (فحص الصحة)
+    max_retries = 120 # 60 ثانية
     retries = 0
     server_ready = False
 
@@ -133,31 +131,31 @@ def main():
         time.sleep(0.5)
         retries += 1
 
+    # 4. معالجة الفشل
     if not server_ready:
         try:
             exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-            with open(os.path.join(exe_dir, "debug_url.txt"), "a", encoding="utf-8") as f:
-                f.write(f"\nStatus: Server failed to respond or died.")
+            with open(os.path.join(exe_dir, "server_error_log.txt"), "a", encoding="utf-8") as f:
+                f.write(f"\nفشل التشغيل: الخادم لم يستجب (Timeout).")
         except Exception:
             pass
         sys.exit(1)
 
-    try:
-        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-        with open(os.path.join(exe_dir, "debug_url.txt"), "a", encoding="utf-8") as f:
-            f.write(f"\nStatus: Server Ready! Opening Window on {url}")
-    except Exception:
-        pass
-
-    # 4. تشغيل نافذة PySide6
+    # 5. تشغيل نافذة PySide6
     app = QApplication(sys.argv)
     window = QMainWindow()
     window.setWindowTitle("ERP Governance System - Asam")
     window.setGeometry(100, 100, 1280, 800)
 
     browser = QWebEngineView()
+    
+    # إعدادات إضافية لضمان الأمان وتجاوز الحظر
     settings = browser.settings()
     settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
+    settings.setAttribute(QWebEngineSettings.WebAttribute.AllowRunningInsecureContent, True)
+    # تعطيل تسريع الرسم (لتجنب الشاشة السوداء نهائياً)
+    settings.setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, False)
+    settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, False)
 
     browser.setUrl(QUrl(url))
     window.setCentralWidget(browser)
@@ -165,9 +163,6 @@ def main():
 
     sys.exit(app.exec())
 
-# ═══════════════════════════════════════════════════════════
-# نقطة التشغيل
-# ═══════════════════════════════════════════════════════════
 if __name__ == "__main__":
     multiprocessing.freeze_support()
     main()
