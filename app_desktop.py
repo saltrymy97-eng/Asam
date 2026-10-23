@@ -1,4 +1,4 @@
-# app_desktop.py — النسخة النهائية (v27.0) - Chrome Native App (ملف تعريف معزول)
+# app_desktop.py — النسخة النهائية (v28.0) - Chrome Native App (مع تأخير ذكي)
 import os
 import sys
 import time
@@ -9,7 +9,6 @@ import traceback
 import urllib.request
 import subprocess
 import webbrowser
-import tempfile
 
 # ═══════════════════════════════════════════════════════════
 # إعداد UTF-8
@@ -114,6 +113,9 @@ def main():
     if not server_ready:
         sys.exit(1)
 
+    # 🎯 التأخير الذكي: ننتظر 5 ثوانٍ إضافية لضمان استقرار الخادم قبل فتح كروم
+    time.sleep(5)
+
     # ═══════════════════════════════════════════════════════════
     # البحث عن Google Chrome حصرياً
     # ═══════════════════════════════════════════════════════════
@@ -130,10 +132,10 @@ def main():
             break
 
     # ═══════════════════════════════════════════════════════════
-    # إنشاء ملف تعريف مؤقت ومعزول (لحل مشكلة اختيار المستخدم)
+    # التشغيل كتطبيق ويندوز حقيقي (Native App)
     # ═══════════════════════════════════════════════════════════
     if browser_exe:
-        # إنشاء مجلد مؤقت لملف التعريف (في مجلد البيانات الخاص بالتطبيق)
+        # إنشاء مجلد مؤقت لملف التعريف
         if getattr(sys, 'frozen', False):
             app_data_dir = os.path.dirname(sys.executable)
         else:
@@ -142,13 +144,12 @@ def main():
         chrome_profile_dir = os.path.join(app_data_dir, "chrome_profile")
         os.makedirs(chrome_profile_dir, exist_ok=True)
 
-        # تشغيل كروم باستخدام ملف التعريف المؤقت
         subprocess.Popen([
             browser_exe, 
             f"--app={url}", 
             "--start-maximized", 
             "--force-color-profile=srgb",
-            f"--user-data-dir={chrome_profile_dir}",  # 🎯 استخدام ملف تعريف مؤقت ومعزول
+            f"--user-data-dir={chrome_profile_dir}",  # ملف تعريف معزول
             "--no-first-run",                        # منع شاشات الترحيب
             "--disable-features=Translate",          # منع شريط الترجمة
             "--disable-infobars"                     # إخفاء شرائط المعلومات
