@@ -1,4 +1,4 @@
-# app_desktop.py — النسخة النهائية (v22.0) - Edge App Mode + إصلاح الألوان (sRGB)
+# app_desktop.py — النسخة النهائية (v24.0) - تشغيل النظام عبر Google Chrome (حصرياً)
 import os
 import sys
 import time
@@ -73,7 +73,7 @@ def run_streamlit(port, app_path):
             f"--server.port={port}",
             "--server.headless=true",
             "--server.allowRunOnSave=false",
-            "--server.fileWatcherType=none", # يقلل استهلاك المعالج
+            "--server.fileWatcherType=none",
             "--browser.gatherUsageStats=false",
             "--global.developmentMode=false"
         ]
@@ -114,33 +114,41 @@ def main():
         sys.exit(1)
 
     # ═══════════════════════════════════════════════════════════
-    # تشغيل Edge App Mode (مع إصلاح الألوان)
+    # البحث عن Google Chrome حصرياً
     # ═══════════════════════════════════════════════════════════
-    edge_paths = [
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"
+    
+    chrome_paths = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe")
     ]
     
-    edge_exe = None
-    for path in edge_paths:
+    browser_exe = None
+    
+    # البحث عن Chrome
+    for path in chrome_paths:
         if os.path.exists(path):
-            edge_exe = path
+            browser_exe = path
             break
-            
-    if edge_exe:
-        # 🎯 إضافة --force-color-profile=srgb لإصلاح الألوان
+
+    # ═══════════════════════════════════════════════════════════
+    # التشغيل (Chrome أو المتصفح الافتراضي)
+    # ═══════════════════════════════════════════════════════════
+    if browser_exe:
+        # فتح Chrome في وضع التطبيق
         subprocess.Popen([
-            edge_exe, 
+            browser_exe, 
             f"--app={url}", 
             "--start-maximized", 
             "--disable-extensions",
-            "--force-color-profile=srgb" 
+            "--force-color-profile=srgb"
         ])
     else:
-        # إذا لم يوجد Edge، استخدم المتصفح الافتراضي
+        # إذا لم يوجد Chrome، افتح المتصفح الافتراضي للمستخدم
+        print("Google Chrome not found. Opening default browser...")
         webbrowser.open(url)
 
-    # إبقاء العملية الرئيسية مفتوحة (حتى لا يتوقف الخادم)
+    # إبقاء العملية الرئيسية مفتوحة
     try:
         while True:
             time.sleep(1)
