@@ -1,4 +1,4 @@
-# app_desktop.py — النسخة النهائية (v12.0) - اختبار كرت الشاشة الطبيعي
+# app_desktop.py — النسخة النهائية (v21.0) - Edge App Mode مع فحص الصحة
 import os
 import sys
 import time
@@ -7,8 +7,12 @@ import multiprocessing
 import asyncio
 import traceback
 import urllib.request
+import subprocess
+import webbrowser
 
+# ═══════════════════════════════════════════════════════════
 # إعداد UTF-8
+# ═══════════════════════════════════════════════════════════
 if sys.platform == 'win32':
     os.environ["PYTHONIOENCODING"] = "utf-8"
     os.environ["PYTHONUTF8"] = "1"
@@ -21,18 +25,9 @@ if sys.platform == 'win32':
         pass
 
 # ═══════════════════════════════════════════════════════════
-# 🎯 إعدادات كرت الشاشة الطبيعية (بناءً على نصيحة ChatGPT)
-# ═══════════════════════════════════════════════════════════
-os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--use-gl=angle --use-angle=default"
-
-# ═══════════════════════════════════════════════════════════
 # Imports
 # ═══════════════════════════════════════════════════════════
 from streamlit.web import cli as stcli
-from PySide6.QtCore import QUrl
-from PySide6.QtWidgets import QApplication, QMainWindow
-from PySide6.QtWebEngineWidgets import QWebEngineView
-# (تمت إزالة استيراد QWebEngineSettings لأننا سنستخدم الإعدادات الافتراضية)
 
 def find_free_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -47,6 +42,7 @@ def get_base_path():
     return os.path.dirname(os.path.abspath(__file__))
 
 def is_streamlit_ready(host, port):
+    """فحص صحة Streamlit للتأكد من أنه جاهز 100% قبل فتح المتصفح"""
     try:
         url = f"http://{host}:{port}/_stcore/health"
         with urllib.request.urlopen(url, timeout=1) as response:
@@ -54,6 +50,9 @@ def is_streamlit_ready(host, port):
     except Exception:
         return False
 
+# ═══════════════════════════════════════════════════════════
+# تشغيل Streamlit
+# ═══════════════════════════════════════════════════════════
 def run_streamlit(port, app_path):
     try:
         sys.stdout = open(os.devnull, "w", encoding='utf-8')
@@ -115,21 +114,32 @@ def main():
         sys.exit(1)
 
     # ═══════════════════════════════════════════════════════════
-    # تشغيل النافذة (بإعدادات افتراضية نظيفة)
+    # تشغيل Edge App Mode (بدلاً من PySide6)
     # ═══════════════════════════════════════════════════════════
-    app = QApplication(sys.argv)
-    window = QMainWindow()
-    window.setWindowTitle("ERP Governance System - Asam")
-    window.setGeometry(100, 100, 1280, 800)
-
-    browser = QWebEngineView()
-    # لا توجد إعدادات إضافية هنا.. اتركنا Qt و Chromium يعملان بطبيعتهما
+    edge_paths = [
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"
+    ]
     
-    browser.setUrl(QUrl(url))
-    window.setCentralWidget(browser)
-    window.showMaximized()
+    edge_exe = None
+    for path in edge_paths:
+        if os.path.exists(path):
+            edge_exe = path
+            break
+            
+    if edge_exe:
+        # فتح Edge في وضع التطبيق (App Mode) وبحجم الشاشة الكامل
+        subprocess.Popen([edge_exe, f"--app={url}", "--start-maximized", "--disable-extensions"])
+    else:
+        # إذا لم يوجد Edge، استخدم المتصفح الافتراضي
+        webbrowser.open(url)
 
-    sys.exit(app.exec())
+    # إبقاء العملية الرئيسية مفتوحة (حتى لا يتوقف الخادم)
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        sys.exit(0)
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
