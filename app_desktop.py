@@ -1,4 +1,4 @@
-# app_desktop.py — النسخة النهائية (v24.0) - تشغيل النظام عبر Google Chrome (حصرياً)
+# app_desktop.py — النسخة النهائية (v27.0) - Chrome Native App (ملف تعريف معزول)
 import os
 import sys
 import time
@@ -9,6 +9,7 @@ import traceback
 import urllib.request
 import subprocess
 import webbrowser
+import tempfile
 
 # ═══════════════════════════════════════════════════════════
 # إعداد UTF-8
@@ -116,7 +117,6 @@ def main():
     # ═══════════════════════════════════════════════════════════
     # البحث عن Google Chrome حصرياً
     # ═══════════════════════════════════════════════════════════
-    
     chrome_paths = [
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
@@ -124,31 +124,40 @@ def main():
     ]
     
     browser_exe = None
-    
-    # البحث عن Chrome
     for path in chrome_paths:
         if os.path.exists(path):
             browser_exe = path
             break
 
     # ═══════════════════════════════════════════════════════════
-    # التشغيل (Chrome أو المتصفح الافتراضي)
+    # إنشاء ملف تعريف مؤقت ومعزول (لحل مشكلة اختيار المستخدم)
     # ═══════════════════════════════════════════════════════════
     if browser_exe:
-        # فتح Chrome في وضع التطبيق
+        # إنشاء مجلد مؤقت لملف التعريف (في مجلد البيانات الخاص بالتطبيق)
+        if getattr(sys, 'frozen', False):
+            app_data_dir = os.path.dirname(sys.executable)
+        else:
+            app_data_dir = os.path.dirname(os.path.abspath(__file__))
+            
+        chrome_profile_dir = os.path.join(app_data_dir, "chrome_profile")
+        os.makedirs(chrome_profile_dir, exist_ok=True)
+
+        # تشغيل كروم باستخدام ملف التعريف المؤقت
         subprocess.Popen([
             browser_exe, 
             f"--app={url}", 
             "--start-maximized", 
-            "--disable-extensions",
-            "--force-color-profile=srgb"
+            "--force-color-profile=srgb",
+            f"--user-data-dir={chrome_profile_dir}",  # 🎯 استخدام ملف تعريف مؤقت ومعزول
+            "--no-first-run",                        # منع شاشات الترحيب
+            "--disable-features=Translate",          # منع شريط الترجمة
+            "--disable-infobars"                     # إخفاء شرائط المعلومات
         ])
     else:
-        # إذا لم يوجد Chrome، افتح المتصفح الافتراضي للمستخدم
-        print("Google Chrome not found. Opening default browser...")
+        # إذا لم يوجد Chrome، استخدم المتصفح الافتراضي
         webbrowser.open(url)
 
-    # إبقاء العملية الرئيسية مفتوحة
+    # إبقاء العملية الرئيسية مفتوحة (حتى لا يتوقف الخادم)
     try:
         while True:
             time.sleep(1)
