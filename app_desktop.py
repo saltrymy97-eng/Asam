@@ -1,4 +1,4 @@
-# app_desktop.py — النسخة النهائية (v21.0) - Edge App Mode مع فحص الصحة
+# app_desktop.py — النسخة النهائية (v22.0) - Edge App Mode + إصلاح الألوان (sRGB)
 import os
 import sys
 import time
@@ -114,7 +114,7 @@ def main():
         sys.exit(1)
 
     # ═══════════════════════════════════════════════════════════
-    # تشغيل Edge App Mode (بدلاً من PySide6)
+    # تشغيل Edge App Mode (مع إصلاح الألوان)
     # ═══════════════════════════════════════════════════════════
     edge_paths = [
         r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
@@ -128,8 +128,14 @@ def main():
             break
             
     if edge_exe:
-        # فتح Edge في وضع التطبيق (App Mode) وبحجم الشاشة الكامل
-        subprocess.Popen([edge_exe, f"--app={url}", "--start-maximized", "--disable-extensions"])
+        # 🎯 إضافة --force-color-profile=srgb لإصلاح الألوان
+        subprocess.Popen([
+            edge_exe, 
+            f"--app={url}", 
+            "--start-maximized", 
+            "--disable-extensions",
+            "--force-color-profile=srgb" 
+        ])
     else:
         # إذا لم يوجد Edge، استخدم المتصفح الافتراضي
         webbrowser.open(url)
