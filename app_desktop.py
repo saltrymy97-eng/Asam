@@ -1,4 +1,8 @@
-# app_desktop.py — النسخة النهائية (v38.0) - Firefox Portable Kiosk Mode
+
+# app_desktop.py — Hokama ERP v42.0
+# Firefox + Persistent Profile + Startup Logging
+# لا يغيّر الواجهات أو الخدمات أو قاعدة البيانات
+
 import os
 import sys
 import time
@@ -9,160 +13,268 @@ import traceback
 import urllib.request
 import subprocess
 import webbrowser
+from pathlib import Path
 
-# ═══════════════════════════════════════════════════════════
-# إعداد UTF-8
-# ═══════════════════════════════════════════════════════════
-if sys.platform == 'win32':
+if sys.platform == "win32":
     os.environ["PYTHONIOENCODING"] = "utf-8"
     os.environ["PYTHONUTF8"] = "1"
-    try:
-        if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
-            sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-        if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
-            sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-    except Exception:
-        pass
 
-# ═══════════════════════════════════════════════════════════
-# Imports
-# ═══════════════════════════════════════════════════════════
 from streamlit.web import cli as stcli
 
-def find_free_port():
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(('127.0.0.1', 0))
-        s.listen(1)
-        port = s.getsockname()[1]
-    return port
 
 def get_base_path():
-    if getattr(sys, 'frozen', False):
+    if getattr(sys, "frozen", False):
         return sys._MEIPASS
     return os.path.dirname(os.path.abspath(__file__))
 
+
+def get_app_dir():
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def get_data_dir():
+    local_appdata = os.getenv("LOCALAPPDATA")
+    if local_appdata:
+        path = Path(local_appdata) / "HokamaERP"
+    else:
+        path = Path.home() / "HokamaERP"
+
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def log_message(message):
+    try:
+        log_dir = get_data_dir() / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+        with open(
+            log_dir / "startup.log",
+            "a",
+            encoding="utf-8"
+        ) as log:
+            log.write(
+                time.strftime("%Y-%m-%d %H:%M:%S")
+                + " | " + str(message) + "\n"
+            )
+    except Exception:
+        pass
+
+
+def find_free_port():
+    with socket.socket(
+        socket.AF_INET, socket.SOCK_STREAM
+    ) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
 def is_streamlit_ready(host, port):
-    """فحص صحة Streamlit للتأكد من أنه جاهز 100% قبل فتح المتصفح"""
     try:
         url = f"http://{host}:{port}/_stcore/health"
-        with urllib.request.urlopen(url, timeout=1) as response:
+        with urllib.request.urlopen(url, timeout=1.5) as response:
             return response.status == 200
     except Exception:
         return False
 
-# ═══════════════════════════════════════════════════════════
-# تشغيل Streamlit
-# ═══════════════════════════════════════════════════════════
+
 def run_streamlit(port, app_path):
     try:
-        sys.stdout = open(os.devnull, "w", encoding='utf-8')
-        sys.stderr = open(os.devnull, "w", encoding='utf-8')
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
     except Exception:
         pass
+
     try:
-        if getattr(sys, 'frozen', False):
-            exe_dir = os.path.dirname(sys.executable)
-            os.chdir(exe_dir)
-            os.makedirs(os.path.join(exe_dir, "data"), exist_ok=True)
-        if sys.platform == 'win32':
-            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        if sys.platform == "win32":
+            asyncio.set_event_loop_policy(
+                asyncio.WindowsSelectorEventLoopPolicy()
+            )
+
         asyncio.set_event_loop(asyncio.new_event_loop())
-        
+
         sys.argv = [
             "streamlit", "run", app_path,
             f"--server.port={port}",
+            "--server.address=127.0.0.1",
             "--server.headless=true",
             "--server.allowRunOnSave=false",
             "--server.fileWatcherType=none",
             "--browser.gatherUsageStats=false",
-            "--global.developmentMode=false"
+            "--global.developmentMode=false",
         ]
+
         stcli.main()
-    except Exception as e:
-        try:
-            exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-            with open(os.path.join(exe_dir, "server_error_log.txt"), "w", encoding="utf-8") as f:
-                f.write("خطأ:\n" + str(e) + "\n" + traceback.format_exc())
-        except Exception:
-            pass
+
     except SystemExit:
         pass
+    except Exception:
+        log_message("Streamlit error:\n" + traceback.format_exc())
+
+
+def find_firefox(base_path):
+    candidates = [
+        os.path.join(
+            base_path, "firefox_portable", "firefox.exe"
+        ),
+        r"C:\Program Files\Mozilla Firefox\firefox.exe",
+        r"C:\Program Files (x86)\Mozilla Firefox\firefox.exe",
+    ]
+
+    local_appdata = os.getenv("LOCALAPPDATA")
+    if local_appdata:
+        candidates.append(
+            os.path.join(
+                local_appdata,
+                "Mozilla Firefox",
+                "firefox.exe"
+            )
+        )
+
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+
+    return None
+
 
 def main():
     base_path = get_base_path()
-    app_py_path = os.path.join(base_path, "app.py")
+    app_dir = get_app_dir()
+    app_path = os.path.join(base_path, "app.py")
+
+    if not os.path.isfile(app_path):
+        log_message(f"ERROR: app.py not found: {app_path}")
+        raise FileNotFoundError(
+            f"لم يتم العثور على app.py: {app_path}"
+        )
+
     host = "127.0.0.1"
     port = find_free_port()
     url = f"http://{host}:{port}"
 
-    p = multiprocessing.Process(target=run_streamlit, args=(port, app_py_path), daemon=True)
-    p.start()
+    log_message("Starting Hokama ERP")
+    log_message(f"App path: {app_path}")
+    log_message(f"URL: {url}")
 
-    max_retries = 120
-    retries = 0
-    server_ready = False
-    while retries < max_retries:
+    server = multiprocessing.Process(
+        target=run_streamlit,
+        args=(port, app_path),
+        daemon=True
+    )
+    server.start()
+
+    ready = False
+    for _ in range(120):
         if is_streamlit_ready(host, port):
-            server_ready = True
+            ready = True
             break
-        if not p.is_alive():
+
+        if not server.is_alive():
             break
+
         time.sleep(0.5)
-        retries += 1
 
-    if not server_ready:
-        sys.exit(1)
+    if not ready:
+        log_message("ERROR: Streamlit did not become ready")
+        if server.is_alive():
+            server.terminate()
+            server.join(timeout=3)
+        raise RuntimeError(
+            "لم يبدأ خادم النظام. راجع startup.log"
+        )
 
-    # ═══════════════════════════════════════════════════════════
-    # البحث عن Firefox المدمج أولاً، ثم Firefox المثبت
-    # ═══════════════════════════════════════════════════════════
-    bundled_firefox = os.path.join(base_path, "firefox_portable", "firefox.exe")
-    
-    if os.path.exists(bundled_firefox):
-        browser_exe = bundled_firefox
-        print("Using bundled Firefox...")
-    else:
-        # البحث عن Firefox المثبت (خطة بديلة)
-        firefox_paths = [
-            r"C:\Program Files\Mozilla Firefox\firefox.exe",
-            r"C:\Program Files (x86)\Mozilla Firefox\firefox.exe"
-        ]
-        browser_exe = next((path for path in firefox_paths if os.path.exists(path)), None)
-        if browser_exe:
-            print("Using installed Firefox...")
+    log_message("Streamlit is ready")
 
-    # ═══════════════════════════════════════════════════════════
-    # التشغيل في وضع Kiosk (ملء الشاشة بدون أدوات)
-    # ═══════════════════════════════════════════════════════════
-    if browser_exe:
-        # إنشاء مجلد بيانات مؤقت لـ Firefox (لتجنب شاشات الترحيب)
-        if getattr(sys, 'frozen', False):
-            app_data_dir = os.path.dirname(sys.executable)
-        else:
-            app_data_dir = os.path.dirname(os.path.abspath(__file__))
-            
-        firefox_profile_dir = os.path.join(app_data_dir, "firefox_profile")
-        os.makedirs(firefox_profile_dir, exist_ok=True)
+    browser_exe = find_firefox(base_path)
 
-        # تشغيل Firefox في وضع Kiosk مع ملف تعريف معزول
-        subprocess.Popen([
-            browser_exe,
-            "-kiosk",                              # وضع ملء الشاشة (بدون أدوات)
-            "-profile", firefox_profile_dir,       # ملف تعريف معزول (لتجنب شاشات الترحيب)
-            "-no-remote",                          # منع استخدام نسخة Firefox مفتوحة
-            url
-        ])
-    else:
-        # إذا لم يوجد Firefox، استخدم المتصفح الافتراضي
-        print("No Firefox found. Opening default browser...")
+    if not browser_exe:
+        log_message(
+            "Firefox not found; opening default browser"
+        )
         webbrowser.open(url)
 
-    # إبقاء العملية الرئيسية مفتوحة (حتى لا يتوقف الخادم)
+        try:
+            while server.is_alive():
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            if server.is_alive():
+                server.terminate()
+                server.join(timeout=3)
+        return
+
+    # ملف تعريف ثابت ودائم لهذا المستخدم
+    profile_dir = get_data_dir() / "FirefoxProfile"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+
+    # تفضيلات لتقليل بعض شاشات الترحيب
+    user_js = profile_dir / "user.js"
+    preferences = [
+        'user_pref("browser.shell.checkDefaultBrowser", false);',
+        'user_pref("browser.startup.homepage_override.mstone", "ignore");',
+        'user_pref("startup.homepage_welcome_url", "");',
+        'user_pref("startup.homepage_welcome_url.additional", "");',
+        'user_pref("browser.aboutwelcome.enabled", false);',
+        'user_pref("browser.startup.firstrunSkipsHomepage", true);',
+    ]
+
     try:
-        while True:
+        user_js.write_text(
+            "\n".join(preferences) + "\n",
+            encoding="utf-8"
+        )
+    except Exception:
+        log_message("WARNING: Could not write user.js")
+
+    browser_args = [
+        browser_exe,
+        "-no-remote",
+        "-profile", str(profile_dir),
+        "-kiosk",
+        url,
+    ]
+
+    try:
+        log_message(f"Launching Firefox: {browser_exe}")
+
+        with open(
+            get_data_dir() / "logs" / "firefox.log",
+            "a",
+            encoding="utf-8"
+        ) as browser_log:
+            browser = subprocess.Popen(
+                browser_args,
+                cwd=os.path.dirname(browser_exe),
+                stdout=browser_log,
+                stderr=subprocess.STDOUT,
+            )
+
+        log_message(f"Firefox process started: {browser.pid}")
+
+        # إبقاء التطبيق حيًا ما دامت نافذة Firefox تعمل
+        while browser.poll() is None:
+            if not server.is_alive():
+                log_message("ERROR: Streamlit process stopped")
+                break
             time.sleep(1)
-    except KeyboardInterrupt:
-        sys.exit(0)
+
+        log_message(
+            f"Firefox exited with code: {browser.poll()}"
+        )
+
+    except Exception:
+        log_message("Firefox launch error:\n" + traceback.format_exc())
+        raise
+    finally:
+        if server.is_alive():
+            server.terminate()
+            server.join(timeout=3)
+        log_message("Hokama ERP launcher stopped")
+
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
