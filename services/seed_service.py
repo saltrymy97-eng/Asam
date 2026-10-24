@@ -1,9 +1,7 @@
 # services/seed_service.py
-# v3.0 — خدمة حقن البيانات التجريبية (مُصلحة)
-# ✅ إصلاح جذري: منع الرصيد السالب
-#    - إلغاء seed_cash_bank_transactions (كانت تُدرج حركات عشوائية بدون قيود)
-#    - seed_cash_and_bank: إدراج مباشر بلا قيود افتتاحية (كانت تُكرر)
-#    - لا يُستخدم first_bank_code لكل القيود بشكل أعمى
+# v3.1 — خدمة حقن البيانات التجريبية (مُصلحة بالكامل)
+# - إزالة جميع الرموز التعبيرية (Emojis) من رسائل الطباعة (print) لمنع أخطاء Unicode في ملفات EXE.
+# - الحفاظ على المنطق المحاسبي والبيانات كما هي.
 import sqlite3
 import random
 import json
@@ -137,7 +135,7 @@ def delete_all_data(conn):
         try:
             conn.execute(f"DELETE FROM {t}")
         except Exception as e:
-            print(f"⚠️ حذف {t}: {e}")
+            print(f"حذف {t}: {e}")
     try:
         conn.execute("DELETE FROM sqlite_sequence WHERE name != 'vat_config'")
     except Exception:
@@ -150,7 +148,7 @@ def delete_all_data(conn):
     except Exception:
         pass
     conn.execute("PRAGMA foreign_keys = ON")
-    print("✅ تم حذف كل البيانات")
+    print("تم حذف كل البيانات")
 
 
 # ============================================================
@@ -178,7 +176,7 @@ def seed_roles_users(conn):
             "INSERT INTO users (username, password, full_name, role_id) VALUES (?,?,?,?)",
             (uname, hashed, fullname, rid),
         )
-    print(f"✅ الأدوار: {len(roles)} | المستخدمون: {len(users)}")
+    print(f"الأدوار: {len(roles)} | المستخدمون: {len(users)}")
 
 
 # ============================================================
@@ -227,7 +225,7 @@ def seed_role_permissions(conn):
                 count += 1
             except sqlite3.IntegrityError:
                 pass
-    print(f"✅ الصلاحيات: {count}")
+    print(f"الصلاحيات: {count}")
 
 
 # ============================================================
@@ -300,7 +298,7 @@ def seed_accounts(conn):
             VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0)
         """, (code, name, parent_id, level, is_debit, atype, ftype))
         code_to_id[code] = cur.lastrowid
-    print(f"✅ الحسابات: {len(accounts)}")
+    print(f"الحسابات: {len(accounts)}")
     return code_to_id
 
 
@@ -340,7 +338,7 @@ def seed_currencies(conn):
             """, (from_c, to_c, rate, d))
         except sqlite3.IntegrityError:
             pass
-    print(f"✅ العملات: {len(currencies)} | الأسعار: {len(rates)}")
+    print(f"العملات: {len(currencies)} | الأسعار: {len(rates)}")
 
 
 # ============================================================
@@ -361,27 +359,19 @@ def seed_cost_centers(conn):
             VALUES (?, ?, ?, 1)
         """, (code, name, parent))
         ids.append(cur.lastrowid)
-    print(f"✅ مراكز التكلفة: {len(centers)}")
+    print(f"مراكز التكلفة: {len(centers)}")
     return ids
 
 
 # ============================================================
-# 7) ✅ v3.0: الصناديق والبنوك — إدراج مباشر بدون قيود افتتاحية
+# 7) الصناديق والبنوك
 # ============================================================
 def seed_cash_and_bank(conn):
-    """
-    ✅ v3.0: 
-      - إدراج مباشر في accounts + cash_accounts/bank_accounts
-      - بدون قيود افتتاحية (لتجنّب التكرار)
-      - current_balance = opening_balance (يُحدَّث لاحقًا عند الحركات)
-    """
-    # ── الصناديق ──
     cash_accounts = [
         ("الصندوق الرئيسي", "YER", 500000),
         ("صندوق النقد الأجنبي", "USD", 2000),
     ]
     for name, curr, bal in cash_accounts:
-        # كود فريد
         parent = conn.execute("""
             SELECT id, code, level FROM accounts
             WHERE functional_type='cash' AND is_active=1
@@ -404,7 +394,6 @@ def seed_cash_and_bank(conn):
                 continue
         new_code = f"{parent['code']}.{max_suffix + 1:02d}"
 
-        # حساب نظامي
         conn.execute("""
             INSERT INTO accounts
             (code, name, parent_id, level, is_debit, is_active,
@@ -412,14 +401,12 @@ def seed_cash_and_bank(conn):
             VALUES (?, ?, ?, ?, 'debit', 1, 'Asset', 'cash', 1)
         """, (new_code, name, parent["id"], parent["level"] + 1))
 
-        # حساب الصندوق
         conn.execute("""
             INSERT INTO cash_accounts
             (name, currency_code, opening_balance, current_balance, account_code)
             VALUES (?, ?, ?, ?, ?)
         """, (name, curr, bal, bal, new_code))
 
-    # ── البنوك ──
     bank_accounts = [
         ("بنك اليمن الدولي", "1001234567", "الحساب الجاري - YER", "YER", 5000000),
         ("بنك التضامن",     "2004567890", "حساب التوفير - YER",  "YER", 2000000),
@@ -462,7 +449,7 @@ def seed_cash_and_bank(conn):
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (bn, acc, name, curr, bal, bal, new_code))
 
-    print(f"✅ الصناديق: {len(cash_accounts)} | البنوك: {len(bank_accounts)}")
+    print(f"الصناديق: {len(cash_accounts)} | البنوك: {len(bank_accounts)}")
 
 
 # ============================================================
@@ -479,7 +466,7 @@ def seed_parties(conn):
             INSERT INTO suppliers (name, phone, address)
             VALUES (?, ?, ?)
         """, (name, _phone(), f"اليمن - صنعاء - منطقة {random.randint(1, 20)}"))
-    print(f"✅ العملاء: {len(CUSTOMER_NAMES)} | الموردون: {len(SUPPLIER_NAMES)}")
+    print(f"العملاء: {len(CUSTOMER_NAMES)} | الموردون: {len(SUPPLIER_NAMES)}")
 
 
 # ============================================================
@@ -499,7 +486,7 @@ def seed_products(conn):
             """, (name, barcode, category, purchase_price, selling_price,
                   qty, random.randint(10, 30)))
             count += 1
-    print(f"✅ المنتجات: {count}")
+    print(f"المنتجات: {count}")
 
 
 # ============================================================
@@ -542,7 +529,7 @@ def seed_employees(conn):
             attendance_count += 1
         except sqlite3.IntegrityError:
             pass
-    print(f"✅ الموظفون: {len(EMPLOYEE_DATA)} | الحضور: {attendance_count}")
+    print(f"الموظفون: {len(EMPLOYEE_DATA)} | الحضور: {attendance_count}")
     return employee_ids
 
 
@@ -579,7 +566,7 @@ def seed_payroll(conn):
                 count += 1
             except Exception:
                 pass
-    print(f"✅ كشوف الرواتب: {count}")
+    print(f"كشوف الرواتب: {count}")
 
 
 # ============================================================
@@ -629,7 +616,7 @@ def seed_fixed_assets(conn):
                 VALUES (?, ?, ?, ?)
             """, (asset_id, _fmt(d), monthly, f"إهلاك شهر {i+1}"))
         count += 1
-    print(f"✅ الأصول الثابتة: {count}")
+    print(f"الأصول الثابتة: {count}")
 
 
 # ============================================================
@@ -692,7 +679,7 @@ def seed_crm(conn):
             VALUES (?, ?, ?, ?)
         """, (lead_id, t, d, f"تفاعل من نوع {t}"))
         int_count += 1
-    print(f"✅ CRM: {len(leads_data)} عميل | {opp_count} فرصة | {int_count} تفاعل")
+    print(f"CRM: {len(leads_data)} عميل | {opp_count} فرصة | {int_count} تفاعل")
 
 
 # ============================================================
@@ -729,7 +716,7 @@ def seed_inventory(conn):
                 VALUES (?, ?, ?, ?, ?)
             """, (p[0], t, qty, d, f"MOV-{random.randint(1000, 9999)}"))
             movement_count += 1
-    print(f"✅ دفعات FIFO: {batch_count} | حركات المخزون: {movement_count}")
+    print(f"دفعات FIFO: {batch_count} | حركات المخزون: {movement_count}")
 
 
 # ============================================================
@@ -823,7 +810,7 @@ def seed_invoices(conn):
                 VALUES (?, ?, ?, ?)
             """, (inv_id, pid, qty, price))
         purchase_count += 1
-    print(f"✅ فواتير البيع: {sale_count} | فواتير الشراء: {purchase_count}")
+    print(f"فواتير البيع: {sale_count} | فواتير الشراء: {purchase_count}")
 
 
 # ============================================================
@@ -856,7 +843,7 @@ def seed_invoice_payments(conn):
                 count += 1
             except Exception:
                 pass
-    print(f"✅ دفعات الفواتير: {count}")
+    print(f"دفعات الفواتير: {count}")
 
 
 # ============================================================
@@ -900,7 +887,7 @@ def seed_returns(conn):
         """, (d, total + vat, total + vat, vat, inv[1],
               f"PRET-{random.randint(1000, 9999)}"))
         count += 1
-    print(f"✅ المرتجعات: {count}")
+    print(f"المرتجعات: {count}")
 
 
 # ============================================================
@@ -931,27 +918,14 @@ def seed_vouchers(conn):
             VALUES ('payment', ?, 'supplier', ?, ?, '1101', 'admin')
         """, (d, sid, amount))
         payment_count += 1
-    print(f"✅ سندات القبض: {receipt_count} | سندات الصرف: {payment_count}")
+    print(f"سندات القبض: {receipt_count} | سندات الصرف: {payment_count}")
 
 
 # ============================================================
-# 19) ✅ v3.0: تم تعطيل seed_cash_bank_transactions
+# 19) الحركات البنكية والنقدية (معطلة)
 # ============================================================
 def seed_cash_bank_transactions(conn):
-    """
-    ⚠️ معطّلة في v3.0.
-    
-    السبب: كانت تُدرج 160 حركة عشوائية مباشرة في bank_transactions 
-    و cash_transactions بدون قيود محاسبية، مما يُفسد:
-      - update_bank_balance (يُعيد الحساب من opening + movements)
-      - الرصيد المخزّن current_balance
-      - التطابق مع journal_lines
-    
-    الحركات البنكية/النقدية الحقيقية يجب أن تُسجّل عبر:
-      - add_bank_transaction / add_cash_transaction (مع قيود)
-      - transfer_funds (للتحويلات)
-    """
-    print("⏭️ تم تخطي seed_cash_bank_transactions (معطّلة في v3.0)")
+    print("تم تخطي seed_cash_bank_transactions (معطلة في v3.0)")
     return
 
 
@@ -983,7 +957,7 @@ def seed_expenses(conn):
             count += 1
         except Exception:
             pass
-    print(f"✅ المصروفات: {count}")
+    print(f"المصروفات: {count}")
 
 
 # ============================================================
@@ -1009,18 +983,13 @@ def seed_inventory_adjustments(conn):
             count += 1
         except Exception:
             pass
-    print(f"✅ التسويات المخزنية: {count}")
+    print(f"التسويات المخزنية: {count}")
 
 
 # ============================================================
-# 22) ✅ v3.0: القيود المحاسبية — لا يستخدم first_bank لكل القيود
+# 22) القيود المحاسبية
 # ============================================================
 def seed_journal_entries(conn, code_to_id):
-    """
-    v3.0: تحسينات:
-    - توزيع المصروفات على عدة بنوك بدل بنك واحد
-    - جلب قائمة كاملة بالبنوك والصناديق
-    """
     entries_created = 0
     lines_created = 0
 
@@ -1051,7 +1020,6 @@ def seed_journal_entries(conn, code_to_id):
             lines_created += 1
         entries_created += 1
 
-    # ✅ v3.0: قوائم كل البنوك والصناديق
     bank_codes = [r["account_code"] for r in conn.execute(
         "SELECT account_code FROM bank_accounts ORDER BY id"
     ).fetchall()]
@@ -1060,17 +1028,13 @@ def seed_journal_entries(conn, code_to_id):
     ).fetchall()]
 
     if not bank_codes or not cash_codes:
-        print("⚠️ لا توجد بنوك أو صناديق — تخطي القيود")
+        print("لا توجد بنوك أو صناديق - تخطي القيود")
         return
 
-    # استخدام البنك الأول لكل القيود (كما كان) — لكن مع خصم فعلي
-    # سيُستخدم بنك اليمن الدولي (5,000,000) لأن قيوده أقل من مصاريفه المحتملة
-    # لتفادي الرصيد السالب، سنستخدم البنك الأول للأصول والثاني للمصروفات
     first_bank_code = bank_codes[0]
     second_bank_code = bank_codes[1] if len(bank_codes) > 1 else bank_codes[0]
     first_cash_code = cash_codes[0]
 
-    # قيد رأس المال
     add_entry("قيد تأسيس الشركة ورأس المال", "2026-01-01", [
         (first_cash_code, 500000, 0),
         (first_bank_code, 7000000, 0),
@@ -1078,7 +1042,6 @@ def seed_journal_entries(conn, code_to_id):
         ("3101", 0, 10500000),
     ])
 
-    # شراء الأصول الثابتة — من البنك الأول
     assets = conn.execute("""
         SELECT name, purchase_cost, purchase_date FROM fixed_assets
     """).fetchall()
@@ -1088,7 +1051,6 @@ def seed_journal_entries(conn, code_to_id):
             (first_bank_code, 0, a[1]),
         ])
 
-    # الإهلاك
     deps = conn.execute("""
         SELECT de.amount, de.entry_date, fa.name
         FROM depreciation_entries de
@@ -1100,7 +1062,6 @@ def seed_journal_entries(conn, code_to_id):
             ("1303", 0, d[0]),
         ])
 
-    # فواتير البيع
     sale_invoices = conn.execute("""
         SELECT id, total, vat_amount, invoice_date FROM invoices
         WHERE type='sale' AND status='completed' LIMIT 40
@@ -1113,7 +1074,6 @@ def seed_journal_entries(conn, code_to_id):
             ("2102", 0, inv[2]),
         ])
 
-    # فواتير الشراء
     purchase_invoices = conn.execute("""
         SELECT id, total, vat_amount, invoice_date FROM invoices
         WHERE type='purchase' AND status='completed' LIMIT 25
@@ -1126,7 +1086,6 @@ def seed_journal_entries(conn, code_to_id):
             ("2101", 0, inv[1]),
         ])
 
-    # سندات القبض
     receipts = conn.execute("""
         SELECT id, amount, date FROM vouchers WHERE type='receipt' LIMIT 30
     """).fetchall()
@@ -1136,7 +1095,6 @@ def seed_journal_entries(conn, code_to_id):
             ("1201", 0, r[1]),
         ])
 
-    # سندات الصرف
     payments = conn.execute("""
         SELECT id, amount, date FROM vouchers WHERE type='payment' LIMIT 25
     """).fetchall()
@@ -1146,20 +1104,17 @@ def seed_journal_entries(conn, code_to_id):
             (first_cash_code, 0, p[1]),
         ])
 
-    # ✅ v3.0: المصروفات — توزيع بين البنك الأول والثاني
     expenses = conn.execute("""
         SELECT date, category, amount, account_code FROM expenses LIMIT 40
     """).fetchall()
     for i, e in enumerate(expenses):
         code = e[3] or "5212"
-        # توزيع: نصف من الأول ونصف من الثاني
         bank = first_bank_code if i % 2 == 0 else second_bank_code
         add_entry(f"مصروف {e[1]}", e[0], [
             (code, e[2], 0),
             (bank, 0, e[2]),
         ])
 
-    # ✅ v3.0: الرواتب — توزيع بين البنكين
     payroll = conn.execute("""
         SELECT pr.month, SUM(pr.net_salary), SUM(pr.deductions)
         FROM payroll_runs pr
@@ -1178,7 +1133,7 @@ def seed_journal_entries(conn, code_to_id):
             ("2103", 0, total_ded),
         ])
 
-    print(f"✅ القيود: {entries_created} | السطور: {lines_created}")
+    print(f"القيود: {entries_created} | السطور: {lines_created}")
 
 
 # ============================================================
@@ -1221,7 +1176,7 @@ def seed_opening_balances(conn, code_to_id):
             count += 1
         except Exception:
             pass
-    print(f"✅ الأرصدة الافتتاحية: {count}")
+    print(f"الأرصدة الافتتاحية: {count}")
 
 
 # ============================================================
@@ -1229,17 +1184,17 @@ def seed_opening_balances(conn, code_to_id):
 # ============================================================
 def seed_audit_log(conn):
     actions = [
-        ("admin", "🔓 تسجيل دخول ناجح", "users", 1,
+        ("admin", "تسجيل دخول ناجح", "users", 1,
          json.dumps({"ip": "192.168.1.10", "status": "success"})),
-        ("admin", "📂 إضافة حساب", "accounts", 1,
+        ("admin", "إضافة حساب", "accounts", 1,
          json.dumps({"code": "1101", "name": "الصندوق"})),
-        ("admin", "👤 إنشاء مستخدم جديد", "users", 2,
+        ("admin", "إنشاء مستخدم جديد", "users", 2,
          json.dumps({"username": "manager", "role_id": 2})),
-        ("admin", "🌱 حقن بيانات تجريبية", "system", 0,
+        ("admin", "حقن بيانات تجريبية", "system", 0,
          json.dumps({"modules": 30, "status": "success"})),
-        ("manager", "🔓 تسجيل دخول ناجح", "users", 2,
+        ("manager", "تسجيل دخول ناجح", "users", 2,
          json.dumps({"ip": "192.168.1.15", "status": "success"})),
-        ("accountant", "📝 إنشاء قيد محاسبي", "journal_entries", 1,
+        ("accountant", "إنشاء قيد محاسبي", "journal_entries", 1,
          json.dumps({"description": "قيد تأسيس الشركة",
                      "total_debit": 10500000})),
     ]
@@ -1256,7 +1211,7 @@ def seed_audit_log(conn):
             """, (u, a, t, rid, nv, d))
         except Exception:
             pass
-    print(f"✅ سجل التدقيق: 30 سجل")
+    print("سجل التدقيق: 30 سجل")
 
 
 # ============================================================
@@ -1278,8 +1233,8 @@ def seed_closed_periods(conn):
             """, (pt, pv, ca, cb))
             count += 1
         except Exception as e:
-            print(f"⚠️ إغلاق فترة {pv}: {e}")
-    print(f"✅ الفترات المُغلقة: {count}")
+            print(f"إغلاق فترة {pv}: {e}")
+    print(f"الفترات المغلقة: {count}")
 
 
 # ============================================================
@@ -1288,7 +1243,7 @@ def seed_closed_periods(conn):
 def seed_closing_logs(conn, code_to_id):
     retained_id = code_to_id.get("3102")
     if not retained_id:
-        print("⚠️ لم يُعثر على حساب الأرباح المبقاة")
+        print("لم يُعثر على حساب الأرباح المبقاة")
         return
     entry_date = "2025-12-31"
     ref = f"CLOSE-2025-{random.randint(100000, 999999)}"
@@ -1310,9 +1265,9 @@ def seed_closing_logs(conn, code_to_id):
             (year, cost_center_id, entry_id, net_income, closed_at, closed_by)
             VALUES ('2025', NULL, ?, ?, '2025-12-31 23:59:59', 'admin')
         """, (entry_id, net_income))
-        print(f"✅ إغلاق الحسابات: سنة 2025")
+        print("إغلاق الحسابات: سنة 2025")
     except Exception as e:
-        print(f"⚠️ إغلاق الحسابات: {e}")
+        print(f"إغلاق الحسابات: {e}")
 
 
 # ============================================================
@@ -1342,8 +1297,8 @@ def seed_currency_revaluations(conn, code_to_id):
                   old_local, new_local, diff))
             count += 1
         except Exception as e:
-            print(f"⚠️ تقييم {code}: {e}")
-    print(f"✅ تقييم العملات: {count}")
+            print(f"تقييم {code}: {e}")
+    print(f"تقييم العملات: {count}")
 
 
 # ============================================================
@@ -1366,7 +1321,7 @@ def seed_opening_inventory(conn):
             count += 1
         except Exception:
             pass
-    print(f"✅ أرصدة المخزون الافتتاحية: {count}")
+    print(f"أرصدة المخزون الافتتاحية: {count}")
 
 
 # ============================================================
@@ -1402,15 +1357,15 @@ def seed_attachments(conn):
                   random.randint(50000, 500000), ftype, tbl, lid))
             count += 1
         except Exception as e:
-            print(f"⚠️ مرفق {fname}: {e}")
-    print(f"✅ المرفقات: {count}")
+            print(f"مرفق {fname}: {e}")
+    print(f"المرفقات: {count}")
 
 
 # ============================================================
-# 🎯 الدالة الرئيسية
+# الدالة الرئيسية
 # ============================================================
 def run_full_seed(progress_callback=None):
-    """حقن البيانات الشاملة — v3.0 (مُصلحة)"""
+    """حقن البيانات الشاملة — v3.1 (مُصلحة)"""
     random.seed(RANDOM_SEED)
     summary = {}
     conn = None
@@ -1419,156 +1374,155 @@ def run_full_seed(progress_callback=None):
         conn.row_factory = sqlite3.Row
 
         if progress_callback:
-            progress_callback("🗑️ حذف البيانات القديمة...")
+            progress_callback("حذف البيانات القديمة...")
         delete_all_data(conn)
 
         if progress_callback:
-            progress_callback("👥 الأدوار والمستخدمون...")
+            progress_callback("الأدوار والمستخدمون...")
         seed_roles_users(conn)
         summary["الأدوار"] = 5
         summary["المستخدمون"] = 5
 
         if progress_callback:
-            progress_callback("🛡️ الصلاحيات...")
+            progress_callback("الصلاحيات...")
         seed_role_permissions(conn)
         summary["الصلاحيات"] = 155
 
         if progress_callback:
-            progress_callback("🌳 شجرة الحسابات...")
+            progress_callback("شجرة الحسابات...")
         code_to_id = seed_accounts(conn)
         summary["الحسابات"] = len(code_to_id)
 
         if progress_callback:
-            progress_callback("💱 العملات...")
+            progress_callback("العملات...")
         seed_currencies(conn)
         summary["العملات"] = 4
 
         if progress_callback:
-            progress_callback("🏢 مراكز التكلفة...")
+            progress_callback("مراكز التكلفة...")
         seed_cost_centers(conn)
         summary["مراكز التكلفة"] = 5
 
         if progress_callback:
-            progress_callback("💰 الصناديق والبنوك...")
+            progress_callback("الصناديق والبنوك...")
         seed_cash_and_bank(conn)
         summary["الصناديق والبنوك"] = 5
 
         if progress_callback:
-            progress_callback("👥 العملاء والموردون...")
+            progress_callback("العملاء والموردون...")
         seed_parties(conn)
         summary["العملاء"] = 20
         summary["الموردون"] = 15
 
         if progress_callback:
-            progress_callback("📦 المنتجات...")
+            progress_callback("المنتجات...")
         seed_products(conn)
         summary["المنتجات"] = 30
 
         if progress_callback:
-            progress_callback("👔 الموظفون والحضور...")
+            progress_callback("الموظفون والحضور...")
         seed_employees(conn)
         summary["الموظفون"] = 15
 
         if progress_callback:
-            progress_callback("💰 كشوف الرواتب...")
+            progress_callback("كشوف الرواتب...")
         seed_payroll(conn)
         summary["كشوف الرواتب"] = 60
 
         if progress_callback:
-            progress_callback("🏗️ الأصول الثابتة...")
+            progress_callback("الأصول الثابتة...")
         seed_fixed_assets(conn)
         summary["الأصول الثابتة"] = 12
 
         if progress_callback:
-            progress_callback("📞 CRM...")
+            progress_callback("CRM...")
         seed_crm(conn)
         summary["CRM"] = 75
 
         if progress_callback:
-            progress_callback("📦 المخزون و FIFO...")
+            progress_callback("المخزون و FIFO...")
         seed_inventory(conn)
         summary["دفعات FIFO"] = 90
 
         if progress_callback:
-            progress_callback("🛒 الفواتير...")
+            progress_callback("الفواتير...")
         seed_invoices(conn)
         summary["الفواتير"] = 95
 
         if progress_callback:
-            progress_callback("💳 دفعات الفواتير...")
+            progress_callback("دفعات الفواتير...")
         seed_invoice_payments(conn)
         summary["دفعات الفواتير"] = "متعددة"
 
         if progress_callback:
-            progress_callback("🔄 المرتجعات...")
+            progress_callback("المرتجعات...")
         seed_returns(conn)
         summary["المرتجعات"] = 12
 
         if progress_callback:
-            progress_callback("📄 السندات...")
+            progress_callback("السندات...")
         seed_vouchers(conn)
         summary["السندات"] = 90
 
-        # ✅ v3.0: تم تعطيل الحركات العشوائية
         if progress_callback:
-            progress_callback("⏭️ تخطي الحركات العشوائية (v3.0)...")
+            progress_callback("تخطي الحركات العشوائية (v3.0)...")
         seed_cash_bank_transactions(conn)
-        summary["حركات الصندوق/البنك"] = "معطّلة — تُشتق من القيود"
+        summary["حركات الصندوق/البنك"] = "معطلة - تُشتق من القيود"
 
         if progress_callback:
-            progress_callback("🧾 المصروفات...")
+            progress_callback("المصروفات...")
         seed_expenses(conn)
         summary["المصروفات"] = 60
 
         if progress_callback:
-            progress_callback("📊 التسويات المخزنية...")
+            progress_callback("التسويات المخزنية...")
         seed_inventory_adjustments(conn)
         summary["التسويات المخزنية"] = 10
 
         if progress_callback:
-            progress_callback("📝 القيود المحاسبية...")
+            progress_callback("القيود المحاسبية...")
         seed_journal_entries(conn, code_to_id)
         summary["القيود المحاسبية"] = "300+"
 
         if progress_callback:
-            progress_callback("📋 الأرصدة الافتتاحية...")
+            progress_callback("الأرصدة الافتتاحية...")
         seed_opening_balances(conn, code_to_id)
         summary["الأرصدة الافتتاحية"] = 4
 
         if progress_callback:
-            progress_callback("📅 إغلاق الفترات...")
+            progress_callback("إغلاق الفترات...")
         seed_closed_periods(conn)
-        summary["الفترات المُغلقة"] = 3
+        summary["الفترات المغلقة"] = 3
 
         if progress_callback:
-            progress_callback("🔒 إغلاق الحسابات...")
+            progress_callback("إغلاق الحسابات...")
         seed_closing_logs(conn, code_to_id)
         summary["إغلاق الحسابات"] = "سنة 2025"
 
         if progress_callback:
-            progress_callback("💱 تقييم العملات...")
+            progress_callback("تقييم العملات...")
         seed_currency_revaluations(conn, code_to_id)
         summary["تقييم العملات"] = 1
 
         if progress_callback:
-            progress_callback("📦 أرصدة المخزون الافتتاحية...")
+            progress_callback("أرصدة المخزون الافتتاحية...")
         seed_opening_inventory(conn)
         summary["أرصدة المخزون الافتتاحية"] = 30
 
         if progress_callback:
-            progress_callback("📎 المرفقات...")
+            progress_callback("المرفقات...")
         seed_attachments(conn)
         summary["المرفقات"] = 15
 
         if progress_callback:
-            progress_callback("📋 سجل التدقيق...")
+            progress_callback("سجل التدقيق...")
         seed_audit_log(conn)
         summary["سجل التدقيق"] = 30
 
         conn.commit()
 
         if progress_callback:
-            progress_callback("✅ اكتمل الحقن بنجاح!")
+            progress_callback("اكتمل الحقن بنجاح!")
 
         return {"success": True, "summary": summary, "error": None}
 
