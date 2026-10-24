@@ -1,4 +1,4 @@
-# app_desktop.py — النسخة النهائية (v28.0) - Chrome Native App (مع تأخير ذكي)
+# app_desktop.py — النسخة النهائية (v38.0) - Firefox Portable Kiosk Mode
 import os
 import sys
 import time
@@ -113,49 +113,48 @@ def main():
     if not server_ready:
         sys.exit(1)
 
-    # 🎯 التأخير الذكي: ننتظر 5 ثوانٍ إضافية لضمان استقرار الخادم قبل فتح كروم
-    time.sleep(5)
-
     # ═══════════════════════════════════════════════════════════
-    # البحث عن Google Chrome حصرياً
+    # البحث عن Firefox المدمج أولاً، ثم Firefox المثبت
     # ═══════════════════════════════════════════════════════════
-    chrome_paths = [
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe")
-    ]
+    bundled_firefox = os.path.join(base_path, "firefox_portable", "firefox.exe")
     
-    browser_exe = None
-    for path in chrome_paths:
-        if os.path.exists(path):
-            browser_exe = path
-            break
+    if os.path.exists(bundled_firefox):
+        browser_exe = bundled_firefox
+        print("Using bundled Firefox...")
+    else:
+        # البحث عن Firefox المثبت (خطة بديلة)
+        firefox_paths = [
+            r"C:\Program Files\Mozilla Firefox\firefox.exe",
+            r"C:\Program Files (x86)\Mozilla Firefox\firefox.exe"
+        ]
+        browser_exe = next((path for path in firefox_paths if os.path.exists(path)), None)
+        if browser_exe:
+            print("Using installed Firefox...")
 
     # ═══════════════════════════════════════════════════════════
-    # التشغيل كتطبيق ويندوز حقيقي (Native App)
+    # التشغيل في وضع Kiosk (ملء الشاشة بدون أدوات)
     # ═══════════════════════════════════════════════════════════
     if browser_exe:
-        # إنشاء مجلد مؤقت لملف التعريف
+        # إنشاء مجلد بيانات مؤقت لـ Firefox (لتجنب شاشات الترحيب)
         if getattr(sys, 'frozen', False):
             app_data_dir = os.path.dirname(sys.executable)
         else:
             app_data_dir = os.path.dirname(os.path.abspath(__file__))
             
-        chrome_profile_dir = os.path.join(app_data_dir, "chrome_profile")
-        os.makedirs(chrome_profile_dir, exist_ok=True)
+        firefox_profile_dir = os.path.join(app_data_dir, "firefox_profile")
+        os.makedirs(firefox_profile_dir, exist_ok=True)
 
+        # تشغيل Firefox في وضع Kiosk مع ملف تعريف معزول
         subprocess.Popen([
-            browser_exe, 
-            f"--app={url}", 
-            "--start-maximized", 
-            "--force-color-profile=srgb",
-            f"--user-data-dir={chrome_profile_dir}",  # ملف تعريف معزول
-            "--no-first-run",                        # منع شاشات الترحيب
-            "--disable-features=Translate",          # منع شريط الترجمة
-            "--disable-infobars"                     # إخفاء شرائط المعلومات
+            browser_exe,
+            "-kiosk",                              # وضع ملء الشاشة (بدون أدوات)
+            "-profile", firefox_profile_dir,       # ملف تعريف معزول (لتجنب شاشات الترحيب)
+            "-no-remote",                          # منع استخدام نسخة Firefox مفتوحة
+            url
         ])
     else:
-        # إذا لم يوجد Chrome، استخدم المتصفح الافتراضي
+        # إذا لم يوجد Firefox، استخدم المتصفح الافتراضي
+        print("No Firefox found. Opening default browser...")
         webbrowser.open(url)
 
     # إبقاء العملية الرئيسية مفتوحة (حتى لا يتوقف الخادم)
