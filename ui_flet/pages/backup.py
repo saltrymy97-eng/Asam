@@ -40,7 +40,7 @@ class BackupPage(ft.Column):
 
         # FilePicker للرفع
         self.file_picker = ft.FilePicker(on_result=self.on_file_picked)
-        self.page.overlay.append(self.file_picker)
+        self.page.services.append(self.file_picker)   # ← ✅ التعديل هنا (كان overlay)
         
         self.tabs = ft.Tabs(
             selected_index=0, animation_duration=300,
@@ -69,7 +69,6 @@ class BackupPage(ft.Column):
     def build_main_tab(self):
         stats = get_backup_stats()
         
-        # تنبيه
         alert_controls = []
         if stats.get('alert'):
             alert_controls.append(ft.Container(
@@ -77,7 +76,6 @@ class BackupPage(ft.Column):
                 bgcolor=ft.colors.with_opacity(0.1, ACCENT_RED), padding=10, border_radius=8
             ))
 
-        # بطاقات
         cards_row = ft.Row([
             self.kpi_card("إجمالي النسخ", stats['total'], "📋", ACCENT_BLUE),
             self.kpi_card("آخر نسخة", stats['latest_time'], "🕐", ACCENT_GREEN),
@@ -85,7 +83,6 @@ class BackupPage(ft.Column):
             self.kpi_card("آخر مستخدم", stats.get('latest_user', 'غير معروف'), "👤", ACCENT_PURPLE),
         ], spacing=10)
 
-        # نموذج الإنشاء
         self.backup_user = ft.TextField(label="اسم المستخدم", value="مدير النظام", expand=True)
         self.backup_type = ft.Dropdown(label="نوع النسخة", options=[ft.dropdown.Option("يدوي"), ft.dropdown.Option("تلقائي"), ft.dropdown.Option("قبل تحديث")], value="يدوي", expand=True)
         self.encrypt_cb = ft.Checkbox(label="🔐 تشفير النسخة (AES-256)", value=False)
@@ -122,7 +119,6 @@ class BackupPage(ft.Column):
             ]), bgcolor=GLASS_BG, border=ft.border.all(1, GOLD), border_radius=16, padding=15
         )
 
-        # أدوات النظام
         def start_sched(e):
             start_scheduler()
             self.show_snackbar("✅ تم تشغيل المجدول التلقائي", ACCENT_GREEN)
@@ -140,7 +136,6 @@ class BackupPage(ft.Column):
             ft.ElevatedButton("🗑️ حذف النسخ القديمة", on_click=del_old, bgcolor=ACCENT_RED, color=ft.colors.WHITE, expand=True),
         ], spacing=10)
 
-        # سجل النسخ
         self.backups_table_container = ft.Container()
         self.restore_dd = ft.Dropdown(label="اختر نسخة للاستعادة", expand=True)
         self.download_dd = ft.Dropdown(label="اختر نسخة للتحميل", expand=True)
@@ -219,7 +214,6 @@ class BackupPage(ft.Column):
         file = e.files[0]
         save_path = os.path.join(BACKUP_DIR, file.name)
         
-        # في Flet نحتاج لقراءة محتوى الملف — يمكن استخدام file.path إذا كان سطح مكتب
         try:
             if file.path:
                 import shutil
@@ -232,7 +226,6 @@ class BackupPage(ft.Column):
             self.upload_status.value = f"❌ فشل الرفع: {ex}"
             self.page.update(); return
 
-        # منطق الاستعادة الذكي
         file_to_restore = None
         if file.name.endswith('.db'):
             file_to_restore = file.name
@@ -254,6 +247,5 @@ class BackupPage(ft.Column):
                 success, msg = restore_backup(file_to_restore)
                 if success: self.show_snackbar(msg, ACCENT_GREEN)
                 else: self.show_snackbar(msg, ACCENT_RED)
-            # إضافة زر استعادة
             self.upload_status.value += " — جاهز للاستعادة"
         self.page.update()
