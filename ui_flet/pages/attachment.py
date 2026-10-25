@@ -33,7 +33,7 @@ class AttachmentPage(ft.Column):
 
         # FilePicker لرفع الملفات
         self.file_picker = ft.FilePicker(on_result=self.on_file_picked)
-        self.page.overlay.append(self.file_picker)
+        self.page.services.append(self.file_picker)   # ← ✅ التعديل هنا (كان overlay)
         self.pending_file_path = None
         self.pending_file_name = None
 
