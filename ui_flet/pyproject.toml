@@ -1,0 +1,19 @@
+[project]
+name = "hokama-erp"
+version = "3.0.0"
+description = "حوكمة ERP - نظام محاسبي وإداري ذكي"
+requires-python = ">=3.10"
+authors = [{ name = "سالم التريمي" }]
+
+[tool.flet]
+org = "com.hokama"
+product = "حوكمة ERP"
+company = "Hokama ERP"
+copyright = "© 2026 سالم التريمي"
+
+[tool.flet.app]
+path = "."
+module = "main"
+
+[tool.flet.windows]
+icon = "../icon.ico"
