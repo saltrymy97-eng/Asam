@@ -1,20 +1,8 @@
-# --- Flet Framework ---
 flet==0.24.1
-
-# --- Charts & Visualization ---
-# PlotlyChart مدمج في flet.plotly_chart
 plotly==5.24.1
-
-# --- Data Processing ---
 pandas==2.2.3
 numpy==1.26.4
-
-# --- Security ---
 bcrypt==4.2.1
-
-# --- AI ---
 groq==0.13.1
-
-# --- Utilities ---
 python-dateutil==2.9.0.post0
 pytz==2024.2
