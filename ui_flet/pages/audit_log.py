@@ -11,7 +11,7 @@ from ui_flet.shared import (
 )
 
 try:
-    from flet_plotly import PlotlyChart
+    from flet.plotly_chart import PlotlyChart   # ← ✅ التعديل هنا
     import plotly.express as px
     import plotly.graph_objects as go
     PLOTLY_AVAILABLE = True
@@ -134,7 +134,7 @@ class AuditLogPage(ft.Column):
         self.detail_dd = ft.Dropdown(label="اختر رقم السجل", expand=True, on_change=self.on_detail_select)
         self.detail_container = ft.Container()
         
-        self.apply_filters()  # تحميل أولي
+        self.apply_filters()
 
         return ft.Column([
             cards_row,
@@ -161,12 +161,10 @@ class AuditLogPage(ft.Column):
         
         logs = get_audit_logs(filter_table=filter_table, filter_user=filter_user, limit=limit)
         
-        # الفلترة النصية
         if self.search_input.value and self.search_input.value.strip():
             pattern = self.search_input.value.strip().lower()
             logs = [log for log in logs if pattern in str(log.get("action", "")).lower() or pattern in str(log.get("table_name", "")).lower() or pattern in str(log.get("old_value", "")).lower() or pattern in str(log.get("new_value", "")).lower() or pattern in str(log.get("username", "")).lower()]
         
-        # الفلترة الزمنية
         date_range = self.date_dd.value
         today = date.today()
         date_from = date_to = None
@@ -184,7 +182,6 @@ class AuditLogPage(ft.Column):
             self.page.update(); return
 
         df = pd.DataFrame(logs)
-        # تعويض القيم
         df["record_id"] = df["record_id"].apply(lambda x: "—" if pd.isna(x) or x is None else str(x))
         df["old_value"] = df["old_value"].apply(lambda x: "—" if pd.isna(x) or not str(x).strip() or str(x).lower() == "none" else str(x))
         df["new_value"] = df["new_value"].apply(lambda x: "—" if pd.isna(x) or not str(x).strip() or str(x).lower() == "none" else str(x))
@@ -207,7 +204,6 @@ class AuditLogPage(ft.Column):
         else:
             self.info_text.value = f"عرض {len(df_display)} سجل"
 
-        # تحديث قائمة التفاصيل
         self.detail_dd.options = [ft.dropdown.Option(key=str(r['id']), text=f"#{r['id']}") for r in logs]
         if logs: self.detail_dd.value = str(logs[0]['id']); self.on_detail_select(None)
 
@@ -216,7 +212,7 @@ class AuditLogPage(ft.Column):
 
     def build_charts(self, logs):
         if not PLOTLY_AVAILABLE:
-            self.charts_container.controls = [ft.Text("⚠️ لتثبيت الرسوم البيانية: pip install flet-plotly", color=ACCENT_ORANGE)]
+            self.charts_container.controls = [ft.Text("⚠️ الرسوم البيانية غير متوفرة — راجع التثبيت", color=ACCENT_ORANGE)]  # ← ✅ التعديل هنا
             return
 
         df = pd.DataFrame(logs).copy()
@@ -225,28 +221,24 @@ class AuditLogPage(ft.Column):
         
         charts = []
         
-        # 1. حسب اليوم
         daily = df.groupby("date").size().reset_index(name="count")
         if not daily.empty:
             fig = px.bar(daily, x="date", y="count", color_discrete_sequence=[ACCENT_CYAN])
             fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='white', height=250, margin=dict(t=20, b=20, l=20, r=20))
             charts.append(ft.Container(content=PlotlyChart(fig, expand=True), height=250))
         
-        # 2. حسب الجدول
         table_counts = df.groupby("table_name").size().reset_index(name="count").sort_values("count", ascending=False).head(10)
         if not table_counts.empty:
             fig = px.bar(table_counts, x="table_name", y="count", color_discrete_sequence=[ACCENT_BLUE])
             fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='white', height=250, margin=dict(t=20, b=20, l=20, r=20))
             charts.append(ft.Container(content=PlotlyChart(fig, expand=True), height=250))
         
-        # 3. حسب الساعة
         hour_counts = df.groupby("hour").size().reset_index(name="count").sort_values("hour")
         if not hour_counts.empty:
             fig = px.bar(hour_counts, x="hour", y="count", color_discrete_sequence=[ACCENT_ORANGE])
             fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='white', height=250, margin=dict(t=20, b=20, l=20, r=20))
             charts.append(ft.Container(content=PlotlyChart(fig, expand=True), height=250))
         
-        # 4. حسب المستخدم
         user_counts = df.groupby("username").size().reset_index(name="count").sort_values("count", ascending=False).head(10)
         if not user_counts.empty:
             fig = px.bar(user_counts, x="username", y="count", color_discrete_sequence=[ACCENT_PURPLE])
@@ -276,7 +268,6 @@ class AuditLogPage(ft.Column):
         if self.df_display.empty:
             self.show_snackbar("لا توجد بيانات للتصدير", ACCENT_RED); return
         
-        # حفظ في مجلد المستخدم
         user_home = os.path.expanduser("~")
         file_path = os.path.join(user_home, f"audit_log_{date.today().strftime('%Y%m%d')}.csv")
         try:
