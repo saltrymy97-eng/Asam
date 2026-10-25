@@ -13,7 +13,7 @@ from ui_flet.shared import (
 )
 
 try:
-    from flet_plotly import PlotlyChart
+    from flet.plotly_chart import PlotlyChart   # ← ✅ التعديل هنا
     import plotly.express as px
     PLOTLY_AVAILABLE = True
 except ImportError:
@@ -139,7 +139,6 @@ class InventoryAdjustmentPage(ft.Column):
             self.diff_text.value = "📊 الكمية متطابقة"
             self.diff_text.color = ACCENT_BLUE
 
-        # حساب التكلفة التقديرية
         if diff == 0:
             self.cost_preview.value = ""
             self.save_btn.disabled = True
@@ -239,7 +238,7 @@ class InventoryAdjustmentPage(ft.Column):
 
     def load_charts(self):
         if not PLOTLY_AVAILABLE:
-            self.charts_container.controls = [ft.Text("⚠️ لتثبيت الرسوم البيانية: pip install flet-plotly", color=ACCENT_ORANGE)]
+            self.charts_container.controls = [ft.Text("⚠️ الرسوم البيانية غير متوفرة — راجع التثبيت", color=ACCENT_ORANGE)]  # ← ✅ التعديل هنا
             self.page.update(); return
 
         adjustments = get_adjustments()
@@ -249,13 +248,11 @@ class InventoryAdjustmentPage(ft.Column):
 
         df = pd.DataFrame(adjustments)
         
-        # رسم 1: قيمة الانحرافات حسب المنتج
         df_chart = df.groupby('product_name')['total_cost'].sum().reset_index()
         df_chart['type'] = df.groupby('product_name')['difference'].sum().apply(lambda x: 'فائض' if x > 0 else 'عجز').values
         fig = px.bar(df_chart, x='product_name', y='total_cost', color='type', color_discrete_map={'فائض': '#10B981', 'عجز': '#EF4444'}, title="قيمة الانحرافات حسب المنتج")
         fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='white', height=300, margin=dict(t=30, b=20, l=20, r=20))
         
-        # رسم 2: توزيع الانحرافات
         gain = df[df['difference'] > 0]['total_cost'].sum()
         loss = abs(df[df['difference'] < 0]['total_cost'].sum())
         pie_data = pd.DataFrame({'النوع': ['فائض', 'عجز'], 'القيمة': [gain, loss]})
