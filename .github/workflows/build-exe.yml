@@ -37,58 +37,46 @@ jobs:
           flutter-version: '3.27.1'
           cache: true
 
-      # ⬇️⬇️⬇️ الفحص الصارم الجديد ⬇️⬇️⬇️
+      # ⬇️⬇️⬇️ الفحص الصارم (بصيغة YAML سليمة) ⬇️⬇️⬇️
       - name: Strict Verify Project Structure
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $errors = @()
 
-          Write-Host "🔍 Starting strict structure verification..." -ForegroundColor Cyan
+          Write-Host "Starting strict structure verification..." -ForegroundColor Cyan
 
-          # 1. فحص ملف الإعدادات في الجذر
+          # 1. فحص ملف الإعدادات
           if (-not (Test-Path "pyproject.toml")) {
-            $errors += "❌ الملف pyproject.toml غير موجود في الجذر الرئيسي!"
+            $errors += "pyproject.toml is missing in root!"
           } else {
-            # استخدام Python للتحقق الدقيق من المحتوى (بدلاً من النصوص)
-            $pythonCheck = python -c @"
-import tomllib
-with open('pyproject.toml', 'rb') as f:
-    data = tomllib.load(f)
-app = data.get('tool', {}).get('flet', {}).get('app', {})
-print(f"PATH_VALUE:{app.get('path', '')}")
-print(f"MODULE_VALUE:{app.get('module', '')}")
-"@
-            $pathMatch = $pythonCheck | Select-String -Pattern "PATH_VALUE:(.*)" | ForEach-Object { $_.Matches.Groups[1].Value }
-            $moduleMatch = $pythonCheck | Select-String -Pattern "MODULE_VALUE:(.*)" | ForEach-Object { $_.Matches.Groups[1].Value }
-
-            if ($pathMatch -ne '.') {
-              $errors += "❌ إعدادات خاطئة: path في pyproject.toml يجب أن تكون '.' (القيمة الحالية: '$pathMatch')"
+            $config = Get-Content "pyproject.toml" -Raw
+            if ($config -notmatch 'path\s*=\s*"\."') {
+              $errors += "pyproject.toml error: 'path' must be '.'"
             }
-            if ($moduleMatch -ne 'ui_flet.main') {
-              $errors += "❌ إعدادات خاطئة: module في pyproject.toml يجب أن تكون 'ui_flet.main' (القيمة الحالية: '$moduleMatch')"
+            if ($config -notmatch 'module\s*=\s*"ui_flet\.main"') {
+              $errors += "pyproject.toml error: 'module' must be 'ui_flet.main'"
             }
           }
 
-          # 2. فحص الملفات الأساسية
-          if (-not (Test-Path "ui_flet/main.py")) { $errors += "❌ الملف ui_flet/main.py غير موجود!" }
-          if (-not (Test-Path "database.py")) { $errors += "❌ الملف database.py غير موجود في الجذر!" }
-          if (-not (Test-Path "services")) { $errors += "❌ مجلد services غير موجود في الجذر!" }
+          # 2. فحص الملفات
+          if (-not (Test-Path "ui_flet/main.py")) { $errors += "ui_flet/main.py is missing!" }
+          if (-not (Test-Path "database.py")) { $errors += "database.py is missing in root!" }
+          if (-not (Test-Path "services")) { $errors += "services folder is missing in root!" }
 
-          # 3. التأكد من عدم وجود pyproject.toml مكرر في ui_flet (لأنه يسبب تداخل)
+          # 3. منع التداخل
           if (Test-Path "ui_flet/pyproject.toml") {
-            $errors += "⚠️ تحذير: يوجد ملف pyproject.toml داخل ui_flet. يجب حذفه لتجنب التداخل."
+            $errors += "WARNING: pyproject.toml exists inside ui_flet. Delete it!"
           }
 
-          # إذا وجدت أي أخطاء، أوقف العملية فوراً
           if ($errors.Count -gt 0) {
-            Write-Host "`n🚨 STRUCTURE CHECK FAILED!" -ForegroundColor Red
+            Write-Host "`nSTRUCTURE CHECK FAILED!" -ForegroundColor Red
             foreach ($err in $errors) { Write-Host $err -ForegroundColor Red }
-            throw "Pre-flight check failed. Fix the paths above before building."
+            throw "Pre-flight check failed."
           }
 
-          Write-Host "`n✅ All paths and configurations are strictly correct. Ready to build!" -ForegroundColor Green
-      # ⬆️⬆️⬆️ نهاية الفحص الصارم ⬆️⬆️⬆️
+          Write-Host "`nAll paths are correct. Ready to build!" -ForegroundColor Green
+      # ⬆️⬆️⬆️ نهاية الفحص ⬆️⬆️⬆️
 
       - name: Install Python Dependencies
         run: |
