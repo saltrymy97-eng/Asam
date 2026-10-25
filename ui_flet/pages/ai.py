@@ -76,7 +76,7 @@ class AIPage(ft.Column):
 
         # FilePicker للصوت
         self.audio_picker = ft.FilePicker(on_result=self.on_audio_picked)
-        self.page.services.append(self.audio_picker)   # ← ✅ التعديل هنا (كان overlay)
+        self.page.services.append(self.audio_picker)   # ← flet 0.28
 
         self.controls = [
             ft.Row([self.header, self.model_dd], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER),
@@ -122,8 +122,8 @@ class AIPage(ft.Column):
             d = json.dumps(data, ensure_ascii=False, default=str)
             prompt = f"""أنت مستشار مالي ومدير مالي (CFO) خبير تعمل ضمن نظام ERP. البيانات الحالية للشركة:\n{d}\nالمطلوب:\n1. قدم إجابة وافية، دقيقة، ومنظمة مهنياً.\n2. استخدم العناوين العريضة والجداول لتوضيح الأرقام.\n3. اشرح التأثير المالي والتشغيلي بوضوح.\n4. حافظ على نبرة احترافية، رصينة، وداعمة لاتخاذ القرار (استخدم تنسيق Markdown)."""
             
-            with self.page.session:
-                ans = query_groq(prompt, question, model=self.selected_model, max_tokens=2048)
+            # ✅ flet 0.28: حذفنا "with self.page.session:"
+            ans = query_groq(prompt, question, model=self.selected_model, max_tokens=2048)
             
             self.chat_history_col.controls.append(self.render_ai_response(ans))
             self.response_container.content = self.chat_history_col
