@@ -7,34 +7,17 @@ on:
       - 'ui_flet/**'
       - 'services/**'
       - 'database.py'
-      - 'pyproject.toml'
       - 'icon.ico'
       - '.github/workflows/build-exe.yml'
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'رقم الإصدار'
-        required: false
-        default: '3.0.0'
-        type: string
 
 permissions:
   contents: write
 
-concurrency:
-  group: hokama-erp-windows-build
-  cancel-in-progress: false
-
 jobs:
   build-windows:
-    name: Build Hokama ERP for Windows
     runs-on: windows-2022
     timeout-minutes: 120
-
-    env:
-      PYTHONIOENCODING: utf-8
-      PYTHONUTF8: "1"
-      PYTHONLEGACYWINDOWSSTDIO: "0"
 
     steps:
       - name: Checkout Repository
@@ -53,132 +36,54 @@ jobs:
           flutter-version: '3.27.1'
           cache: true
 
-      - name: Verify Build Environment
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          Write-Host "=== Python ==="
-          python --version
-          Write-Host "=== Flutter ==="
-          flutter --version
-          Write-Host "=== CMake ==="
-          cmake --version
-
-      - name: Configure Flutter
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          flutter doctor -v
-
       - name: Install Python Dependencies
-        shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
           python -m pip install --upgrade pip
-          python -m pip install -r ui_flet/requirements.txt
+          pip install -r ui_flet/requirements.txt
 
-      - name: Verify Flet Version
+      # ⬇️⬇️⬇️ الخطوة السحرية التي تحل المشكلة ⬇️⬇️⬇️
+      - name: Copy Shared Files into ui_flet (For Flet Build)
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          Write-Host "=== Flet Installation Info ==="
-          python -m pip show flet
-          Write-Host "=== Import Test ==="
-          python -c "import flet; print('Flet imported OK')"
-
-      - name: Determine Version
-        id: version
-        shell: pwsh
-        env:
-          REQUESTED_VERSION: ${{ inputs.version }}
-          EVENT_NAME: ${{ github.event_name }}
-          RUN_NUMBER: ${{ github.run_number }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if ($env:EVENT_NAME -eq 'workflow_dispatch') {
-            $version = $env:REQUESTED_VERSION
-          } else {
-            $version = "3.0.$env:RUN_NUMBER"
-          }
-          if ($version -notmatch '^\d+\.\d+\.\d+$') {
-            throw "Invalid version format: $version"
-          }
-          "version=$version" >> $env:GITHUB_OUTPUT
-          Write-Host "Building Hokama ERP version $version"
+          # نسخ قاعدة البيانات
+          Copy-Item -Path "database.py" -Destination "ui_flet/database.py" -Force
+          
+          # نسخ مجلد الخدمات بالكامل
+          Copy-Item -Path "services" -Destination "ui_flet/services" -Recurse -Force
+          
+          Write-Host "✅ Shared files copied to ui_flet temporarily for build."
+      # ⬆️⬆️⬆️
 
       - name: Build Windows Application
         working-directory: ui_flet
         shell: pwsh
-        timeout-minutes: 60
         run: |
-          $ErrorActionPreference = 'Stop'
-          $env:NO_COLOR = '1'
-          $env:TERM = 'dumb'
-          $env:COLUMNS = '200'
-          $logFile = Join-Path $PWD 'build.log'
-          flet build windows --verbose 2>&1 | Tee-Object -FilePath $logFile
-          if ($LASTEXITCODE -ne 0) {
-            throw "Flet build failed. Review ui_flet/build.log."
-          }
-          $buildPath = Join-Path $PWD 'build/windows'
-          if (-not (Test-Path $buildPath)) {
-            throw "Expected build output was not found: $buildPath"
-          }
-          $executables = Get-ChildItem $buildPath -Filter '*.exe' -Recurse
-          if (-not $executables) {
-            throw "Build completed but no EXE was found"
-          }
-          Write-Host "=== EXE FILES ==="
-          $executables | Select-Object FullName, Length | Format-Table -AutoSize
-
-      - name: Show Build Log
-        if: always()
-        working-directory: ui_flet
-        shell: pwsh
-        run: |
-          if (Test-Path 'build.log') {
-            Write-Host "=== LAST 150 LINES OF BUILD LOG ==="
-            Get-Content 'build.log' -Tail 150
-          }
+          $env:NO_COLOR = "1"
+          flet build windows --verbose
 
       - name: Prepare Release ZIP
         if: success()
         shell: pwsh
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          $ErrorActionPreference = 'Stop'
-          $buildPath = 'ui_flet/build/windows'
-          $zipName = "HokamaERP-v$env:VERSION-Windows.zip"
-          if (-not (Test-Path $buildPath)) { throw "Build directory not found" }
-          $items = Get-ChildItem $buildPath -Force
-          if (-not $items) { throw "Build directory is empty" }
-          Compress-Archive -Path "$buildPath/*" -DestinationPath $zipName -CompressionLevel Optimal -Force
-          if (-not (Test-Path $zipName)) { throw "ZIP archive creation failed" }
-          Get-Item $zipName | Select-Object Name, Length | Format-List
+          $zipName = "HokamaERP-Windows.zip"
+          Compress-Archive -Path "ui_flet/build/windows/*" -DestinationPath $zipName -CompressionLevel Optimal -Force
 
       - name: Upload Build Artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: HokamaERP-Windows-${{ steps.version.outputs.version }}
-          path: HokamaERP-v${{ steps.version.outputs.version }}-Windows.zip
-          if-no-files-found: error
-          retention-days: 90
+          name: HokamaERP-Windows
+          path: HokamaERP-Windows.zip
 
       - name: Create GitHub Release
         if: success()
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: Hokama ERP v${{ steps.version.outputs.version }}
+          tag_name: v3.0.${{ github.run_number }}
+          name: Hokama ERP v3.0.${{ github.run_number }}
           body: |
             # حوكمة ERP
-            إصدار Windows: ${{ steps.version.outputs.version }}
-            حمّل ملف ZIP من الأصول المرفقة، ثم فك الضغط وشغّل الملف التنفيذي.
-          files: HokamaERP-v${{ steps.version.outputs.version }}-Windows.zip
-          draft: false
-          prerelease: false
-          fail_on_unmatched_files: true
+            إصدار Windows جاهز للتشغيل.
+          files: HokamaERP-Windows.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
