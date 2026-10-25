@@ -3,13 +3,6 @@ name: Build Hokama ERP EXE (Flet)
 on:
   push:
     branches: [main]
-    paths:
-      - 'ui_flet/**'
-      - 'services/**'
-      - 'database.py'
-      - 'pyproject.toml'
-      - 'icon.ico'
-      - '.github/workflows/build-exe.yml'
   workflow_dispatch:
 
 permissions:
@@ -28,61 +21,19 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: pip
 
       - name: Setup Flutter 3.27.1
         uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: '3.27.1'
-          cache: true
-
-      # ⬇️⬇️⬇️ الفحص الصارم (بصيغة YAML سليمة) ⬇️⬇️⬇️
-      - name: Strict Verify Project Structure
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $errors = @()
-
-          Write-Host "Starting strict structure verification..." -ForegroundColor Cyan
-
-          # 1. فحص ملف الإعدادات
-          if (-not (Test-Path "pyproject.toml")) {
-            $errors += "pyproject.toml is missing in root!"
-          } else {
-            $config = Get-Content "pyproject.toml" -Raw
-            if ($config -notmatch 'path\s*=\s*"\."') {
-              $errors += "pyproject.toml error: 'path' must be '.'"
-            }
-            if ($config -notmatch 'module\s*=\s*"ui_flet\.main"') {
-              $errors += "pyproject.toml error: 'module' must be 'ui_flet.main'"
-            }
-          }
-
-          # 2. فحص الملفات
-          if (-not (Test-Path "ui_flet/main.py")) { $errors += "ui_flet/main.py is missing!" }
-          if (-not (Test-Path "database.py")) { $errors += "database.py is missing in root!" }
-          if (-not (Test-Path "services")) { $errors += "services folder is missing in root!" }
-
-          # 3. منع التداخل
-          if (Test-Path "ui_flet/pyproject.toml") {
-            $errors += "WARNING: pyproject.toml exists inside ui_flet. Delete it!"
-          }
-
-          if ($errors.Count -gt 0) {
-            Write-Host "`nSTRUCTURE CHECK FAILED!" -ForegroundColor Red
-            foreach ($err in $errors) { Write-Host $err -ForegroundColor Red }
-            throw "Pre-flight check failed."
-          }
-
-          Write-Host "`nAll paths are correct. Ready to build!" -ForegroundColor Green
-      # ⬆️⬆️⬆️ نهاية الفحص ⬆️⬆️⬆️
 
       - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r ui_flet/requirements.txt
 
+      # ⬇️⬇️⬇️ البناء مع تحديد نقطة الدخول بدقة ⬇️⬇️⬇️
       - name: Build Windows Application
         shell: pwsh
         run: |
@@ -93,7 +44,8 @@ jobs:
           $env:TERM = "dumb"
           $env:COLUMNS = "200"
           
-          flet build windows --verbose
+          flet build windows --module-name "ui_flet/main.py" --verbose
+      # ⬆️⬆️⬆️
 
       - name: Create ZIP
         if: success()
@@ -115,11 +67,6 @@ jobs:
         with:
           tag_name: v3.0.${{ github.run_number }}
           name: Hokama ERP v3.0.${{ github.run_number }}
-          body: |
-            # حوكمة ERP
-            إصدار Windows جاهز للتشغيل.
           files: HokamaERP-Windows.zip
-          draft: false
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
