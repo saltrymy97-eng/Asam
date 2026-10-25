@@ -1,76 +1,153 @@
-name: Build Hokama ERP EXE
+name: Build Hokama ERP EXE (Flet)
 
 on:
   push:
     branches: [main]
     paths:
-      - 'app.py'
-      - 'app_desktop.py'
-      - 'database.py'
+      - 'ui_flet/**'
       - 'services/**'
-      - 'ui/**'
-      - 'requirements.txt'
+      - 'database.py'
+      - 'pyproject.toml'
       - 'icon.ico'
       - '.github/workflows/build-exe.yml'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'الإصدار (مثال: 3.0.0)'
+        required: false
+        default: '3.0.0'
 
 jobs:
   build-windows:
     runs-on: windows-latest
+    
+    permissions:
+      contents: write   # للسماح بإنشاء Releases
+
     steps:
-      - uses: actions/checkout@v4
-      
-      - uses: actions/setup-python@v5
+      # ============================================================
+      # 1. جلب الكود
+      # ============================================================
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # ============================================================
+      # 2. تثبيت Python
+      # ============================================================
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
           cache: 'pip'
-      
-      - name: Install dependencies
+
+      # ============================================================
+      # 3. تثبيت Flutter SDK (مطلوب لـ flet build)
+      # ============================================================
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+          flutter-version: '3.24.5'
+
+      # ============================================================
+      # 4. تثبيت مكتبات Python
+      # ============================================================
+      - name: Install Python Dependencies
         run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
-      
-      - name: Build EXE (Optimized for PySide6)
-        shell: cmd
+          python -m pip install --upgrade pip
+          pip install -r ui_flet/requirements.txt
+
+      # ============================================================
+      # 5. استخراج الإصدار
+      # ============================================================
+      - name: Determine Version
+        id: version
+        shell: bash
         run: |
-          pyinstaller --noconfirm --onedir --windowed --icon=icon.ico --name=HokamaERP ^
-          --copy-metadata streamlit --copy-metadata pandas --copy-metadata altair --copy-metadata numpy --copy-metadata plotly ^
-          --collect-submodules streamlit --collect-submodules groq ^
-          --collect-all PySide6 ^
-          --collect-data streamlit ^
-          --hidden-import streamlit.web.cli ^
-          --hidden-import cryptography.fernet ^
-          --hidden-import groq ^
-          --hidden-import database ^
-          --add-data "app.py;." --add-data "database.py;." --add-data "ui;ui" --add-data "services;services" --add-data "icon.ico;." ^
-          --exclude-module tkinter --exclude-module matplotlib --exclude-module scipy --exclude-module IPython --exclude-module jupyter --exclude-module notebook --exclude-module pytest --exclude-module sphinx ^
-          app_desktop.py
-      
-      - name: Cleanup tests and pycache
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="3.0.${{ github.run_number }}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "📦 Building version: $VERSION"
+
+      # ============================================================
+      # 6. بناء EXE
+      # ============================================================
+      - name: Build Windows EXE
+        working-directory: ui_flet
+        run: |
+          flet build windows --verbose
+        timeout-minutes: 30
+
+      # ============================================================
+      # 7. تنظيف الملفات المؤقتة
+      # ============================================================
+      - name: Cleanup Build Artifacts
         shell: pwsh
         run: |
-          Get-ChildItem -Path dist/HokamaERP -Recurse -Directory |
+          Get-ChildItem -Path ui_flet/build/windows -Recurse -Directory -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -eq '__pycache__' -or $_.Name -eq 'tests' } |
             Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
           
-          Get-ChildItem -Path dist/HokamaERP -Recurse -Include *.pyc,*.pyo |
-            Where-Object { $_.FullName -match 'tests|test_' } |
+          Get-ChildItem -Path ui_flet/build/windows -Recurse -Include *.pyc,*.pyo -ErrorAction SilentlyContinue |
             Remove-Item -Force -ErrorAction SilentlyContinue
-      
-      - name: Install 7-Zip
-        run: |
-          choco install 7zip -y
-      
-      - name: Create ZIP with 7-Zip (Ultra Compression for smaller download)
+
+      # ============================================================
+      # 8. ضغط الناتج
+      # ============================================================
+      - name: Create ZIP
         shell: pwsh
         run: |
-          # نستخدم -mx=9 لضغط الملف النهائي بأقصى درجة (يقلل حجم التحميل دون التأثير على عمل التطبيق)
-          & "C:\Program Files\7-Zip\7z.exe" a -tzip -mx=9 HokamaERP-Windows.zip .\dist\HokamaERP\*
-      
-      - name: Upload artifact
+          $version = "${{ steps.version.outputs.version }}"
+          $sourcePath = "ui_flet/build/windows/*"
+          $zipName = "HokamaERP-v$version-Windows.zip"
+          
+          if (Test-Path $sourcePath) {
+            Compress-Archive -Path $sourcePath -DestinationPath $zipName -CompressionLevel Optimal
+            Write-Host "✅ Created: $zipName"
+            Get-Item $zipName | Format-List Name, Length
+          } else {
+            Write-Error "❌ Build folder not found!"
+            exit 1
+          }
+
+      # ============================================================
+      # 9. رفع الـ Artifact (متاح 90 يوماً)
+      # ============================================================
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HokamaERP-Windows
-          path: HokamaERP-Windows.zip
-          compression-level: 0
+          name: HokamaERP-Windows-${{ steps.version.outputs.version }}
+          path: HokamaERP-v${{ steps.version.outputs.version }}-Windows.zip
+          retention-days: 90
+
+      # ============================================================
+      # 10. إنشاء Release (دائم، للتحميل من أي مكان)
+      # ============================================================
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Hokama ERP v${{ steps.version.outputs.version }}
+          body: |
+            ## 🎉 حوكمة ERP - الإصدار ${{ steps.version.outputs.version }}
+            
+            ### 📦 التحميل
+            حمّل الملف `HokamaERP-v${{ steps.version.outputs.version }}-Windows.zip`، فك الضغط، ثم شغّل `HokamaERP.exe`.
+            
+            ### ⚙️ المتطلبات
+            - Windows 10 أو أحدث (64-bit)
+            - لا يحتاج Python أو Flet أو Flutter
+            
+            ### 📝 ملاحظات
+            - بُني تلقائياً عبر GitHub Actions
+            - تاريخ البناء: ${{ github.event.head_commit.timestamp || 'يدوي' }}
+            - المُهيّئ: ${{ github.event.head_commit.author.name || 'غير معروف' }}
+          files: HokamaERP-v${{ steps.version.outputs.version }}-Windows.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
