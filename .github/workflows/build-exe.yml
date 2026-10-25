@@ -41,24 +41,26 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r ui_flet/requirements.txt
 
-      # ⬇️⬇️⬇️ الخطوة السحرية التي تحل المشكلة ⬇️⬇️⬇️
       - name: Copy Shared Files into ui_flet (For Flet Build)
         shell: pwsh
         run: |
-          # نسخ قاعدة البيانات
           Copy-Item -Path "database.py" -Destination "ui_flet/database.py" -Force
-          
-          # نسخ مجلد الخدمات بالكامل
           Copy-Item -Path "services" -Destination "ui_flet/services" -Recurse -Force
-          
           Write-Host "✅ Shared files copied to ui_flet temporarily for build."
-      # ⬆️⬆️⬆️
 
+      # ⬇️⬇️⬇️ التعديل الحاسم هنا ⬇️⬇️⬇️
       - name: Build Windows Application
         working-directory: ui_flet
         shell: pwsh
         run: |
+          # إجبار UTF-8 لتجنب UnicodeEncodeError
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $env:PYTHONIOENCODING = "utf-8"
+          $env:PYTHONUTF8 = "1"
           $env:NO_COLOR = "1"
+          $env:TERM = "dumb"
+          $env:COLUMNS = "200"
+
           flet build windows --verbose
 
       - name: Prepare Release ZIP
