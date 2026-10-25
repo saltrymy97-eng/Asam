@@ -13,14 +13,7 @@ import database
 from services.roles_service import get_allowed_modules, seed_default_roles
 
 
-# ============================================================
-# 🔧 الحيلة الذكية: احتواء temp_data_table عالمياً
-# ============================================================
 def patch_page_tables(page_module):
-    """
-    يستبدل temp_data_table المحلية في أي صفحة بنسخة shared العريضة.
-    يُستدعى تلقائياً من load_page قبل استخدام الصفحة.
-    """
     if hasattr(page_module, 'temp_data_table'):
         page_module.temp_data_table = shared.temp_data_table
     if hasattr(page_module, 'build_data_table'):
@@ -34,26 +27,17 @@ class MainApp(ft.Row):
         self.user = user
         self.expand = True
 
-        self.content_area = ft.Container(
-            expand=True,
-            padding=20,
-            bgcolor=BG_MAIN,
-        )
-
+        self.content_area = ft.Container(expand=True, padding=20, bgcolor=BG_MAIN)
         self.sidebar = self.build_sidebar()
         self.controls = [self.sidebar, self.content_area]
         self.load_page("لوحة المعلومات")
 
-    # ============================================================
-    # بناء القائمة الجانبية
-    # ============================================================
     def build_sidebar(self):
         username = self.user.get('username', '')
         allowed_modules = None if username == 'admin' else get_allowed_modules(username)
 
         def can_access(module):
-            if username == 'admin':
-                return True
+            if username == 'admin': return True
             return module in allowed_modules if allowed_modules else False
 
         def menu_section(title):
@@ -102,7 +86,6 @@ class MainApp(ft.Row):
 
                 menu_section("🏠 الرئيسية"),
                 menu_button("📊 لوحة المعلومات", "لوحة المعلومات"),
-
                 menu_section("📦 العمليات"),
                 menu_button("🛒 المبيعات", "المبيعات", "المبيعات"),
                 menu_button("📋 المشتريات", "المشتريات", "المشتريات"),
@@ -112,7 +95,6 @@ class MainApp(ft.Row):
                 menu_button("📦 التسويات المخزنية", "التسويات المخزنية", "التسويات المخزنية"),
                 menu_button("🧾 المصروفات", "المصروفات", "المصروفات"),
                 menu_button("👥 CRM", "إدارة العملاء", "إدارة العملاء"),
-
                 menu_section("💰 المحاسبة والمالية"),
                 menu_button("🧾 الحسابات", "الحسابات", "الحسابات"),
                 menu_button("🌳 شجرة الحسابات", "شجرة الحسابات", "شجرة الحسابات"),
@@ -127,22 +109,18 @@ class MainApp(ft.Row):
                 menu_button("📅 إغلاق الفترات", "إغلاق الفترات", "إغلاق الفترات"),
                 menu_button("📊 FIFO", "FIFO", "FIFO المخزون"),
                 menu_button("💱 تقييم العملات", "تقييم العملات", "تقييم العملات"),
-
                 menu_section("👥 إدارة الأعمال"),
                 menu_button("👔 الموارد البشرية", "الموارد البشرية", "الموارد البشرية"),
                 menu_button("💰 كشف الرواتب", "كشف الرواتب", "كشف الرواتب"),
                 menu_button("🏗️ الأصول الثابتة", "الأصول الثابتة", "الأصول الثابتة"),
                 menu_button("📎 المرفقات", "المرفقات", "المرفقات"),
-
                 menu_section("⚙️ النظام والأمان"),
                 menu_button("🛡️ الصلاحيات", "الصلاحيات", "الصلاحيات"),
                 menu_button("📋 سجل التدقيق", "سجل التدقيق", "سجل التدقيق"),
                 menu_button("💾 النسخ الاحتياطي", "النسخ الاحتياطي", "نسخ احتياطي"),
                 menu_button("📄 التقارير", "التقارير", "التقارير المالية XBRL"),
-
                 menu_section("🤖 الذكاء الاصطناعي"),
                 menu_button("🧠 المساعد الذكي", "المساعد الذكي", "المساعد الذكي"),
-
                 ft.Divider(color=GLASS_BORDER),
                 ft.TextButton(
                     content=ft.Text("🚪 تسجيل الخروج", size=13, color=ACCENT_RED),
@@ -154,196 +132,89 @@ class MainApp(ft.Row):
                     on_click=lambda e: self.logout(),
                 ),
             ],
-            scroll=ft.ScrollMode.AUTO,
-            expand=True,
-            spacing=2,
+            scroll=ft.ScrollMode.AUTO, expand=True, spacing=2,
         )
 
         return ft.Container(
-            content=sidebar_column,
-            width=260,
+            content=sidebar_column, width=260,
             bgcolor=ft.colors.with_opacity(0.85, ft.colors.WHITE),
-            padding=8,
-            border=ft.border.only(right=ft.border.BorderSide(1, GLASS_BORDER)),
+            padding=8, border=ft.border.only(right=ft.border.BorderSide(1, GLASS_BORDER)),
             shadow=SHADOW_MEDIUM,
         )
 
-    # ============================================================
-    # تحميل الصفحات مع patch_page_tables
-    # ============================================================
     def load_page(self, page_name):
         try:
             if page_name == "لوحة المعلومات":
-                from ui_flet.pages import dashboard as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.DashboardPage(self.page)
-
+                from ui_flet.pages import dashboard as mod; patch_page_tables(mod); self.content_area.content = mod.DashboardPage(self.page)
             elif page_name == "المبيعات":
-                from ui_flet.pages import sales as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.SalesPage(self.page)
-
+                from ui_flet.pages import sales as mod; patch_page_tables(mod); self.content_area.content = mod.SalesPage(self.page)
             elif page_name == "المشتريات":
-                from ui_flet.pages import purchases as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.PurchasesPage(self.page)
-
+                from ui_flet.pages import purchases as mod; patch_page_tables(mod); self.content_area.content = mod.PurchasesPage(self.page)
             elif page_name == "المرتجعات":
-                from ui_flet.pages import returns as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.ReturnsPage(self.page)
-
+                from ui_flet.pages import returns as mod; patch_page_tables(mod); self.content_area.content = mod.ReturnsPage(self.page)
             elif page_name == "سندات القبض والصرف":
-                from ui_flet.pages import receipts as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.ReceiptsPage(self.page)
-
+                from ui_flet.pages import receipts as mod; patch_page_tables(mod); self.content_area.content = mod.ReceiptsPage(self.page)
             elif page_name == "المخزون":
-                from ui_flet.pages import inventory as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.InventoryPage(self.page)
-
+                from ui_flet.pages import inventory as mod; patch_page_tables(mod); self.content_area.content = mod.InventoryPage(self.page)
             elif page_name == "التسويات المخزنية":
-                from ui_flet.pages import inventory_adjustment as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.InventoryAdjustmentPage(self.page)
-
+                from ui_flet.pages import inventory_adjustment as mod; patch_page_tables(mod); self.content_area.content = mod.InventoryAdjustmentPage(self.page)
             elif page_name == "المصروفات":
-                from ui_flet.pages import expenses as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.ExpensesPage(self.page)
-
+                from ui_flet.pages import expenses as mod; patch_page_tables(mod); self.content_area.content = mod.ExpensesPage(self.page)
             elif page_name == "إدارة العملاء":
-                from ui_flet.pages import crm as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.CRMPage(self.page)
-
+                from ui_flet.pages import crm as mod; patch_page_tables(mod); self.content_area.content = mod.CRMPage(self.page)
             elif page_name == "الحسابات":
-                from ui_flet.pages import accounting as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.AccountingPage(self.page)
-
+                from ui_flet.pages import accounting as mod; patch_page_tables(mod); self.content_area.content = mod.AccountingPage(self.page)
             elif page_name == "شجرة الحسابات":
-                from ui_flet.pages import chart as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.ChartPage(self.page)
-
+                from ui_flet.pages import chart as mod; patch_page_tables(mod); self.content_area.content = mod.ChartPage(self.page)
             elif page_name == "القوائم المالية":
-                from ui_flet.pages import financial as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.FinancialPage(self.page)
-
+                from ui_flet.pages import financial as mod; patch_page_tables(mod); self.content_area.content = mod.FinancialPage(self.page)
             elif page_name == "مراكز التكلفة":
-                from ui_flet.pages import cost_center as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.CostCenterPage(self.page)
-
+                from ui_flet.pages import cost_center as mod; patch_page_tables(mod); self.content_area.content = mod.CostCenterPage(self.page)
             elif page_name == "العملات":
-                from ui_flet.pages import currency as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.CurrencyPage(self.page)
-
+                from ui_flet.pages import currency as mod; patch_page_tables(mod); self.content_area.content = mod.CurrencyPage(self.page)
             elif page_name == "الأرصدة الافتتاحية":
-                from ui_flet.pages import opening_balances as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.OpeningBalancesPage(self.page)
-
+                from ui_flet.pages import opening_balances as mod; patch_page_tables(mod); self.content_area.content = mod.OpeningBalancesPage(self.page)
             elif page_name == "الصندوق":
-                from ui_flet.pages import cash as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.CashPage(self.page)
-
+                from ui_flet.pages import cash as mod; patch_page_tables(mod); self.content_area.content = mod.CashPage(self.page)
             elif page_name == "البنوك":
-                from ui_flet.pages import bank as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.BankPage(self.page)
-
+                from ui_flet.pages import bank as mod; patch_page_tables(mod); self.content_area.content = mod.BankPage(self.page)
             elif page_name == "الضريبة":
-                from ui_flet.pages import vat as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.VATPage(self.page)
-
+                from ui_flet.pages import vat as mod; patch_page_tables(mod); self.content_area.content = mod.VATPage(self.page)
             elif page_name == "إغلاق الحسابات":
-                from ui_flet.pages import closing as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.ClosingPage(self.page)
-
+                from ui_flet.pages import closing as mod; patch_page_tables(mod); self.content_area.content = mod.ClosingPage(self.page)
             elif page_name == "إغلاق الفترات":
-                from ui_flet.pages import period as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.PeriodPage(self.page)
-
+                from ui_flet.pages import period as mod; patch_page_tables(mod); self.content_area.content = mod.PeriodPage(self.page)
             elif page_name == "FIFO":
-                from ui_flet.pages import fifo as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.FifoPage(self.page)
-
+                from ui_flet.pages import fifo as mod; patch_page_tables(mod); self.content_area.content = mod.FifoPage(self.page)
             elif page_name == "تقييم العملات":
-                from ui_flet.pages import currency_revaluation as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.CurrencyRevaluationPage(self.page)
-
+                from ui_flet.pages import currency_revaluation as mod; patch_page_tables(mod); self.content_area.content = mod.CurrencyRevaluationPage(self.page)
             elif page_name == "الموارد البشرية":
-                from ui_flet.pages import hr as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.HRPage(self.page)
-
+                from ui_flet.pages import hr as mod; patch_page_tables(mod); self.content_area.content = mod.HRPage(self.page)
             elif page_name == "كشف الرواتب":
-                from ui_flet.pages import payroll as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.PayrollPage(self.page)
-
+                from ui_flet.pages import payroll as mod; patch_page_tables(mod); self.content_area.content = mod.PayrollPage(self.page)
             elif page_name == "الأصول الثابتة":
-                from ui_flet.pages import assets as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.AssetsPage(self.page)
-
+                from ui_flet.pages import assets as mod; patch_page_tables(mod); self.content_area.content = mod.AssetsPage(self.page)
             elif page_name == "المرفقات":
-                from ui_flet.pages import attachment as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.AttachmentPage(self.page)
-
+                from ui_flet.pages import attachment as mod; patch_page_tables(mod); self.content_area.content = mod.AttachmentPage(self.page)
             elif page_name == "الصلاحيات":
-                from ui_flet.pages import roles as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.RolesPage(self.page)
-
+                from ui_flet.pages import roles as mod; patch_page_tables(mod); self.content_area.content = mod.RolesPage(self.page)
             elif page_name == "سجل التدقيق":
-                from ui_flet.pages import audit_log as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.AuditLogPage(self.page)
-
+                from ui_flet.pages import audit_log as mod; patch_page_tables(mod); self.content_area.content = mod.AuditLogPage(self.page)
             elif page_name == "النسخ الاحتياطي":
-                from ui_flet.pages import backup as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.BackupPage(self.page)
-
+                from ui_flet.pages import backup as mod; patch_page_tables(mod); self.content_area.content = mod.BackupPage(self.page)
             elif page_name == "التقارير":
-                from ui_flet.pages import pdf_reports as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.PdfReportsPage(self.page)
-
+                from ui_flet.pages import pdf_reports as mod; patch_page_tables(mod); self.content_area.content = mod.PdfReportsPage(self.page)
             elif page_name == "المساعد الذكي":
-                from ui_flet.pages import ai as mod
-                patch_page_tables(mod)
-                self.content_area.content = mod.AIPage(self.page)
-
+                from ui_flet.pages import ai as mod; patch_page_tables(mod); self.content_area.content = mod.AIPage(self.page)
             else:
-                self.content_area.content = ft.Text(
-                    f"⚠️ صفحة غير معروفة: {page_name}", color=ACCENT_ORANGE
-                )
-
+                self.content_area.content = ft.Text(f"⚠️ صفحة غير معروفة: {page_name}", color=ACCENT_ORANGE)
         except Exception as e:
             self.content_area.content = ft.Column([
                 ft.Text(f"❌ خطأ في تحميل: {page_name}", size=18, color=ACCENT_RED, weight=ft.FontWeight.BOLD),
                 ft.Text(str(e), color=TEXT_SECONDARY, size=12, selectable=True),
             ], spacing=10)
-
         self.page.update()
 
-    # ============================================================
-    # تسجيل الخروج
-    # ============================================================
     def logout(self):
         self.page.session.set("user", None)
         self.page.session.set("logged_in", False)
@@ -351,9 +222,6 @@ class MainApp(ft.Row):
         self.page.update()
 
 
-# ============================================================
-# نقطة الدخول
-# ============================================================
 def main(page: ft.Page):
     page.title = "حوكمة ERP - Hokama ERP"
     page.rtl = True
@@ -362,10 +230,6 @@ def main(page: ft.Page):
     page.padding = 0
     page.window_min_width = 1024
     page.window_min_height = 700
-
-    page.fonts = {
-        "Cairo": "https://github.com/google/fonts/raw/main/ofl/cairo/Cairo%5Bslnt%2Cwght%5D.ttf"
-    }
     page.theme = ft.Theme(font_family="Cairo")
 
     database.init_db()
