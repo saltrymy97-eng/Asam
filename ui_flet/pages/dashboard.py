@@ -13,12 +13,13 @@ from ui_flet.shared import (
 )
 
 try:
-    from flet_plotly import PlotlyChart
+    from flet.plotly_chart import PlotlyChart   # ← ✅ التعديل هنا
     import plotly.express as px
     import plotly.graph_objects as go
     PLOTLY_AVAILABLE = True
 except ImportError:
     PLOTLY_AVAILABLE = False
+
 
 class DashboardPage(ft.Column):
     def __init__(self, page: ft.Page):
@@ -37,7 +38,7 @@ class DashboardPage(ft.Column):
             content=ft.Row([
                 ft.Column([
                     ft.Text("ENTERPRISE HUB", color=ACCENT_PURPLE, size=11, weight=ft.FontWeight.BOLD),
-                    ft.Text(f"مرحباً، مدير النظام", color=ft.colors.WHITE, size=26, weight=ft.FontWeight.BOLD),
+                    ft.Text("مرحباً، مدير النظام", color=ft.colors.WHITE, size=26, weight=ft.FontWeight.BOLD),
                     ft.Text(f"نظرة عامة على مؤشرات الأداء، {datetime.now().strftime('%A %d %B %Y')}", color=TEXT_SECONDARY, size=13),
                 ], spacing=3),
                 ft.Container(
@@ -156,7 +157,7 @@ class DashboardPage(ft.Column):
                 charts_row.controls.append(ft.Container(content=ft.Text("المخازن فارغة", color=TEXT_SECONDARY), padding=20))
         else:
             charts_row.controls.append(ft.Container(
-                content=ft.Text("⚠️ لتثبيت الرسوم البيانية: pip install flet-plotly", color=ACCENT_ORANGE),
+                content=ft.Text("⚠️ الرسوم البيانية غير متوفرة — راجع التثبيت", color=ACCENT_ORANGE),
                 padding=20
             ))
 
