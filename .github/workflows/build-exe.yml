@@ -19,11 +19,11 @@ on:
 
 jobs:
   build-windows:
-    runs-on: windows-latest
+    
     permissions:
       contents: write
     timeout-minutes: 120
-
+    runs-on: windows-2022
     env:
       PYTHONIOENCODING: utf-8
       PYTHONUTF8: "1"
