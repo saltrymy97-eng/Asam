@@ -1,34 +1,17 @@
 [project]
 name = "hokama-erp"
 version = "3.0.0"
-description = "حوكمة ERP - نظام محاسبي وإداري ذكي"
 requires-python = ">=3.10"
-authors = [{ name = "سالم التريمي" }]
-
-[tool.flet]
-org = "com.hokama"
-product = "حوكمة ERP"
-company = "Hokama ERP"
-copyright = "© 2026 سالم التريمي"
 
 [tool.flet.app]
 path = "."
-module = "ui_flet.main"
 
 [tool.flet.windows]
 icon = "icon.ico"
 
 [tool.flet.build]
 exclude = [
-    "app.py",
-    "ui",
-    "data",
-    ".git",
-    ".github",
-    "build",
-    "dist",
-    "__pycache__",
-    "*.pyc",
-    "requirements.txt",
-    "README.md"
+    "app.py", "ui", "data", ".git", ".github", 
+    "build", "dist", "__pycache__", "*.pyc", 
+    "requirements.txt", "README.md"
 ]
