@@ -46,68 +46,21 @@ jobs:
           python-version: '3.12'
           cache: pip
 
-      - name: Setup Flutter 3.24.5
+      - name: Setup Flutter 3.27.1
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: '3.24.5'
+          flutter-version: '3.27.1'
           cache: true
-
-      # ⬇️⬇️⬇️ الخطوة الحرجة الجديدة ⬇️⬇️⬇️
-      - name: Create VS 2019 Compatibility Symlink
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          
-          $vs2019Root = "C:\Program Files (x86)\Microsoft Visual Studio\2019"
-          $vs2022Root = "C:\Program Files (x86)\Microsoft Visual Studio\2022"
-          
-          if (-not (Test-Path $vs2019Root)) {
-            New-Item -ItemType Directory -Path $vs2019Root -Force | Out-Null
-            Write-Host "Created directory: $vs2019Root"
-          }
-          
-          $vs2019BuildTools = Join-Path $vs2019Root "BuildTools"
-          
-          if (-not (Test-Path $vs2019BuildTools)) {
-            cmd /c mklink /D "$vs2019BuildTools" "$vs2022Root\BuildTools"
-            if ($LASTEXITCODE -ne 0) {
-              throw "Failed to create symlink"
-            }
-            Write-Host "Created symlink: $vs2019BuildTools -> $vs2022Root\BuildTools"
-          } else {
-            Write-Host "Symlink already exists: $vs2019BuildTools"
-          }
-          
-          if (Test-Path "$vs2019BuildTools\Common7\Tools\VsDevCmd.bat") {
-            Write-Host "SUCCESS: VS 2019 path resolves to VS 2022"
-          } else {
-            throw "FAILED: Symlink exists but VsDevCmd.bat not found"
-          }
-      # ⬆️⬆️⬆️
 
       - name: Verify Build Environment
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-
           Write-Host "=== Python ==="
           python --version
-
           Write-Host "=== Flutter ==="
           flutter --version
-
-          Write-Host "=== Visual Studio ==="
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          if (Test-Path $vswhere) {
-            & $vswhere -all -products * -property installationPath
-          } else {
-            Write-Warning "vswhere.exe was not found."
-          }
-
-          Write-Host "=== VS 2019 Symlink ==="
-          Test-Path "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\Common7\Tools\VsDevCmd.bat"
-
           Write-Host "=== CMake ==="
           cmake --version
 
@@ -219,11 +172,8 @@ jobs:
           name: Hokama ERP v${{ steps.version.outputs.version }}
           body: |
             # حوكمة ERP
-
             إصدار Windows: ${{ steps.version.outputs.version }}
-
-            حمّل ملف ZIP من الأصول المرفقة بهذا الإصدار،
-            ثم فك الضغط وشغّل الملف التنفيذي الموجود داخله.
+            حمّل ملف ZIP من الأصول المرفقة، ثم فك الضغط وشغّل الملف التنفيذي.
           files: HokamaERP-v${{ steps.version.outputs.version }}-Windows.zip
           draft: false
           prerelease: false
