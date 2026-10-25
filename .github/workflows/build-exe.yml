@@ -37,7 +37,6 @@ jobs:
           flutter-version: '3.27.1'
           cache: true
 
-      # ⬇️⬇️⬇️ فحص المسارات الاحترافي (Pre-flight Check) ⬇️⬇️⬇️
       - name: Verify Project Structure
         shell: pwsh
         run: |
@@ -46,49 +45,26 @@ jobs:
 
           Write-Host "🔍 Starting structure verification..." -ForegroundColor Cyan
 
-          # 1. فحص ملف الإعدادات في الجذر
           if (-not (Test-Path "pyproject.toml")) {
-            $errors += "❌ الملف pyproject.toml غير موجود في الجذر الرئيسي! (يجب نقله من ui_flet إلى الجذر)"
+            $errors += "❌ pyproject.toml غير موجود في الجذر!"
           } else {
             $config = Get-Content "pyproject.toml" -Raw
-            if ($config -notmatch 'path\s*=\s*"ui_flet"') {
-              $errors += "❌ إعدادات pyproject.toml خاطئة: خاصية 'path' يجب أن تكون 'ui_flet'"
-            }
-            if ($config -notmatch 'module\s*=\s*"main"') {
-              $errors += "❌ إعدادات pyproject.toml خاطئة: خاصية 'module' يجب أن تكون 'main'"
+            if ($config -notmatch 'module\s*=\s*"ui_flet.main"') {
+              $errors += "❌ إعدادات pyproject.toml خاطئة: module يجب أن تكون 'ui_flet.main'"
             }
           }
 
-          # 2. فحص ملفات التطبيق داخل ui_flet
-          if (-not (Test-Path "ui_flet/main.py")) {
-            $errors += "❌ الملف ui_flet/main.py غير موجود!"
-          }
-          if (-not (Test-Path "ui_flet/shared.py")) {
-            $errors += "❌ الملف ui_flet/shared.py غير موجود!"
-          }
-          if (-not (Test-Path "ui_flet/pages")) {
-            $errors += "❌ مجلد ui_flet/pages غير موجود!"
-          }
+          if (-not (Test-Path "ui_flet/main.py")) { $errors += "❌ ui_flet/main.py غير موجود!" }
+          if (-not (Test-Path "database.py")) { $errors += "❌ database.py غير موجود في الجذر!" }
+          if (-not (Test-Path "services")) { $errors += "❌ مجلد services غير موجود في الجذر!" }
 
-          # 3. فحص الملفات المشتركة في الجذر
-          if (-not (Test-Path "database.py")) {
-            $errors += "❌ الملف database.py غير موجود في الجذر!"
-          }
-          if (-not (Test-Path "services")) {
-            $errors += "❌ مجلد services غير موجود في الجذر!"
-          }
-
-          # إذا وجدت أي أخطاء، أوقف العملية فوراً
           if ($errors.Count -gt 0) {
             Write-Host "`n🚨 STRUCTURE CHECK FAILED!" -ForegroundColor Red
-            foreach ($err in $errors) {
-              Write-Host $err -ForegroundColor Red
-            }
-            throw "Pre-flight check failed. Fix the paths above before building."
+            foreach ($err in $errors) { Write-Host $err -ForegroundColor Red }
+            throw "Pre-flight check failed. Fix the paths above."
           }
 
-          Write-Host "`n✅ All paths and files are correct. Ready to build!" -ForegroundColor Green
-      # ⬆️⬆️⬆️ نهاية الفحص ⬆️⬆️⬆️
+          Write-Host "`n✅ All paths are correct. Ready to build!" -ForegroundColor Green
 
       - name: Install Python Dependencies
         run: |
