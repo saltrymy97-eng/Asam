@@ -22,27 +22,25 @@ jobs:
     runs-on: windows-latest
     
     permissions:
-      contents: write   # للسماح بإنشاء Releases
+      contents: write
+
+    # ⬇️⬇️⬇️ الحل هنا: إجبار UTF-8 ⬇️⬇️⬇️
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: "1"
+      PYTHONLEGACYWINDOWSSTDIO: "0"
+    # ⬆️⬆️⬆️
 
     steps:
-      # ============================================================
-      # 1. جلب الكود
-      # ============================================================
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # ============================================================
-      # 2. تثبيت Python
-      # ============================================================
       - name: Setup Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: 'pip'
 
-      # ============================================================
-      # 3. تثبيت Flutter SDK (مطلوب لـ flet build)
-      # ============================================================
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -50,17 +48,11 @@ jobs:
           cache: true
           flutter-version: '3.24.5'
 
-      # ============================================================
-      # 4. تثبيت مكتبات Python
-      # ============================================================
       - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r ui_flet/requirements.txt
 
-      # ============================================================
-      # 5. استخراج الإصدار
-      # ============================================================
       - name: Determine Version
         id: version
         shell: bash
@@ -73,18 +65,34 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "📦 Building version: $VERSION"
 
-      # ============================================================
-      # 6. بناء EXE
-      # ============================================================
+      # ⬇️⬇️⬇️ تعديل مهم: توجيه المخرجات لتجنب مشاكل الرموز ⬇️⬇️⬇️
       - name: Build Windows EXE
         working-directory: ui_flet
+        shell: pwsh
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
         run: |
-          flet build windows --verbose
+          # تعطيل ألوان rich لتجنب مشاكل الرموز
+          $env:NO_COLOR = "1"
+          $env:TERM = "dumb"
+          $env:COLUMNS = "200"
+          
+          # البناء
+          flet build windows 2>&1 | Tee-Object -FilePath build.log
         timeout-minutes: 30
 
-      # ============================================================
-      # 7. تنظيف الملفات المؤقتة
-      # ============================================================
+      # ⬇️⬇️⬇️ عرض سجل البناء عند الفشل ⬇️⬇️⬇️
+      - name: Show Build Log (on failure)
+        if: failure()
+        working-directory: ui_flet
+        shell: pwsh
+        run: |
+          if (Test-Path build.log) {
+            Write-Host "=== BUILD LOG ==="
+            Get-Content build.log -Tail 100
+          }
+
       - name: Cleanup Build Artifacts
         shell: pwsh
         run: |
@@ -95,9 +103,6 @@ jobs:
           Get-ChildItem -Path ui_flet/build/windows -Recurse -Include *.pyc,*.pyo -ErrorAction SilentlyContinue |
             Remove-Item -Force -ErrorAction SilentlyContinue
 
-      # ============================================================
-      # 8. ضغط الناتج
-      # ============================================================
       - name: Create ZIP
         shell: pwsh
         run: |
@@ -114,9 +119,6 @@ jobs:
             exit 1
           }
 
-      # ============================================================
-      # 9. رفع الـ Artifact (متاح 90 يوماً)
-      # ============================================================
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -124,9 +126,6 @@ jobs:
           path: HokamaERP-v${{ steps.version.outputs.version }}-Windows.zip
           retention-days: 90
 
-      # ============================================================
-      # 10. إنشاء Release (دائم، للتحميل من أي مكان)
-      # ============================================================
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -141,11 +140,6 @@ jobs:
             ### ⚙️ المتطلبات
             - Windows 10 أو أحدث (64-bit)
             - لا يحتاج Python أو Flet أو Flutter
-            
-            ### 📝 ملاحظات
-            - بُني تلقائياً عبر GitHub Actions
-            - تاريخ البناء: ${{ github.event.head_commit.timestamp || 'يدوي' }}
-            - المُهيّئ: ${{ github.event.head_commit.author.name || 'غير معروف' }}
           files: HokamaERP-v${{ steps.version.outputs.version }}-Windows.zip
           draft: false
           prerelease: false
