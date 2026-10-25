@@ -7,6 +7,7 @@ on:
       - 'ui_flet/**'
       - 'services/**'
       - 'database.py'
+      - 'pyproject.toml'
       - 'icon.ico'
       - '.github/workflows/build-exe.yml'
   workflow_dispatch:
@@ -36,24 +37,67 @@ jobs:
           flutter-version: '3.27.1'
           cache: true
 
+      # ⬇️⬇️⬇️ فحص المسارات الاحترافي (Pre-flight Check) ⬇️⬇️⬇️
+      - name: Verify Project Structure
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $errors = @()
+
+          Write-Host "🔍 Starting structure verification..." -ForegroundColor Cyan
+
+          # 1. فحص ملف الإعدادات في الجذر
+          if (-not (Test-Path "pyproject.toml")) {
+            $errors += "❌ الملف pyproject.toml غير موجود في الجذر الرئيسي! (يجب نقله من ui_flet إلى الجذر)"
+          } else {
+            $config = Get-Content "pyproject.toml" -Raw
+            if ($config -notmatch 'path\s*=\s*"ui_flet"') {
+              $errors += "❌ إعدادات pyproject.toml خاطئة: خاصية 'path' يجب أن تكون 'ui_flet'"
+            }
+            if ($config -notmatch 'module\s*=\s*"main"') {
+              $errors += "❌ إعدادات pyproject.toml خاطئة: خاصية 'module' يجب أن تكون 'main'"
+            }
+          }
+
+          # 2. فحص ملفات التطبيق داخل ui_flet
+          if (-not (Test-Path "ui_flet/main.py")) {
+            $errors += "❌ الملف ui_flet/main.py غير موجود!"
+          }
+          if (-not (Test-Path "ui_flet/shared.py")) {
+            $errors += "❌ الملف ui_flet/shared.py غير موجود!"
+          }
+          if (-not (Test-Path "ui_flet/pages")) {
+            $errors += "❌ مجلد ui_flet/pages غير موجود!"
+          }
+
+          # 3. فحص الملفات المشتركة في الجذر
+          if (-not (Test-Path "database.py")) {
+            $errors += "❌ الملف database.py غير موجود في الجذر!"
+          }
+          if (-not (Test-Path "services")) {
+            $errors += "❌ مجلد services غير موجود في الجذر!"
+          }
+
+          # إذا وجدت أي أخطاء، أوقف العملية فوراً
+          if ($errors.Count -gt 0) {
+            Write-Host "`n🚨 STRUCTURE CHECK FAILED!" -ForegroundColor Red
+            foreach ($err in $errors) {
+              Write-Host $err -ForegroundColor Red
+            }
+            throw "Pre-flight check failed. Fix the paths above before building."
+          }
+
+          Write-Host "`n✅ All paths and files are correct. Ready to build!" -ForegroundColor Green
+      # ⬆️⬆️⬆️ نهاية الفحص ⬆️⬆️⬆️
+
       - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r ui_flet/requirements.txt
 
-      - name: Copy Shared Files into ui_flet (For Flet Build)
-        shell: pwsh
-        run: |
-          Copy-Item -Path "database.py" -Destination "ui_flet/database.py" -Force
-          Copy-Item -Path "services" -Destination "ui_flet/services" -Recurse -Force
-          Write-Host "✅ Shared files copied to ui_flet temporarily for build."
-
-      # ⬇️⬇️⬇️ التعديل الحاسم هنا ⬇️⬇️⬇️
       - name: Build Windows Application
-        working-directory: ui_flet
         shell: pwsh
         run: |
-          # إجبار UTF-8 لتجنب UnicodeEncodeError
           [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
           $env:PYTHONIOENCODING = "utf-8"
           $env:PYTHONUTF8 = "1"
@@ -63,12 +107,12 @@ jobs:
 
           flet build windows --verbose
 
-      - name: Prepare Release ZIP
+      - name: Create ZIP
         if: success()
         shell: pwsh
         run: |
           $zipName = "HokamaERP-Windows.zip"
-          Compress-Archive -Path "ui_flet/build/windows/*" -DestinationPath $zipName -CompressionLevel Optimal -Force
+          Compress-Archive -Path "build/windows/*" -DestinationPath $zipName -CompressionLevel Optimal -Force
 
       - name: Upload Build Artifact
         if: success()
@@ -87,5 +131,7 @@ jobs:
             # حوكمة ERP
             إصدار Windows جاهز للتشغيل.
           files: HokamaERP-Windows.zip
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
