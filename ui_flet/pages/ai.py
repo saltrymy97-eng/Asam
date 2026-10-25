@@ -76,7 +76,7 @@ class AIPage(ft.Column):
 
         # FilePicker للصوت
         self.audio_picker = ft.FilePicker(on_result=self.on_audio_picked)
-        self.page.overlay.append(self.audio_picker)
+        self.page.services.append(self.audio_picker)   # ← ✅ التعديل هنا (كان overlay)
 
         self.controls = [
             ft.Row([self.header, self.model_dd], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER),
@@ -95,7 +95,6 @@ class AIPage(ft.Column):
         self.show_snackbar(f"✅ تم اختيار: {self.model_dd.value}", ACCENT_GREEN)
 
     def render_ai_response(self, content):
-        """عرض رد AI في بطاقة زجاجية"""
         if not content: return ft.Text("لا توجد استجابة", color=TEXT_SECONDARY)
         return ft.Container(
             content=ft.Markdown(content, selectable=True),
@@ -114,7 +113,6 @@ class AIPage(ft.Column):
             question = self.question_input.value.strip()
             if not question: return
             
-            # إضافة سؤال المستخدم
             self.chat_history_col.controls.append(ft.Container(
                 content=ft.Text(f"👤 {question}", color=TEXT_PRIMARY, size=13),
                 bgcolor=ft.colors.with_opacity(0.1, ACCENT_BLUE), padding=10, border_radius=8
