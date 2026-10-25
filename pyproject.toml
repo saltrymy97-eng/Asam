@@ -12,8 +12,8 @@ company = "Hokama ERP"
 copyright = "© 2026 سالم التريمي"
 
 [tool.flet.app]
-path = "."
+path = "ui_flet"
 module = "main"
 
 [tool.flet.windows]
-icon = "../icon.ico"
+icon = "icon.ico"
