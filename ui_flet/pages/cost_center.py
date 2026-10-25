@@ -11,7 +11,7 @@ from ui_flet.shared import (
 )
 
 try:
-    from flet_plotly import PlotlyChart
+    from flet.plotly_chart import PlotlyChart   # ← ✅ التعديل هنا
     import plotly.express as px
     import plotly.graph_objects as go
     PLOTLY_AVAILABLE = True
@@ -62,7 +62,6 @@ class CostCenterPage(ft.Column):
     # 1. إدارة المراكز
     # ============================================================
     def build_manage_tab(self):
-        # النموذج
         self.cc_code = ft.TextField(label="رمز المركز", hint_text="SALES-NORTH", expand=True)
         self.cc_name = ft.TextField(label="اسم المركز", hint_text="مبيعات المنطقة الشمالية", expand=True)
         self.cc_parent = ft.Dropdown(label="المركز الأب", expand=True)
@@ -98,7 +97,6 @@ class CostCenterPage(ft.Column):
             bgcolor=GLASS_BG, border=ft.border.all(1, GLASS_BORDER), border_radius=16, padding=15
         )
 
-        # الشجرة والجدول
         self.tree_container = ft.Container()
         self.table_container = ft.Container()
         self.edit_container = ft.Container()
@@ -115,7 +113,6 @@ class CostCenterPage(ft.Column):
         ], scroll=ft.ScrollMode.AUTO, expand=True, spacing=15)
 
     def refresh_tree_and_table(self):
-        # الشجرة
         tree = ccs.get_cost_center_tree()
         tree_lines = []
         def render(nodes, indent=0):
@@ -133,7 +130,6 @@ class CostCenterPage(ft.Column):
             bgcolor=GLASS_BG, border=ft.border.all(1, GLASS_BORDER), border_radius=16, padding=15, expand=True
         )
 
-        # الجدول
         centers = ccs.get_all_cost_centers(active_only=False)
         if centers:
             df = pd.DataFrame(centers)
@@ -237,8 +233,7 @@ class CostCenterPage(ft.Column):
             self.dist_centers_container.content = ft.Text("لا توجد مراكز تكلفة نشطة", color=TEXT_SECONDARY)
             self.page.update(); return
 
-        # قائمة التوزيعات
-        self.alloc_rows = [] # (center_dd, amount_input, pct_input)
+        self.alloc_rows = []
         rows_control = ft.Column()
         self.remaining_text = ft.Text(f"المتبقي: {line_amount:,.2f}", color=TEXT_PRIMARY, weight=ft.FontWeight.BOLD)
         
@@ -277,7 +272,7 @@ class CostCenterPage(ft.Column):
                 self.show_snackbar(str(ex), ACCENT_RED)
 
         add_alloc_row()
-        add_alloc_row() # بدءاً بصفين
+        add_alloc_row()
 
         self.dist_centers_container.content = ft.Column([
             ft.Text(f"المبلغ الإجمالي للسطر: {line_amount:,.2f}", color=TEXT_PRIMARY, weight=ft.FontWeight.BOLD),
@@ -383,7 +378,6 @@ class CostCenterPage(ft.Column):
                 self.budget_result.content = ft.Text("لا توجد موازنات مسجلة لهذا المركز", color=TEXT_SECONDARY)
             self.page.update()
 
-        # إضافة موازنة
         conn = database.get_connection()
         accounts = conn.execute("SELECT id, name FROM accounts ORDER BY name").fetchall()
         conn.close()
