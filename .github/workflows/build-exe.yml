@@ -81,8 +81,10 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          Write-Host "=== Flet Installation Info ==="
           python -m pip show flet
-          python -c "import flet; print('Installed Flet:', flet.__version__)"
+          Write-Host "=== Import Test ==="
+          python -c "import flet; print('Flet imported OK')"
 
       - name: Determine Version
         id: version
