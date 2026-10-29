@@ -31,7 +31,7 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
       
-      - name: Build EXE (Optimized without Firefox)
+      - name: Build EXE (Edge Native Mode)
         shell: cmd
         run: |
           pyinstaller --noconfirm --onedir --windowed --icon=icon.ico --name=HokamaERP ^
