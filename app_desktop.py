@@ -1,4 +1,4 @@
-# app_desktop.py — Hokama ERP v43.1 (Developer Edition)
+# app_desktop.py — Hokama ERP v44.0 (Developer Edition + Manual Firefox)
 # Firefox + Persistent Profile + DevTools Enabled + Right-Click Enabled
 # لا يغيّر الواجهات أو الخدمات أو قاعدة البيانات
 
@@ -115,9 +115,11 @@ def run_streamlit(port, app_path):
 
 def find_firefox(base_path):
     candidates = [
-        os.path.join(
-            base_path, "firefox_portable", "firefox.exe"
-        ),
+        # 🎯 1. البحث في مجلد _internal (الذي سنضع فيه Firefox يدوياً)
+        os.path.join(base_path, "_internal", "firefox_portable", "firefox.exe"),
+        # 🎯 2. البحث في المجلد الرئيسي (خطة بديلة)
+        os.path.join(base_path, "firefox_portable", "firefox.exe"),
+        # 🎯 3. البحث في مسارات التثبيت العادية
         r"C:\Program Files\Mozilla Firefox\firefox.exe",
         r"C:\Program Files (x86)\Mozilla Firefox\firefox.exe",
     ]
@@ -154,7 +156,7 @@ def main():
     port = find_free_port()
     url = f"http://{host}:{port}"
 
-    log_message("Starting Hokama ERP (Developer Edition)")
+    log_message("Starting Hokama ERP (Manual Firefox Edition)")
     log_message(f"App path: {app_path}")
     log_message(f"URL: {url}")
 
