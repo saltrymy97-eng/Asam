@@ -1,72 +1,74 @@
-name: Build Hokama ERP EXE (Flet)
+name: Build Hokama ERP EXE
 
 on:
   push:
     branches: [main]
+    paths:
+      - 'app.py'
+      - 'app_desktop.py'
+      - 'database.py'
+      - 'services/**'
+      - 'ui/**'
+      - 'requirements.txt'
+      - 'icon.ico'
+      - '.github/workflows/build-exe.yml'
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   build-windows:
-    runs-on: windows-2022
-    timeout-minutes: 120
-
+    runs-on: windows-latest
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Python 3.12
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-
-      - name: Setup Flutter 3.27.1
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: '3.27.1'
-
-      - name: Install Python Dependencies
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r ui_flet/requirements.txt
-
-      # ⬇️⬇️⬇️ البناء مع تحديد نقطة الدخول بدقة ⬇️⬇️⬇️
-      - name: Build Windows Application
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+      
+      - name: Build EXE (Optimized without Firefox)
+        shell: cmd
+        run: |
+          pyinstaller --noconfirm --onedir --windowed --icon=icon.ico --name=HokamaERP ^
+          --copy-metadata streamlit --copy-metadata pandas --copy-metadata altair --copy-metadata numpy --copy-metadata plotly ^
+          --collect-submodules streamlit --collect-submodules groq ^
+          --collect-data streamlit ^
+          --hidden-import streamlit.web.cli ^
+          --hidden-import cryptography.fernet ^
+          --hidden-import groq ^
+          --hidden-import database ^
+          --add-data "app.py;." --add-data "database.py;." --add-data "ui;ui" --add-data "services;services" --add-data "icon.ico;." ^
+          --exclude-module tkinter --exclude-module matplotlib --exclude-module scipy --exclude-module IPython --exclude-module jupyter --exclude-module notebook --exclude-module pytest --exclude-module sphinx ^
+          app_desktop.py
+      
+      - name: Cleanup tests and pycache
         shell: pwsh
         run: |
-          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-          $env:PYTHONIOENCODING = "utf-8"
-          $env:PYTHONUTF8 = "1"
-          $env:NO_COLOR = "1"
-          $env:TERM = "dumb"
-          $env:COLUMNS = "200"
+          Get-ChildItem -Path dist/HokamaERP -Recurse -Directory |
+            Where-Object { $_.Name -eq '__pycache__' -or $_.Name -eq 'tests' } |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
           
-          flet build windows --module-name "ui_flet/main.py" --verbose
-      # ⬆️⬆️⬆️
-
-      - name: Create ZIP
-        if: success()
+          Get-ChildItem -Path dist/HokamaERP -Recurse -Include *.pyc,*.pyo |
+            Where-Object { $_.FullName -match 'tests|test_' } |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+      
+      - name: Install 7-Zip
+        run: |
+          choco install 7zip -y
+      
+      - name: Create ZIP with 7-Zip
         shell: pwsh
         run: |
-          $zipName = "HokamaERP-Windows.zip"
-          Compress-Archive -Path "build/windows/*" -DestinationPath $zipName -CompressionLevel Optimal -Force
-
-      - name: Upload Build Artifact
-        if: success()
+          & "C:\Program Files\7-Zip\7z.exe" a -tzip -mx=9 HokamaERP-Windows.zip .\dist\HokamaERP\*
+      
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: HokamaERP-Windows
           path: HokamaERP-Windows.zip
-
-      - name: Create GitHub Release
-        if: success()
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v3.0.${{ github.run_number }}
-          name: Hokama ERP v3.0.${{ github.run_number }}
-          files: HokamaERP-Windows.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          compression-level: 0
