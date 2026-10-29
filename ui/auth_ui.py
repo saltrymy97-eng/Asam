@@ -307,7 +307,7 @@ def _render_dev_signature(change_password=False):
     else:
         html = """
 <div class="dev-signature">
-<div style="margin-bottom: 5px;">حكمة ERP • نظام محاسبي متكامل</div>
+<div style="margin-bottom: 5px;">حوكمة ERP • نظام محاسبي متكامل</div>
 <div>تطوير: <span class="dev-name">سالم التريمي</span></div>
 </div>
 """
