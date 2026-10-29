@@ -1,280 +1,720 @@
-# ui/auth_ui.py - واجهة المصادقة (v2.1)
-# ✅ v2.1: تمرير ip_address + changed_by لتسجيل أحداث الأمان
+
+# ui/auth_ui.py
+# Hukma ERP — Premium Authentication UI v3.0
+# تحسين ثبات الألوان في Edge، وتحسين الواجهة مع الحفاظ على منطق المصادقة.
+
 import streamlit as st
+
 from database import init_db
 from services.auth_service import (
     verify_user,
     change_password,
-    logout_session
+    logout_session,
 )
 
-# ========== لوحة ألوان النخبة والفخامة المطلقة ==========
+
+# ============================================================
+# لوحة الألوان
+# ============================================================
+
 T = "#F8FAFC"
-S = "#94A3B8"
+S = "#A8A5C3"
 PR = "#7C3AED"
 BL = "#2563EB"
-BG_CORE = "#020617"
+BG_CORE = "#070714"
+
+PURPLE_LIGHT = "#C4B5FD"
+PURPLE_MID = "#A78BFA"
+GOLD = "#E8C766"
 
 
 # ============================================================
-# ✅ دالة مساعدة: محاولة الحصول على IP العميل
+# محاولة الحصول على IP العميل
 # ============================================================
+
 def _get_client_ip():
     """
     محاولة الحصول على IP العميل.
-    - في Streamlit محلي: يُعيد "محلي"
-    - في بيئة إنتاج: يمكن استخدام st.context (Streamlit ≥ 1.36)
+
+    في التشغيل المحلي تُعاد كلمة "محلي".
+    في بيئة الإنتاج قد يتوفر عنوان العميل ضمن ترويسات الطلب.
     """
     try:
-        import streamlit as st_module
-        if hasattr(st_module, "context") and hasattr(st_module.context, "headers"):
-            headers = st_module.context.headers
-            for h in ("X-Forwarded-For", "X-Real-IP", "Remote-Addr"):
-                if h in headers:
-                    return headers[h].split(",")[0].strip()
+        if hasattr(st, "context") and hasattr(st.context, "headers"):
+            headers = st.context.headers
+
+            for header in (
+                "X-Forwarded-For",
+                "X-Real-IP",
+                "Remote-Addr",
+            ):
+                value = headers.get(header)
+
+                if value:
+                    return value.split(",")[0].strip()
+
     except Exception:
         pass
+
     return "محلي"
 
 
+# ============================================================
+# CSS — تصميم فاخر مع تقليل الاعتماد على خصائص الرسم الحساسة
+# ============================================================
+
 def apply_ultra_premium_css():
-    """حقن نظام التصميم السيادي - بدون أي مسافات بادئة لتجنب تحولها لكود"""
-    css_code = f"""<style>
-@import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap');
+    css_code = f"""
+<style>
+@import url(
+    'https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;600;700;800;900&display=swap'
+);
 
-/* تعميم الخط مع حماية أيقونات النظام من التشويه */
-* {{
-font-family: 'Tajawal', sans-serif !important;
+
+/* ==========================================================
+   1. الخطوط الأساسية
+   لا نفرض Tajawal على جميع العناصر حتى لا نفسد خطوط الأيقونات.
+   ========================================================== */
+
+.stApp,
+.stApp input,
+.stApp textarea,
+.stApp button,
+.stApp label,
+.stApp p,
+.stApp h1,
+.stApp h2,
+.stApp h3,
+.stApp h4,
+.stApp li,
+.stApp [data-testid="stMarkdownContainer"] {{
+    font-family: "Tajawal", "Segoe UI", Tahoma, Arial, sans-serif;
 }}
 
-/* إصلاح مشكلة ظهور كلمة visibility بإعادة خط الأيقونات الأصلي */
-.material-symbols-rounded, 
-.material-icons,
-[data-testid="stIconMaterial"],
-span[class*="material"] {{
-font-family: 'Material Symbols Rounded', 'Material Icons' !important;
-}}
-
-@keyframes subtleOrbit {{
-0% {{ background-position: 0% 50%; }}
-50% {{ background-position: 100% 50%; }}
-100% {{ background-position: 0% 50%; }}
-}}
 .stApp {{
-background: radial-gradient(circle at top right, #1e1b4b 0%, #090d16 50%, {BG_CORE} 100%) !important;
-background-size: 200% 200% !important;
-animation: subtleOrbit 20s ease infinite !important;
-background-attachment: fixed !important;
+    color: {T};
+    background:
+        radial-gradient(
+            ellipse at 88% 8%,
+            rgba(124, 58, 237, 0.20) 0%,
+            transparent 36%
+        ),
+        radial-gradient(
+            ellipse at 10% 88%,
+            rgba(37, 99, 235, 0.13) 0%,
+            transparent 34%
+        ),
+        linear-gradient(
+            145deg,
+            #11102A 0%,
+            #090B18 48%,
+            {BG_CORE} 100%
+        ) !important;
+    background-attachment: fixed !important;
+    -webkit-text-size-adjust: 100%;
 }}
+
+[data-testid="stAppViewContainer"] {{
+    background: transparent !important;
+}}
+
+[data-testid="stHeader"] {{
+    background: transparent !important;
+}}
+
+[data-testid="stToolbar"] {{
+    background: transparent !important;
+}}
+
+.main .block-container {{
+    max-width: 1100px;
+    padding-top: 2rem;
+    padding-bottom: 3rem;
+}}
+
+
+/* ==========================================================
+   2. إزالة المساحات الفارغة غير الضرورية
+   ========================================================== */
 
 div[data-testid="stVerticalBlock"] > div:empty,
 div[data-testid="stHorizontalBlock"] > div:empty,
 div[data-testid="element-container"]:empty,
 div[data-testid="stMarkdownContainer"]:empty {{
-display: none !important;
+    display: none;
 }}
 
-/* حاوية تسجيل الدخول */
-div[data-testid="stVerticalBlock"] > div > div > div[data-testid="stVerticalBlock"] {{
-background: linear-gradient(145deg, rgba(15, 23, 42, 0.75) 0%, rgba(8, 13, 24, 0.95) 100%) !important;
-backdrop-filter: blur(40px) saturate(200%) !important;
--webkit-backdrop-filter: blur(40px) saturate(200%) !important;
-border: 1px solid rgba(255, 255, 255, 0.08) !important;
-border-top: 1px solid rgba(167, 139, 250, 0.3) !important;
-border-bottom: 1px solid rgba(37, 99, 235, 0.2) !important;
-border-radius: 40px !important;
-padding: 3rem 2rem !important; 
-box-shadow: 0 40px 100px rgba(0, 0, 0, 0.95), inset 0 1px 0 rgba(255,255,255,0.1), 0 0 50px rgba(124, 58, 237, 0.15) !important;
+
+/* ==========================================================
+   3. بطاقة الواجهة
+   ========================================================== */
+
+div[data-testid="stVerticalBlock"] > div > div
+> div[data-testid="stVerticalBlock"] {{
+    border-radius: 28px;
 }}
 
-/* مدخلات النصوص - تم تحسينها للحفاظ على أيقونة العين */
+[data-testid="stForm"] {{
+    background:
+        linear-gradient(
+            145deg,
+            rgba(22, 20, 47, 0.96),
+            rgba(9, 12, 27, 0.98)
+        ) !important;
+
+    border: 1px solid rgba(196, 181, 253, 0.16) !important;
+    border-top: 1px solid rgba(196, 181, 253, 0.35) !important;
+    border-radius: 24px !important;
+
+    padding: 1.5rem !important;
+
+    box-shadow:
+        0 24px 65px rgba(0, 0, 0, 0.32),
+        inset 0 1px 0 rgba(255, 255, 255, 0.035) !important;
+}}
+
+
+/* ==========================================================
+   4. حقول الإدخال
+   ========================================================== */
+
 div[data-baseweb="input"] {{
-background: rgba(3, 7, 18, 0.7) !important;
-border: 1px solid rgba(255, 255, 255, 0.1) !important;
-border-radius: 18px !important;
-transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1) !important;
-box-shadow: inset 0 4px 10px rgba(0,0,0,0.6) !important;
+    background: rgba(5, 8, 22, 0.82) !important;
+
+    border: 1px solid rgba(196, 181, 253, 0.18) !important;
+    border-radius: 14px !important;
+
+    box-shadow: inset 0 2px 7px rgba(0, 0, 0, 0.18);
+
+    transition:
+        border-color 160ms ease,
+        background-color 160ms ease,
+        box-shadow 160ms ease;
 }}
+
+div[data-baseweb="input"]:hover {{
+    border-color: rgba(196, 181, 253, 0.38) !important;
+}}
+
 div[data-baseweb="input"]:focus-within {{
-background: rgba(0, 0, 0, 0.9) !important;
-border-color: #A78BFA !important;
-box-shadow: 0 0 25px rgba(124, 58, 237, 0.5), inset 0 2px 5px rgba(0,0,0,0.9) !important;
-transform: translateY(-2px);
+    background: rgba(10, 8, 29, 0.98) !important;
+
+    border-color: {PURPLE_MID} !important;
+
+    box-shadow:
+        0 0 0 3px rgba(139, 92, 246, 0.13),
+        0 0 18px rgba(124, 58, 237, 0.13) !important;
 }}
+
 div[data-baseweb="input"] input {{
-background: transparent !important;
-color: {T} !important;
-font-size: 1.1rem !important;
-font-weight: 600 !important;
+    background: transparent !important;
+    color: {T} !important;
+
+    font-size: 1rem !important;
+    font-weight: 600 !important;
+    caret-color: {PURPLE_LIGHT};
 }}
 
-/* تسميات الحقول */
+div[data-baseweb="input"] input::placeholder {{
+    color: #8986A6 !important;
+    opacity: 1 !important;
+}}
+
+.stTextInput label,
 .stTextInput label p {{
-color: {S} !important;
-font-size: 1rem !important;
-font-weight: 700 !important;
-letter-spacing: 0.5px !important;
-margin-bottom: 12px !important;
+    color: #D5D1E8 !important;
+    font-size: 0.98rem !important;
+    font-weight: 700 !important;
+    margin-bottom: 6px;
 }}
 
-/* أزرار مخصصة */
-button[kind="primary"] {{
-background: linear-gradient(135deg, {PR} 0%, {BL} 100%) !important;
-border: 1px solid rgba(167, 139, 250, 0.4) !important;
-font-weight: 800 !important;
-font-size: 1.15rem !important;
-padding: 24px 30px !important;
-border-radius: 20px !important;
-color: white !important;
-transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1) !important;
-box-shadow: 0 15px 35px rgba(124, 58, 237, 0.6), inset 0 -4px 0 rgba(0,0,0,0.3), inset 0 4px 10px rgba(255,255,255,0.3) !important;
-width: 100% !important;
+
+/* ==========================================================
+   5. الأزرار الرئيسية والثانوية
+   ========================================================== */
+
+.stButton > button,
+.stFormSubmitButton > button,
+button[kind="primary"],
+button[kind="secondary"] {{
+    width: 100%;
+    min-height: 48px;
+
+    border-radius: 14px !important;
+
+    font-family: "Tajawal", "Segoe UI", Tahoma, Arial, sans-serif;
+    font-weight: 800 !important;
+    font-size: 1rem !important;
+
+    transition:
+        background-color 160ms ease,
+        border-color 160ms ease,
+        box-shadow 160ms ease,
+        transform 160ms ease;
 }}
+
+button[kind="primary"] {{
+    color: #FFFFFF !important;
+
+    background: linear-gradient(
+        120deg,
+        #7C3AED 0%,
+        #6D28D9 48%,
+        #4F46E5 100%
+    ) !important;
+
+    border: 1px solid rgba(196, 181, 253, 0.42) !important;
+
+    box-shadow:
+        0 8px 22px rgba(109, 40, 217, 0.24),
+        inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
+}}
+
 button[kind="primary"]:hover {{
-transform: translateY(-4px) scale(1.02) !important;
-box-shadow: 0 25px 50px rgba(124, 58, 237, 0.8), inset 0 -4px 0 rgba(0,0,0,0.3) !important;
-filter: brightness(1.2) !important;
+    background: linear-gradient(
+        120deg,
+        #8B5CF6 0%,
+        #7C3AED 50%,
+        #6366F1 100%
+    ) !important;
+
+    border-color: rgba(221, 214, 254, 0.7) !important;
+
+    box-shadow:
+        0 10px 26px rgba(109, 40, 217, 0.30),
+        inset 0 1px 0 rgba(255, 255, 255, 0.20) !important;
 }}
 
 button[kind="secondary"] {{
-background: rgba(255, 255, 255, 0.04) !important;
-border: 1px solid rgba(255, 255, 255, 0.1) !important;
-color: {T} !important;
-font-weight: 700 !important;
-font-size: 1rem !important;
-border-radius: 20px !important;
-padding: 24px 30px !important;
-transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1) !important;
-width: 100% !important;
+    color: #EAE7F8 !important;
+
+    background: rgba(255, 255, 255, 0.035) !important;
+
+    border: 1px solid rgba(196, 181, 253, 0.18) !important;
+
+    box-shadow: none !important;
 }}
+
 button[kind="secondary"]:hover {{
-background: rgba(255, 255, 255, 0.1) !important;
-border-color: rgba(167, 139, 250, 0.5) !important;
-transform: translateY(-3px);
-box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+    background: rgba(139, 92, 246, 0.10) !important;
+    border-color: rgba(196, 181, 253, 0.42) !important;
 }}
 
-/* ======================================================= */
-/* 🔮 هندسة الجرم السيادي (اللمعان المعدل والنسبة الدقيقة) 🔮 */
-/* ======================================================= */
-@keyframes glowAndFloat {{
-0% {{ 
-    transform: translateY(0); 
-    box-shadow: 0 0 30px rgba(124, 58, 237, 0.4), inset 0 10px 30px rgba(124, 58, 237, 0.3); 
-}}
-50% {{ 
-    transform: translateY(-15px); 
-    box-shadow: 0 0 80px rgba(167, 139, 250, 0.8), 0 0 40px rgba(255, 255, 255, 0.2), inset 0 20px 50px rgba(124, 58, 237, 0.7); 
-}}
-100% {{ 
-    transform: translateY(0); 
-    box-shadow: 0 0 30px rgba(124, 58, 237, 0.4), inset 0 10px 30px rgba(124, 58, 237, 0.3); 
-}}
+button:focus-visible {{
+    outline: 2px solid {PURPLE_LIGHT} !important;
+    outline-offset: 3px;
 }}
 
-@keyframes spinGleam {{
-0% {{ transform: rotate(0deg); }}
-100% {{ transform: rotate(360deg); }}
+button:disabled {{
+    opacity: 0.55;
+    cursor: not-allowed;
+}}
+
+
+/* ==========================================================
+   6. الجرم البنفسجي
+   توهج ثابت وحركة بسيطة دون فرض GPU أو تحريك الظلال باستمرار.
+   ========================================================== */
+
+@keyframes hukmaFloat {{
+    0%, 100% {{
+        transform: translateY(0);
+    }}
+
+    50% {{
+        transform: translateY(-9px);
+    }}
+}}
+
+@keyframes hukmaGleam {{
+    0% {{
+        transform: rotate(0deg);
+    }}
+
+    100% {{
+        transform: rotate(360deg);
+    }}
 }}
 
 .hukma-orb {{
-position: relative;
-width: 210px;  /* تم التصغير قليلاً لاحتضان النص بشكل مثالي */
-height: 210px; 
-margin: 0 auto 2.5rem auto;
-background: linear-gradient(135deg, rgba(124,58,237,0.3) 0%, rgba(37,99,235,0.15) 100%);
-backdrop-filter: blur(25px); 
--webkit-backdrop-filter: blur(25px);
-border: 2px solid rgba(167, 139, 250, 0.5); 
-border-top: 4px solid rgba(255, 255, 255, 0.8); /* لمعة الزجاج العلوية */
-border-radius: 50%; 
-display: flex; 
-align-items: center; 
-justify-content: center;
-animation: glowAndFloat 5s ease-in-out infinite; 
-transform-style: preserve-3d;
-overflow: hidden; 
-z-index: 10;
+    position: relative;
+
+    width: 210px;
+    height: 210px;
+
+    margin: 0 auto 2rem auto;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    border-radius: 50%;
+
+    background:
+        radial-gradient(
+            circle at 32% 25%,
+            rgba(196, 181, 253, 0.22) 0%,
+            rgba(124, 58, 237, 0.14) 26%,
+            rgba(37, 45, 100, 0.24) 58%,
+            rgba(8, 10, 26, 0.94) 100%
+        );
+
+    border: 1px solid rgba(196, 181, 253, 0.58);
+    border-top: 3px solid rgba(255, 255, 255, 0.78);
+
+    box-shadow:
+        0 0 28px rgba(124, 58, 237, 0.22),
+        0 0 60px rgba(124, 58, 237, 0.11),
+        inset 0 0 28px rgba(124, 58, 237, 0.15),
+        inset 0 1px 0 rgba(255, 255, 255, 0.14);
+
+    overflow: hidden;
+    isolation: isolate;
+
+    animation: hukmaFloat 5s ease-in-out infinite;
 }}
 
-/* لمعان داخلي دوار لمظهر أكثر فخامة */
 .hukma-orb::before {{
-content: '';
-position: absolute;
-top: -50%; left: -50%;
-width: 200%; height: 200%;
-background: conic-gradient(transparent, rgba(255, 255, 255, 0.15), transparent 40%);
-animation: spinGleam 6s linear infinite;
-pointer-events: none;
-z-index: 1;
+    content: "";
+
+    position: absolute;
+    inset: -50%;
+
+    border-radius: 50%;
+
+    background: conic-gradient(
+        from 0deg,
+        transparent 0deg,
+        rgba(255, 255, 255, 0.02) 65deg,
+        rgba(221, 214, 254, 0.23) 100deg,
+        transparent 145deg,
+        transparent 245deg,
+        rgba(167, 139, 250, 0.12) 290deg,
+        transparent 330deg
+    );
+
+    animation: hukmaGleam 18s linear infinite;
+
+    pointer-events: none;
+    z-index: 0;
 }}
+
+.hukma-orb::after {{
+    content: "";
+
+    position: absolute;
+
+    top: 19%;
+    left: 24%;
+
+    width: 7px;
+    height: 7px;
+
+    border-radius: 50%;
+
+    background: #FFFFFF;
+
+    box-shadow:
+        0 0 8px rgba(255, 255, 255, 0.75),
+        0 0 18px rgba(196, 181, 253, 0.48);
+
+    opacity: 0.75;
+
+    pointer-events: none;
+    z-index: 1;
+}}
+
+
+/* ==========================================================
+   7. عنوان «حوكمة»
+   اللون الأساسي معتم: لا يعتمد على background-clip:text.
+   هذا يتجنب مشكلة ظهور النص بالأسود عند فشل رسم التدرج.
+   ========================================================== */
 
 .hukma-text {{
-font-size: 3.8rem; /* تم التكبير ليتناسق تماماً مع الجرم */
-font-weight: 900;
-background: linear-gradient(to bottom, #FFFFFF 0%, #E9D5FF 60%, #A78BFA 100%);
--webkit-background-clip: text;
--webkit-text-fill-color: transparent;
-letter-spacing: 2px;
-display: inline-block;
-/* لمعان مباشر للنص نفسه */
-filter: drop-shadow(0 0 15px rgba(167, 139, 250, 0.7)) drop-shadow(0 8px 10px rgba(0,0,0,0.8));
-z-index: 2;
-position: relative;
+    position: relative;
+    z-index: 2;
+
+    display: inline-block;
+
+    font-family: "Tajawal", "Segoe UI", Tahoma, Arial, sans-serif;
+
+    font-size: clamp(2.7rem, 6vw, 3.8rem);
+    font-weight: 900;
+    line-height: 1.3;
+    letter-spacing: 1px;
+
+    color: #FFFFFF !important;
+    -webkit-text-fill-color: #FFFFFF !important;
+
+    background: none !important;
+    background-image: none !important;
+    background-clip: border-box !important;
+    -webkit-background-clip: border-box !important;
+
+    -webkit-text-stroke: 0 transparent;
+
+    text-shadow:
+        0 2px 0 rgba(91, 33, 182, 0.90),
+        0 0 12px rgba(196, 181, 253, 0.32),
+        0 5px 20px rgba(0, 0, 0, 0.35);
+
+    filter: none !important;
+    opacity: 1 !important;
 }}
 
+
+/* ==========================================================
+   8. النصوص أسفل العنوان
+   ========================================================== */
+
+.hukma-tagline {{
+    color: {S};
+
+    margin-top: 1.2rem;
+
+    font-size: clamp(1rem, 2.5vw, 1.3rem);
+    font-weight: 700;
+    line-height: 1.9;
+    text-align: center;
+}}
+
+.hukma-accent-purple {{
+    color: {PURPLE_LIGHT};
+    font-weight: 900;
+}}
+
+.hukma-accent-blue {{
+    color: #93C5FD;
+    font-weight: 900;
+}}
+
+.hukma-divider {{
+    width: min(250px, 70%);
+    height: 2px;
+
+    margin: 1.2rem auto 0 auto;
+
+    background: linear-gradient(
+        90deg,
+        transparent,
+        #A78BFA,
+        #60A5FA,
+        transparent
+    );
+
+    opacity: 0.8;
+}}
+
+
+/* ==========================================================
+   9. توقيع المطور
+   لون ذهبي ثابت لتجنب مشكلة التدرج في النص.
+   ========================================================== */
+
 .dev-signature {{
-text-align: center;
-margin-top: 5rem;
-font-size: 1.1rem;
-color: rgba(255,255,255,0.5);
-letter-spacing: 1px;
-font-weight: 500;
-position: relative;
-z-index: 20;
+    position: relative;
+    z-index: 2;
+
+    margin-top: 3.5rem;
+
+    text-align: center;
+
+    color: rgba(226, 223, 244, 0.60);
+
+    font-size: 0.95rem;
+    font-weight: 500;
+    line-height: 1.9;
+    letter-spacing: 0.3px;
 }}
+
 .dev-name {{
-background: linear-gradient(135deg, #FDE68A 0%, #D4AF37 50%, #B45309 100%);
--webkit-background-clip: text;
--webkit-text-fill-color: transparent;
-font-weight: 900;
-font-size: 1.2rem;
-display: inline-block;
-transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-position: relative;
+    display: inline-block;
+
+    color: {GOLD} !important;
+    -webkit-text-fill-color: {GOLD} !important;
+
+    background: none !important;
+    background-image: none !important;
+    -webkit-background-clip: border-box !important;
+    background-clip: border-box !important;
+
+    font-size: 1.1rem;
+    font-weight: 900;
+
+    text-shadow: 0 0 12px rgba(232, 199, 102, 0.16);
 }}
-.dev-signature:hover .dev-name {{
-filter: drop-shadow(0 0 20px rgba(212, 175, 55, 0.9)) drop-shadow(0 0 10px rgba(255, 255, 255, 0.8));
-transform: scale(1.1) translateY(-3px);
+
+
+/* ==========================================================
+   10. التنبيهات
+   ========================================================== */
+
+[data-testid="stAlert"] {{
+    border-radius: 12px;
 }}
-</style>"""
+
+[data-testid="stAlert"] p {{
+    line-height: 1.8;
+}}
+
+
+/* ==========================================================
+   11. الشاشات الصغيرة
+   ========================================================== */
+
+@media (max-width: 700px) {{
+    .main .block-container {{
+        padding: 1.2rem 0.85rem 2rem;
+    }}
+
+    .hukma-orb {{
+        width: 170px;
+        height: 170px;
+        margin-bottom: 1.6rem;
+    }}
+
+    .hukma-text {{
+        font-size: 2.65rem;
+        letter-spacing: 0;
+    }}
+
+    .dev-signature {{
+        margin-top: 2.5rem;
+    }}
+}}
+
+
+/* ==========================================================
+   12. احترام إعداد تقليل الحركة
+   ========================================================== */
+
+@media (prefers-reduced-motion: reduce) {{
+    .hukma-orb,
+    .hukma-orb::before {{
+        animation: none !important;
+    }}
+
+    *,
+    *::before,
+    *::after {{
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+    }}
+}}
+
+</style>
+"""
+
     st.markdown(css_code, unsafe_allow_html=True)
 
 
-def render_premium_header(is_change_password=False):
-    """توليد الهيدر التنفيذي الفاخر - بدون أي مسافات بادئة إطلاقاً"""
-    if not is_change_password:
-        html = f"""<div style="text-align:center; margin-bottom: 3.5rem; margin-top: 0.5rem;">
-<div class="hukma-orb">
-<span class="hukma-text">حوكمة</span>
-</div>
-<p style="color:{S}; margin-top: 1.5rem; font-size: 1.4rem; letter-spacing: 1px; font-weight: 700;">
-إدارة <span style="color:#A78BFA; font-weight:900; text-shadow: 0 0 20px rgba(167,139,250,0.8);">ذكية</span> .. 
-قرارات <span style="color:#60A5FA; font-weight:900; text-shadow: 0 0 20px rgba(96,165,250,0.8);">واثقة</span>
-</p>
-<div style="width: 250px; height: 2px; background: linear-gradient(90deg, transparent, #A78BFA, transparent); margin: 1.5rem auto 0 auto; opacity: 0.8; box-shadow: 0 0 15px #A78BFA;"></div>
-</div>"""
-        st.markdown(html, unsafe_allow_html=True)
-    else:
-        html = f"""<div style="text-align:center; margin-bottom: 3.5rem; margin-top: 0.5rem;">
-<div class="hukma-orb" style="width: 150px; height: 150px; border-radius: 50%;">
-<span style="font-size: 4rem; filter: drop-shadow(0 10px 15px rgba(0,0,0,0.8));">🛡️</span>
-</div>
-<h2 style="color:{T}; margin:0; font-weight:900; font-size:2.5rem; letter-spacing: 0.5px;">تأمين الهوية الرقمية</h2>
-<p style="color:{S}; margin-top:1rem; font-size:1.1rem; letter-spacing: 0.5px;">يرجى تحديث رمز الحماية الخاص بك للمتابعة بأمان</p>
-</div>"""
-        st.markdown(html, unsafe_allow_html=True)
+# ============================================================
+# الهيدر
+# ============================================================
 
+def render_premium_header(is_change_password=False):
+    """عرض هوية حكمة في صفحة الدخول أو تغيير كلمة المرور."""
+
+    if not is_change_password:
+        html = f"""
+<div style="
+    text-align:center;
+    margin-bottom:2.5rem;
+    margin-top:0.5rem;
+">
+    <div class="hukma-orb">
+        <span class="hukma-text">حوكمة</span>
+    </div>
+
+    <div class="hukma-tagline">
+        إدارة
+        <span class="hukma-accent-purple">ذكية</span>
+        ..
+        قرارات
+        <span class="hukma-accent-blue">واثقة</span>
+    </div>
+
+    <div class="hukma-divider"></div>
+</div>
+"""
+
+    else:
+        html = f"""
+<div style="
+    text-align:center;
+    margin-bottom:2.5rem;
+    margin-top:0.5rem;
+">
+    <div
+        class="hukma-orb"
+        style="width:150px;height:150px;"
+    >
+        <span style="
+            position:relative;
+            z-index:2;
+            font-size:3.6rem;
+            line-height:1;
+        ">🛡️</span>
+    </div>
+
+    <h2 style="
+        color:{T};
+        margin:0;
+        font-weight:900;
+        font-size:clamp(1.8rem, 5vw, 2.5rem);
+    ">
+        تأمين الهوية الرقمية
+    </h2>
+
+    <p style="
+        color:{S};
+        margin-top:1rem;
+        font-size:1.05rem;
+        line-height:1.9;
+    ">
+        يرجى تحديث رمز الحماية الخاص بك للمتابعة بأمان
+    </p>
+
+    <div class="hukma-divider"></div>
+</div>
+"""
+
+    st.markdown(html, unsafe_allow_html=True)
+
+
+# ============================================================
+# توقيع المطور
+# ============================================================
+
+def _render_dev_signature(change_password=False):
+    if change_password:
+        html = """
+<div class="dev-signature">
+    <div>
+        تطوير:
+        <span class="dev-name">سالم التريمي</span>
+    </div>
+</div>
+"""
+    else:
+        html = """
+<div class="dev-signature">
+    حكمة ERP • نظام محاسبي متكامل
+    <br>
+    <div style="margin-top:8px;">
+        تطوير:
+        <span class="dev-name">سالم التريمي</span>
+    </div>
+</div>
+"""
+
+    st.markdown(html, unsafe_allow_html=True)
+
+
+# ============================================================
+# نموذج تسجيل الدخول
+# ============================================================
 
 def login_form():
     render_premium_header(is_change_password=False)
@@ -286,60 +726,73 @@ def login_form():
             username = st.text_input(
                 "👤 معرف المستخدم (ID)",
                 placeholder="أدخل اسم المستخدم",
-                key="login_user"
+                key="login_user",
             )
-            st.markdown("<div style='margin-bottom: 20px;'></div>",
-                        unsafe_allow_html=True)
+
+            st.markdown(
+                "<div style='height:12px'></div>",
+                unsafe_allow_html=True,
+            )
 
             password = st.text_input(
                 "🔒 رمز المرور السري",
                 type="password",
-                placeholder="••••••••",
-                key="login_pass"
+                placeholder="أدخل رمز المرور",
+                key="login_pass",
             )
-            st.markdown("<div style='margin-bottom: 45px;'></div>",
-                        unsafe_allow_html=True)
+
+            st.markdown(
+                "<div style='height:25px'></div>",
+                unsafe_allow_html=True,
+            )
 
             login_btn = st.button(
                 "🚀 مصادقة والدخول",
                 use_container_width=True,
-                type="primary"
+                type="primary",
             )
-            st.markdown("<div style='margin-bottom: 15px;'></div>",
-                        unsafe_allow_html=True)
 
-            if st.button("🔑 تغيير الرمز", use_container_width=True,
-                         type="secondary"):
+            st.markdown(
+                "<div style='height:8px'></div>",
+                unsafe_allow_html=True,
+            )
+
+            if st.button(
+                "🔑 تغيير الرمز",
+                use_container_width=True,
+                type="secondary",
+            ):
                 st.session_state.show_password_change = True
                 st.rerun()
 
             if login_btn:
-                # ✅ التحقق من المدخلات
                 if not username.strip() or not password:
-                    st.warning("⚠️ يرجى إدخال اسم المستخدم وكلمة المرور.")
+                    st.warning(
+                        "⚠️ يرجى إدخال اسم المستخدم وكلمة المرور."
+                    )
                 else:
-                    # ✅ تمرير IP + username منظّف
                     user = verify_user(
                         username.strip(),
                         password,
                         ip_address=_get_client_ip(),
                     )
+
                     if user:
                         st.session_state.logged_in = True
                         st.session_state.user = user
                         st.rerun()
                     else:
                         st.error(
-                            "❌ فشلت المصادقة المباشرة. "
+                            "❌ فشلت المصادقة. "
                             "يرجى مراجعة البيانات المدخلة."
                         )
 
-    dev_html = """<div class="dev-signature">
-حوكمة ERP • نظام محاسبي متكامل<br>
-<div style="margin-top: 10px;">تطوير: <span class="dev-name">سالم التريمي</span></div>
-</div>"""
-    st.markdown(dev_html, unsafe_allow_html=True)
+    _render_dev_signature(change_password=False)
 
+
+# ============================================================
+# نموذج تغيير كلمة المرور
+# ============================================================
 
 def password_change_form():
     render_premium_header(is_change_password=True)
@@ -351,58 +804,87 @@ def password_change_form():
             username = st.text_input(
                 "👤 اسم المستخدم",
                 placeholder="أدخل اسم المستخدم الخاص بك",
-                key="change_user"
+                key="change_user",
             )
-            st.markdown("<div style='margin-bottom: 15px;'></div>",
-                        unsafe_allow_html=True)
+
+            st.markdown(
+                "<div style='height:8px'></div>",
+                unsafe_allow_html=True,
+            )
 
             old_password = st.text_input(
                 "🔓 رمز المرور السري الحالي",
                 type="password",
                 placeholder="الرمز الحالي",
-                key="change_old"
+                key="change_old",
             )
-            st.markdown("<div style='margin-bottom: 15px;'></div>",
-                        unsafe_allow_html=True)
+
+            st.markdown(
+                "<div style='height:8px'></div>",
+                unsafe_allow_html=True,
+            )
 
             new_password = st.text_input(
                 "✨ رمز المرور السري الجديد",
                 type="password",
-                placeholder="الرمز الجديد القوي",
-                key="change_new"
+                placeholder="الرمز الجديد",
+                key="change_new",
             )
-            st.markdown("<div style='margin-bottom: 15px;'></div>",
-                        unsafe_allow_html=True)
+
+            st.markdown(
+                "<div style='height:8px'></div>",
+                unsafe_allow_html=True,
+            )
 
             confirm_password = st.text_input(
                 "✅ تأكيد الرمز الجديد",
                 type="password",
-                placeholder="إعادة كتابة الرمز",
-                key="change_confirm"
+                placeholder="أعد كتابة الرمز الجديد",
+                key="change_confirm",
             )
-            st.markdown("<div style='margin-bottom: 40px;'></div>",
-                        unsafe_allow_html=True)
 
-            if st.button("💾 حفظ البيانات وتحديث",
-                         use_container_width=True, type="primary"):
-                if not username or not old_password or not new_password:
+            st.markdown(
+                "<div style='height:22px'></div>",
+                unsafe_allow_html=True,
+            )
+
+            if st.button(
+                "💾 حفظ البيانات وتحديث",
+                use_container_width=True,
+                type="primary",
+            ):
+                if (
+                    not username.strip()
+                    or not old_password
+                    or not new_password
+                    or not confirm_password
+                ):
                     st.warning("⚠️ جميع الحقول مطلوبة.")
+
                 elif new_password != confirm_password:
-                    st.error("❌ عدم تطابق في تأكيد رمز المرور الجديد.")
-                elif len(new_password) < 4:
-                    st.error("⚠️ رمز المرور ضعيف (يجب ألا يقل عن 4 خانات).")
-                else:
-                    # ✅ تمرير changed_by
-                    current_user = (
-                        st.session_state.user.get('username')
-                        if st.session_state.get('user') else username
+                    st.error(
+                        "❌ رمز المرور الجديد وتأكيده غير متطابقين."
                     )
+
+                elif len(new_password) < 4:
+                    st.error(
+                        "⚠️ رمز المرور ضعيف؛ يجب ألا يقل عن 4 خانات."
+                    )
+
+                else:
+                    current_user = (
+                        st.session_state.user.get("username")
+                        if st.session_state.get("user")
+                        else username.strip()
+                    )
+
                     success, message = change_password(
-                        username,
+                        username.strip(),
                         old_password,
                         new_password,
                         changed_by=current_user,
                     )
+
                     if success:
                         st.success(f"✨ {message}")
                         st.session_state.show_password_change = False
@@ -410,24 +892,30 @@ def password_change_form():
                     else:
                         st.error(f"❌ {message}")
 
-            st.markdown("<div style='margin-bottom: 15px;'></div>",
-                        unsafe_allow_html=True)
+            st.markdown(
+                "<div style='height:8px'></div>",
+                unsafe_allow_html=True,
+            )
 
-            if st.button("↩️ تراجع", use_container_width=True,
-                         type="secondary"):
+            if st.button(
+                "↩️ تراجع",
+                use_container_width=True,
+                type="secondary",
+            ):
                 st.session_state.show_password_change = False
                 st.rerun()
 
-    dev_html = """<div class="dev-signature">
-<div style="margin-top: 10px;">تطوير: <span class="dev-name">سالم التريمي</span></div>
-</div>"""
-    st.markdown(dev_html, unsafe_allow_html=True)
+    _render_dev_signature(change_password=True)
 
+
+# ============================================================
+# نقطة الدخول الرئيسية للواجهة
+# ============================================================
 
 def show():
     init_db()
 
-    if 'show_password_change' not in st.session_state:
+    if "show_password_change" not in st.session_state:
         st.session_state.show_password_change = False
 
     apply_ultra_premium_css()
