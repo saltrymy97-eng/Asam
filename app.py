@@ -2,7 +2,12 @@ import streamlit as st
 import database
 
 # ✅ يجب أن يكون هذا السطر هو الأول بعد استيراد streamlit مباشرة
-st.set_page_config(page_title="حوكمة ERP", layout="wide")
+# 🎯 تمت إضافة page_icon لجعل أيقونة التطبيق تظهر في شريط المهام وفي أعلى النافذة
+st.set_page_config(
+    page_title="حوكمة ERP",
+    page_icon="icon.ico",
+    layout="wide"
+)
 
 # تهيئة قاعدة البيانات
 database.init_db()
