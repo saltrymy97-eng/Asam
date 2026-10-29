@@ -1,6 +1,5 @@
-
-# app_desktop.py — Hokama ERP v42.0
-# Firefox + Persistent Profile + Startup Logging
+# app_desktop.py — Hokama ERP v43.1 (Developer Edition)
+# Firefox + Persistent Profile + DevTools Enabled + Right-Click Enabled
 # لا يغيّر الواجهات أو الخدمات أو قاعدة البيانات
 
 import os
@@ -155,7 +154,7 @@ def main():
     port = find_free_port()
     url = f"http://{host}:{port}"
 
-    log_message("Starting Hokama ERP")
+    log_message("Starting Hokama ERP (Developer Edition)")
     log_message(f"App path: {app_path}")
     log_message(f"URL: {url}")
 
@@ -211,7 +210,7 @@ def main():
     profile_dir = get_data_dir() / "FirefoxProfile"
     profile_dir.mkdir(parents=True, exist_ok=True)
 
-    # تفضيلات لتقليل بعض شاشات الترحيب
+    # 🎯 إعدادات ملف التعريف (أدوات المطور + النقر بزر الفأرة الأيمن)
     user_js = profile_dir / "user.js"
     preferences = [
         'user_pref("browser.shell.checkDefaultBrowser", false);',
@@ -220,6 +219,15 @@ def main():
         'user_pref("startup.homepage_welcome_url.additional", "");',
         'user_pref("browser.aboutwelcome.enabled", false);',
         'user_pref("browser.startup.firstrunSkipsHomepage", true);',
+        # 🎯 تفعيل أدوات المطور (DevTools)
+        'user_pref("devtools.chrome.enabled", true);',
+        'user_pref("devtools.debugger.remote-enabled", true);',
+        'user_pref("devtools.selfxss.count", 100);',
+        'user_pref("devtools.inspector.enabled", true);',
+        # 🎯 تفعيل قائمة النقر بزر الفأرة الأيمن
+        'user_pref("dom.event.contextmenu.enabled", true);',
+        'user_pref("browser.tabs.loadInBackground", true);',
+        'user_pref("privacy.popups.disable_from_plugins", 3);',
     ]
 
     try:
@@ -234,7 +242,7 @@ def main():
         browser_exe,
         "-no-remote",
         "-profile", str(profile_dir),
-        "-kiosk",
+        # 🎯 تم حذف -kiosk لكي يعمل النقر بزر الفأرة الأيمن و F12
         url,
     ]
 
