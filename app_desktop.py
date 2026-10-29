@@ -1,15 +1,7 @@
 
 # app_desktop.py
-# Hokama ERP — Windows Desktop Launcher (v2.1)
+# Hokama ERP — Windows Desktop Launcher (v2.2)
 # Streamlit + Microsoft Edge App Mode
-#
-# Improvements:
-# - Persistent Edge profile.
-# - Waits for the actual Edge process using the dedicated profile.
-# - Does not mistake the initial Edge launcher exit for browser closure.
-# - Retries opening the app if Edge does not start correctly.
-# - Monitors Streamlit while the browser is running.
-# - Keeps startup and diagnostic logs.
 
 import asyncio
 import multiprocessing
@@ -31,15 +23,17 @@ if sys.platform == "win32":
 
 APP_NAME = "Hokama ERP"
 HOST = "127.0.0.1"
+
 STARTUP_TIMEOUT = 60
-EDGE_START_TIMEOUT = 25
-EDGE_RETRY_DELAY = 8
+EDGE_START_WAIT = 8
 MONITOR_INTERVAL = 2
+EDGE_CLOSE_GRACE = 15
 
 
 def get_base_path():
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         return Path(sys._MEIPASS)
+
     return Path(__file__).resolve().parent
 
 
@@ -72,6 +66,7 @@ def show_error(title, message):
     if sys.platform == "win32":
         try:
             import ctypes
+
             ctypes.windll.user32.MessageBoxW(
                 None, message, title, 0x10
             )
@@ -102,17 +97,17 @@ def is_streamlit_fully_ready(host, port):
     except Exception:
         return False
 
-    # Check that the main page returns actual HTML.
+    # Check main page HTML.
     try:
         root_url = f"http://{host}:{port}/"
 
-        req = urllib.request.Request(
+        request = urllib.request.Request(
             root_url,
             headers={"User-Agent": "Mozilla/5.0"},
         )
 
         with urllib.request.urlopen(
-            req, timeout=3
+            request, timeout=3
         ) as response:
             if response.status != 200:
                 return False
@@ -157,8 +152,6 @@ def run_streamlit(port, app_path):
                 "--server.headless=true",
                 "--server.fileWatcherType=none",
                 "--server.runOnSave=false",
-                "--server.enableCORS=false",
-                "--server.enableXsrfProtection=false",
                 "--browser.gatherUsageStats=false",
                 "--global.developmentMode=false",
             ]
@@ -220,38 +213,17 @@ def find_edge():
     return None
 
 
-def stop_server(server):
-    if server is None:
-        return
-
-    try:
-        if server.is_alive():
-            log_message("Stopping Streamlit server")
-
-            server.terminate()
-            server.join(timeout=5)
-
-        if server.is_alive() and hasattr(server, "kill"):
-            server.kill()
-            server.join(timeout=3)
-
-    except Exception:
-        log_message(
-            "Server shutdown error:\n"
-            + traceback.format_exc()
-        )
-
-
 def edge_process_using_profile(edge_profile):
     """
-    يتحقق من وجود عملية Edge تستخدم ملف التعريف الخاص بالنظام.
-
-    لا نعتمد على browser.poll() وحده؛ لأن عملية إطلاق Edge
-    قد تنتهي بعد تسليم الأمر إلى عملية Edge أخرى.
+    يتحقق من وجود عملية Edge تستخدم ملف تعريف Hokama.
+    يعيد:
+        True  = توجد عملية
+        False = لا توجد عملية
+        None  = تعذر إجراء الفحص
     """
 
     if sys.platform != "win32":
-        return False
+        return None
 
     profile_text = str(edge_profile).replace("'", "''")
 
@@ -282,6 +254,9 @@ def edge_process_using_profile(edge_profile):
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
 
+        if result.returncode != 0:
+            return None
+
         return bool(result.stdout.strip())
 
     except Exception as exc:
@@ -292,6 +267,11 @@ def edge_process_using_profile(edge_profile):
 
 
 def launch_edge(edge_exe, edge_profile, url, logs_dir):
+    """
+    يفتح Edge مرة واحدة فقط.
+    لا توجد إعادة محاولة تلقائية لفتح نافذة ثانية.
+    """
+
     browser_args = [
         edge_exe,
         f"--user-data-dir={edge_profile}",
@@ -306,7 +286,7 @@ def launch_edge(edge_exe, edge_profile, url, logs_dir):
 
     edge_log_path = logs_dir / "edge.log"
 
-    log_message("Launching Edge app mode")
+    log_message("Launching Edge app mode (single launch)")
 
     with edge_log_path.open(
         "a", encoding="utf-8"
@@ -331,25 +311,99 @@ def launch_edge(edge_exe, edge_profile, url, logs_dir):
     return process
 
 
-def wait_for_edge(edge_profile, timeout):
-    """
-    ينتظر ظهور عملية Edge الفعلية المرتبطة بملف التعريف.
-    """
+def stop_server(server):
+    if server is None:
+        return
 
-    deadline = time.monotonic() + timeout
+    try:
+        if server.is_alive():
+            log_message("Stopping Streamlit server")
+
+            server.terminate()
+            server.join(timeout=5)
+
+        if server.is_alive() and hasattr(server, "kill"):
+            server.kill()
+            server.join(timeout=3)
+
+    except Exception:
+        log_message(
+            "Server shutdown error:\n"
+            + traceback.format_exc()
+        )
+
+
+def wait_for_streamlit(server, host, port):
+    deadline = time.monotonic() + STARTUP_TIMEOUT
 
     while time.monotonic() < deadline:
-        state = edge_process_using_profile(edge_profile)
+        if not server.is_alive():
+            return False
 
-        if state is True:
-            log_message(
-                "Detected Edge process using Hokama profile"
-            )
+        if is_streamlit_fully_ready(host, port):
             return True
 
-        time.sleep(1)
+        time.sleep(0.5)
 
     return False
+
+
+def monitor_application(server, edge_profile):
+    """
+    يراقب خادم Streamlit ونافذة Edge.
+    لا يعتمد على browser.poll() لأنه لا يثبت إغلاق نافذة Edge.
+    """
+
+    log_message("Monitoring Hokama ERP")
+
+    # نعطي Edge وقتًا كافيًا للظهور قبل الاعتماد على الفحص.
+    time.sleep(EDGE_START_WAIT)
+
+    if not server.is_alive():
+        log_message("ERROR: Streamlit stopped after Edge launch")
+        return False
+
+    first_detection = False
+    missing_since = None
+
+    while True:
+        if not server.is_alive():
+            log_message("ERROR: Streamlit process stopped")
+            return False
+
+        edge_state = edge_process_using_profile(edge_profile)
+
+        if edge_state is True:
+            first_detection = True
+            missing_since = None
+
+        elif edge_state is False:
+            if first_detection:
+                if missing_since is None:
+                    missing_since = time.monotonic()
+
+                elif (
+                    time.monotonic() - missing_since
+                    >= EDGE_CLOSE_GRACE
+                ):
+                    log_message(
+                        "Edge profile process is no longer detected"
+                    )
+                    return True
+
+            else:
+                # لم نتمكن من اكتشاف Edge بعد.
+                # لا نغلق الخادم لمجرد فشل الفحص.
+                log_message(
+                    "Edge process not detected yet; "
+                    "keeping Streamlit alive"
+                )
+
+        else:
+            # تعذر فحص Edge؛ لا نفترض أن المستخدم أغلقها.
+            missing_since = None
+
+        time.sleep(MONITOR_INTERVAL)
 
 
 def main():
@@ -386,16 +440,15 @@ def main():
         logs_dir = data_dir / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
 
-        # Persistent browser profile.
+        # ملف تعريف دائم لا يُحذف عند إغلاق التطبيق.
         edge_profile = data_dir / "EdgeProfile"
         edge_profile.mkdir(parents=True, exist_ok=True)
 
-        # Use a free local port.
         port = find_free_port()
         url = f"http://{HOST}:{port}"
 
         log_message("=" * 55)
-        log_message("Starting Hokama ERP Desktop v2.1")
+        log_message("Starting Hokama ERP Desktop v2.2")
         log_message(f"Application: {app_path}")
         log_message(f"Edge: {edge_exe}")
         log_message(f"Edge profile: {edge_profile}")
@@ -415,26 +468,10 @@ def main():
             f"Streamlit process started: {server.pid}"
         )
 
-        # Wait for Streamlit to become ready.
-        ready = False
-        deadline = time.monotonic() + STARTUP_TIMEOUT
-
-        while time.monotonic() < deadline:
-            if not server.is_alive():
-                log_message(
-                    "ERROR: Streamlit process exited during startup"
-                )
-                break
-
-            if is_streamlit_fully_ready(HOST, port):
-                ready = True
-                break
-
-            time.sleep(0.5)
-
-        if not ready:
+        # Wait for Streamlit readiness.
+        if not wait_for_streamlit(server, HOST, port):
             log_message(
-                "ERROR: Streamlit failed to become fully ready"
+                "ERROR: Streamlit failed to become ready"
             )
 
             detail = ""
@@ -461,12 +498,12 @@ def main():
 
             return 1
 
-        log_message("Streamlit is fully ready")
+        log_message("Streamlit fully ready")
 
-        # Allow the server to settle before opening Edge.
+        # وقت قصير لاستقرار الخادم.
         time.sleep(2)
 
-        # First Edge launch.
+        # فتح Edge مرة واحدة فقط.
         browser = launch_edge(
             edge_exe,
             edge_profile,
@@ -474,103 +511,30 @@ def main():
             logs_dir,
         )
 
-        edge_ready = wait_for_edge(
-            edge_profile,
-            EDGE_START_TIMEOUT,
+        log_message(
+            "Edge launch requested. No second launch will be attempted."
         )
 
-        # Retry if Edge did not start using our profile.
-        if not edge_ready:
+        # لا نستخدم browser.poll() للحكم على إغلاق النافذة.
+        monitor_ok = monitor_application(
+            server,
+            edge_profile,
+        )
+
+        if not monitor_ok:
             log_message(
-                "WARNING: Edge was not detected. "
-                "Retrying launch."
-            )
-
-            time.sleep(EDGE_RETRY_DELAY)
-
-            if not server.is_alive():
-                raise RuntimeError(
-                    "Streamlit stopped before Edge retry"
-                )
-
-            if not is_streamlit_fully_ready(HOST, port):
-                raise RuntimeError(
-                    "Streamlit is no longer responding"
-                )
-
-            browser = launch_edge(
-                edge_exe,
-                edge_profile,
-                url,
-                logs_dir,
-            )
-
-            edge_ready = wait_for_edge(
-                edge_profile,
-                EDGE_START_TIMEOUT,
-            )
-
-        if not edge_ready:
-            log_message(
-                "ERROR: Edge did not start with Hokama profile"
+                "Application monitor detected a server failure"
             )
 
             show_error(
                 APP_NAME,
-                "تعذّر تشغيل نافذة Microsoft Edge.\n\n"
-                "تأكد من أن Edge غير مغلق أو عالق في الخلفية، "
-                "ثم أعد تشغيل النظام.\n\n"
-                f"ملفات السجل:\n{logs_dir}",
+                "توقف خادم التطبيق.\n"
+                f"راجع ملفات السجل داخل:\n{logs_dir}",
             )
 
             return 1
 
-        log_message("Edge is running. Monitoring application.")
-
-        # Monitor the actual Edge process, not only the launcher Popen.
-        missing_edge_checks = 0
-
-        while True:
-            if not server.is_alive():
-                log_message(
-                    "ERROR: Streamlit process stopped unexpectedly"
-                )
-
-                show_error(
-                    APP_NAME,
-                    "توقف خادم التطبيق.\n"
-                    f"راجع ملفات السجل داخل:\n{logs_dir}",
-                )
-
-                return 1
-
-            edge_state = edge_process_using_profile(
-                edge_profile
-            )
-
-            if edge_state is True:
-                missing_edge_checks = 0
-
-            elif edge_state is False:
-                missing_edge_checks += 1
-
-                # Avoid stopping the server because of a temporary
-                # process transition or Edge restart.
-                if missing_edge_checks >= 3:
-                    log_message(
-                        "Edge process using Hokama profile "
-                        "is no longer detected"
-                    )
-                    break
-
-            else:
-                # If the process check itself fails, do not assume
-                # that the user closed Edge.
-                missing_edge_checks = 0
-
-            time.sleep(MONITOR_INTERVAL)
-
-        log_message("Hokama ERP browser window closed")
+        log_message("Hokama ERP browser session closed")
 
         return 0
 
@@ -581,7 +545,9 @@ def main():
     except Exception:
         error = traceback.format_exc()
 
-        log_message("Fatal launcher error:\n" + error)
+        log_message(
+            "Fatal launcher error:\n" + error
+        )
 
         show_error(
             "Hokama ERP — خطأ",
