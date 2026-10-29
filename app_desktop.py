@@ -1,5 +1,5 @@
 # app_desktop.py
-# Hokama ERP — Windows Desktop Launcher
+# Hokama ERP — Windows Desktop Launcher (v2.0 - Robust)
 # Streamlit + Microsoft Edge App Mode
 
 import asyncio
@@ -63,13 +63,34 @@ def find_free_port():
         return sock.getsockname()[1]
 
 
-def is_streamlit_ready(host, port):
-    url = f"http://{host}:{port}/_stcore/health"
+def is_streamlit_fully_ready(host, port):
+    """
+    فحص دقيق وجاد:
+    1. التأكد من أن health endpoint يعمل.
+    2. التأكد من أن الصفحة الرئيسية (/) تُرجع HTML فعلي.
+    """
+    # 1. فحص الصحة
     try:
-        with urllib.request.urlopen(url, timeout=1.5) as response:
-            return response.status == 200
-    except (OSError, urllib.error.URLError, TimeoutError):
+        health_url = f"http://{host}:{port}/_stcore/health"
+        with urllib.request.urlopen(health_url, timeout=1.5) as response:
+            if response.status != 200:
+                return False
+    except Exception:
         return False
+
+    # 2. فحص الصفحة الرئيسية
+    try:
+        root_url = f"http://{host}:{port}/"
+        req = urllib.request.Request(root_url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=2) as response:
+            if response.status == 200:
+                html = response.read().decode('utf-8', errors='ignore')
+                if "<!DOCTYPE html>" in html:
+                    return True
+    except Exception:
+        return False
+
+    return False
 
 
 def run_streamlit(port, app_path):
@@ -219,17 +240,17 @@ def main():
         deadline = time.monotonic() + 60
 
         while time.monotonic() < deadline:
-            if is_streamlit_ready(host, port):
+            if is_streamlit_fully_ready(host, port):
                 ready = True
                 break
 
             if not server.is_alive():
                 break
 
-            time.sleep(0.4)
+            time.sleep(0.5)
 
         if not ready:
-            log_message("ERROR: Streamlit failed to become ready")
+            log_message("ERROR: Streamlit failed to become fully ready")
 
             detail = ""
             streamlit_log = logs_dir / "streamlit.log"
@@ -254,7 +275,10 @@ def main():
             )
             return 1
 
-        log_message("Streamlit health check passed")
+        log_message("Streamlit fully ready (Health + HTML).")
+
+        # 🎯 تأخير احترافي (3 ثوانٍ) لضمان استقرار اتصال WebSocket قبل فتح Edge
+        time.sleep(3)
 
         browser_args = [
             edge_exe,
