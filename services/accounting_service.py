@@ -1,7 +1,7 @@
 # services/accounting_service.py - منطق الحسابات وقيود اليومية
-# v4.2 — ✅ Connection Registry + BEGIN IMMEDIATE
-# ✅ تسجيل تدقيق كامل + قراءة تلقائية للمستخدم من session_state
+# v4.3 — ✅ دعم كامل للحسابات الفرعية (أكواد بنقطة مثل 1102.04)
 import uuid
+import re
 from datetime import date
 from services import cost_center_service
 from services.currency_service import get_base_currency, get_exchange_rate
@@ -26,10 +26,6 @@ def _release_conn(conn, owns):
 # ✅ دالة مساعدة: جلب اسم المستخدم الحالي
 # ============================================================
 def _get_current_user(default="system"):
-    """
-    جلب اسم المستخدم الحالي من session_state بأمان.
-    - يُعيد default إذا لم يوجد session أو مستخدم
-    """
     try:
         import streamlit as st
         user = st.session_state.get('user') or {}
@@ -41,8 +37,11 @@ def _get_current_user(default="system"):
     return default
 
 
+# ============================================================
+# ✅ دالة مساعدة: استخراج كود الحساب بدقة (تدعم النقاط)
+# ============================================================
 def get_account_code(account_input, conn=None):
-    """تحويل اسم الحساب أو كوده إلى كود نصي موحد."""
+    """تحويل اسم الحساب أو كوده إلى كود نصي موحد (يدعم 1102.04)."""
     if account_input is None:
         return None
 
@@ -50,11 +49,17 @@ def get_account_code(account_input, conn=None):
     if not account_input:
         return None
 
+    # 1. إذا كان رقماً صحيحاً (مثل 1101)
     if account_input.isdigit():
+        return account_input
+
+    # 2. إذا كان كوداً يحتوي على نقطة (مثل 1102.04) - نُعيده كما هو
+    if re.match(r"^\d+(\.\d+)*$", account_input):
         return account_input
 
     c, owns = _resolve_conn(conn)
     try:
+        # 3. البحث في قاعدة البيانات عن طريق الاسم أو الكود
         row = c.execute(
             "SELECT code FROM accounts WHERE name = ? OR name LIKE ? OR code = ?",
             (account_input, f"%{account_input}%", account_input)
@@ -63,9 +68,11 @@ def get_account_code(account_input, conn=None):
         if row:
             return row["code"]
 
+        # 4. إذا كان النص يحتوي على كود (مثل "1102.04 - بنك تجريبي")
         if account_input[0].isdigit():
             code_part = account_input.split("-")[0].strip()
-            if code_part.isdigit():
+            # التحقق من أن الكود المستخرج يبدأ برقم ويحتوي فقط على أرقام ونقاط
+            if re.match(r"^\d+(\.\d+)*$", code_part):
                 return code_part
 
         return None
@@ -91,7 +98,6 @@ def _safe_is_period_closed(entry_date, conn):
 # ============================================================
 def _summarize_entry(description, entry_date, lines, entry_id,
                      total_debit, total_credit):
-    """تجهيز dict ملخص القيد لسجل التدقيق"""
     accounts_used = []
     for line in lines:
         acc = line.get("account") or line.get("account_id")
@@ -113,7 +119,6 @@ def _summarize_entry(description, entry_date, lines, entry_id,
 # ✅ دالة مساعدة: جلب لقطة كاملة للقيد
 # ============================================================
 def _snapshot_entry(entry_id, conn):
-    """جلب بيانات قيد كامل (لحفظها في old_value عند الحذف/التعديل)"""
     try:
         entry = conn.execute(
             "SELECT id, date, description, reference FROM journal_entries WHERE id = ?",
@@ -142,15 +147,9 @@ def _snapshot_entry(entry_id, conn):
 def save_journal_entry(description, lines, entry_date=None,
                        cost_center_allocations=None, conn=None,
                        skip_period_check=False, created_by=None):
-    """
-    حفظ قيد يومية جديد.
-    ✅ v4.2: يسجّل القيد في سجل التدقيق تلقائياً.
-    ✅ v4.2: يقرأ اسم المستخدم من session_state إذا لم يُمرَّر.
-    """
     if entry_date is None:
         entry_date = date.today().strftime("%Y-%m-%d")
 
-    # ✅ قراءة تلقائية للمستخدم
     if created_by is None:
         created_by = _get_current_user()
 
@@ -191,12 +190,10 @@ def save_journal_entry(description, lines, entry_date=None,
                     c.execute("ROLLBACK")
                 return None, "خطأ: سطر القيد يفتقد إلى معرف الحساب."
 
-            if isinstance(account_name, int) or (
-                isinstance(account_name, str) and account_name.isdigit()
-            ):
-                code = get_account_code(account_name, c)
-                if code:
-                    account_name = code
+            # ✅ التعديل: نمرر أي حساب (نصي أو رقمي) للدالة للتحقق منه
+            code = get_account_code(account_name, c)
+            if code:
+                account_name = code
 
             currency_code = line.get("currency_code", base_code)
             debit = float(line.get("debit", 0.0) or 0.0)
@@ -238,7 +235,6 @@ def save_journal_entry(description, lines, entry_date=None,
             )
             line_ids.append(cur_line.lastrowid)
 
-        # ✅ فحص التوازن
         if round(abs(total_debit_base - total_credit_base), 2) > 0.01:
             if owns:
                 c.execute("ROLLBACK")
@@ -248,7 +244,6 @@ def save_journal_entry(description, lines, entry_date=None,
                 f"الدائن الأساسي: {total_credit_base:,.2f}"
             )
 
-        # ✅ توزيعات مراكز التكلفة
         if cost_center_allocations:
             for alloc_entry in cost_center_allocations:
                 line_index = alloc_entry.get('line_index', 0)
@@ -260,9 +255,6 @@ def save_journal_entry(description, lines, entry_date=None,
                             journal_line_id, allocations
                         )
 
-        # ============================================================
-        # ✅ تسجيل القيد في سجل التدقيق
-        # ============================================================
         try:
             summary = _summarize_entry(
                 description=description,
@@ -305,15 +297,9 @@ def save_journal_entry(description, lines, entry_date=None,
 def update_journal_entry(entry_id, description, lines, entry_date=None,
                          cost_center_allocations=None, conn=None,
                          updated_by=None):
-    """
-    تحديث قيد موجود.
-    ✅ v4.2: يسجّل old_value + new_value في سجل التدقيق.
-    ✅ v4.2: يقرأ اسم المستخدم من session_state إذا لم يُمرَّر.
-    """
     if entry_date is None:
         entry_date = date.today().strftime("%Y-%m-%d")
 
-    # ✅ قراءة تلقائية للمستخدم
     if updated_by is None:
         updated_by = _get_current_user()
 
@@ -328,16 +314,13 @@ def update_journal_entry(entry_id, description, lines, entry_date=None,
         if owns:
             c.execute("BEGIN IMMEDIATE")
 
-        # ✅ 1. خذ لقطة للقيد القديم قبل التعديل
         old_snapshot = _snapshot_entry(entry_id, c)
 
-        # 2. تحديث رأس القيد
         c.execute(
             "UPDATE journal_entries SET date = ?, description = ? WHERE id = ?",
             (entry_date, description, entry_id)
         )
 
-        # 3. حذف السطور القديمة + توزيعاتها
         old_lines = c.execute(
             "SELECT id FROM journal_lines WHERE entry_id = ?", (entry_id,)
         ).fetchall()
@@ -348,7 +331,6 @@ def update_journal_entry(entry_id, description, lines, entry_date=None,
             )
         c.execute("DELETE FROM journal_lines WHERE entry_id = ?", (entry_id,))
 
-        # 4. إدخال السطور الجديدة
         line_ids = []
         total_debit_base = 0.0
         total_credit_base = 0.0
@@ -364,12 +346,10 @@ def update_journal_entry(entry_id, description, lines, entry_date=None,
                     c.execute("ROLLBACK")
                 return False, "خطأ: سطر القيد يفتقد إلى معرف الحساب."
 
-            if isinstance(account_name, int) or (
-                isinstance(account_name, str) and account_name.isdigit()
-            ):
-                code = get_account_code(account_name, c)
-                if code:
-                    account_name = code
+            # ✅ التعديل: نمرر أي حساب (نصي أو رقمي) للدالة للتحقق منه
+            code = get_account_code(account_name, c)
+            if code:
+                account_name = code
 
             currency_code = line.get("currency_code", base_code)
             debit = float(line.get("debit", 0.0) or 0.0)
@@ -411,7 +391,6 @@ def update_journal_entry(entry_id, description, lines, entry_date=None,
             )
             line_ids.append(cur_line.lastrowid)
 
-        # ✅ فحص التوازن
         if round(abs(total_debit_base - total_credit_base), 2) > 0.01:
             if owns:
                 c.execute("ROLLBACK")
@@ -421,7 +400,6 @@ def update_journal_entry(entry_id, description, lines, entry_date=None,
                 f"الدائن الأساسي: {total_credit_base:,.2f}"
             )
 
-        # ✅ توزيعات مراكز التكلفة
         if cost_center_allocations:
             for alloc_entry in cost_center_allocations:
                 line_index = alloc_entry.get('line_index', 0)
@@ -433,9 +411,6 @@ def update_journal_entry(entry_id, description, lines, entry_date=None,
                             journal_line_id, allocations
                         )
 
-        # ============================================================
-        # ✅ تسجيل التحديث في سجل التدقيق
-        # ============================================================
         try:
             new_summary = _summarize_entry(
                 description=description,
@@ -477,23 +452,15 @@ def update_journal_entry(entry_id, description, lines, entry_date=None,
 # ✅ حذف قيد محاسبي
 # ============================================================
 def delete_journal_entry(entry_id, conn=None, deleted_by=None):
-    """
-    حذف قيد محاسبي مع تسجيل كامل في سجل التدقيق.
-    ✅ v4.2: تسجيل كامل قبل الحذف (old_value).
-    ✅ v4.2: يقرأ اسم المستخدم من session_state إذا لم يُمرَّر.
-    """
-    # ✅ قراءة تلقائية للمستخدم
     if deleted_by is None:
         deleted_by = _get_current_user()
 
     c, owns = _resolve_conn(conn)
     try:
-        # 1. جلب لقطة القيد قبل الحذف
         old_snapshot = _snapshot_entry(entry_id, c)
         if not old_snapshot:
             return False, "القيد غير موجود."
 
-        # 2. فحص الفترة المغلقة
         entry_date = old_snapshot.get("date")
         if entry_date and _safe_is_period_closed(entry_date, c):
             return False, (
@@ -504,7 +471,6 @@ def delete_journal_entry(entry_id, conn=None, deleted_by=None):
         if owns:
             c.execute("BEGIN IMMEDIATE")
 
-        # 3. حذف توزيعات مراكز التكلفة
         try:
             c.execute(
                 "DELETE FROM cost_center_allocations "
@@ -515,13 +481,9 @@ def delete_journal_entry(entry_id, conn=None, deleted_by=None):
         except Exception:
             pass
 
-        # 4. حذف السطور ثم القيد
         c.execute("DELETE FROM journal_lines WHERE entry_id = ?", (entry_id,))
         c.execute("DELETE FROM journal_entries WHERE id = ?", (entry_id,))
 
-        # ============================================================
-        # ✅ تسجيل الحذف في سجل التدقيق
-        # ============================================================
         try:
             log_action(
                 username=deleted_by,
