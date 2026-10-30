@@ -1,5 +1,5 @@
-# ui/accounting_ui.py – واجهة الحسابات (v2.0)
-# ✅ v2.0: استخدام get_connection + فلترة الحسابات النظامية من القوائم
+# ui/accounting_ui.py – واجهة الحسابات (v2.1)
+# ✅ v2.1: جلب جميع الحسابات النشطة بدون أي فلاتر + تمييز النظامية بصرياً
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -31,12 +31,11 @@ ACCENT_PURPLE = "#8B5CF6"
 
 
 # ============================================================
-# ✅ v2.0: دوال مساعدة — استخدام get_connection + دعم النظامية
+# ✅ دوال مساعدة
 # ============================================================
 def get_account_display_name(code):
     """
     تحويل كود الحساب إلى اسمه الكامل من شجرة الحسابات.
-    ✅ يعرض حتى الحسابات النظامية (لأنها قد تظهر في القيود).
     """
     if not code:
         return ""
@@ -55,22 +54,24 @@ def get_account_display_name(code):
         close_connection(conn)
 
 
-def get_accounts_list(include_system=False):
+def get_accounts_list():
     """
-    جلب جميع الحسابات **العادية** من شجرة الحسابات.
-    ✅ v2.0: يُخفي الحسابات النظامية افتراضياً.
-    ✅ يُخفي الحسابات الفرعية (1101.01) افتراضياً.
+    ✅ v2.1: جلب *جميع* الحسابات النشطة بدون أي استثناء.
+    نضع علامة (🔒 نظامي) للحسابات النظامية لكي يميزها المحاسب بصرياً.
     """
     conn = get_connection()
     try:
-        query = "SELECT code, name, is_system FROM accounts WHERE is_active = 1"
-        if not include_system:
-            query += " AND (is_system IS NULL OR is_system = 0)"
-            query += " AND code NOT LIKE '%.%'"
-        query += " ORDER BY code"
-
+        # الاستعلام الأبسط: اجلب كل الحسابات النشطة
+        query = "SELECT code, name, is_system FROM accounts WHERE is_active = 1 ORDER BY code"
         accounts = conn.execute(query).fetchall()
-        return [f"{a['code']} - {a['name']}" for a in accounts]
+        
+        result = []
+        for a in accounts:
+            # إضافة علامة للنظامي فقط لتوضيح أنه حساب مرتبط بوحدة أخرى
+            prefix = "🔒 [نظامي] " if a['is_system'] == 1 else ""
+            result.append(f"{prefix}{a['code']} - {a['name']}")
+            
+        return result
     finally:
         close_connection(conn)
 
@@ -170,7 +171,11 @@ def show():
                         currency_code = "YER"
 
                     if account:
-                        code = account.split(" - ")[-1]
+                        # ✅ إصلاح استخراج الكود:
+                        # إزالة العلامة (إن وجدت) ثم أخذ الجزء الأول قبل الشرطة
+                        clean_acc = account.replace("🔒 [نظامي] ", "").strip()
+                        code = clean_acc.split(" - ")[0].strip()
+
                         lines.append({
                             "account": code,
                             "debit": debit,
