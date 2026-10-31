@@ -1,13 +1,10 @@
-# ui/dashboard_ui.py
-# لوحة معلومات حوكمة ERP – تصميم تنفيذي زجاجي احترافي
+import html
+from datetime import datetime
 
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-
-from datetime import datetime
-from html import escape
 
 from services.dashboard_service import (
     get_kpi_cards,
@@ -18,727 +15,1210 @@ from services.dashboard_service import (
     get_top_products,
     get_low_stock_products,
     get_recent_invoices,
-    get_recent_activities
+    get_recent_activities,
 )
 
-# ============================================================
-# ألوان النظام
-# ============================================================
-TEXT_PRIMARY = "#F8FAFC"
-TEXT_SECONDARY = "#94A3B8"
-TEXT_MUTED = "#64748B"
+
+# =========================================================
+# الألوان والثوابت
+# =========================================================
+
+TEXT_PRIMARY = "#F1F5F9"
+TEXT_SECONDARY = "#CBD5E1"
+TEXT_MUTED = "#94A3B8"
 
 PR = "#8B5CF6"
 BL = "#3B82F6"
 GN = "#10B981"
 RD = "#EF4444"
 OR = "#F59E0B"
-CY = "#06B6D4"
 
-# ============================================================
-# أدوات مساعدة آمنة
-# ============================================================
-def safe_number(value, default=0):
-    try:
-        if value is None:
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
+BG_MAIN = "#0B1120"
+BG_CARD = "rgba(15, 23, 42, 0.78)"
+BORDER_COLOR = "rgba(148, 163, 184, 0.13)"
 
-def format_number(value):
-    return f"{safe_number(value):,.0f}"
 
-def safe_text(value, default=""):
+# =========================================================
+# أدوات مساعدة
+# =========================================================
+
+def safe_text(value, default="—"):
+    """تحويل القيم إلى نص آمن للعرض داخل HTML."""
     if value is None:
         return default
-    return escape(str(value))
 
-def get_value(data, *keys, default=0):
-    if not isinstance(data, dict):
+    value = str(value).strip()
+
+    if not value or value.lower() in ("none", "nan"):
         return default
-    for key in keys:
-        if key in data and data[key] is not None:
-            return data[key]
-    return default
 
-# ============================================================
-# نظام التصميم
-# ============================================================
+    return html.escape(value)
+
+
+def get_value(item, key, default=None):
+    """قراءة قيمة من قاموس أو كائن يدعم الوصول بالمفاتيح."""
+    if item is None:
+        return default
+
+    if isinstance(item, dict):
+        return item.get(key, default)
+
+    try:
+        return item[key]
+    except (KeyError, TypeError, IndexError):
+        return getattr(item, key, default)
+
+
+def format_number(value, decimals=0):
+    """تنسيق الأرقام مع معالجة القيم غير الصالحة."""
+    try:
+        if value is None:
+            number = 0
+        else:
+            number = float(value)
+
+        if pd.isna(number):
+            number = 0
+
+        if decimals:
+            return f"{number:,.{decimals}f}"
+
+        return f"{number:,.0f}"
+
+    except (ValueError, TypeError):
+        return "0"
+
+
+def safe_float(value, default=0):
+    try:
+        number = float(value)
+
+        if pd.isna(number):
+            return default
+
+        return number
+
+    except (ValueError, TypeError):
+        return default
+
+
+def section_heading(title, subtitle=""):
+    """عنوان موحد للأقسام."""
+    safe_title = safe_text(title)
+    safe_subtitle = safe_text(subtitle, "")
+
+    st.markdown(
+        f"""
+        <div class="section-heading">
+            <div class="section-title">{safe_title}</div>
+            <div class="section-subtitle">{safe_subtitle}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+# =========================================================
+# CSS - التصميم العام
+# =========================================================
+
 def inject_executive_css():
-    st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&display=swap');
+    st.markdown(
+        """
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&display=swap');
 
-    :root {
-        --primary: #8B5CF6;
-        --blue: #3B82F6;
-        --green: #10B981;
-        --red: #EF4444;
-        --orange: #F59E0B;
-        --cyan: #06B6D4;
-    }
-
-    .main, .main p, .main span, .main div, .main h1, .main h2, .main h3, .main h4 {
-        font-family: 'Cairo', sans-serif;
-    }
-
-    @keyframes dashboardFade {
-        from { opacity: 0; transform: translateY(12px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-
-    @keyframes pulseGlow {
-        0%, 100% { opacity: 0.65; transform: scale(1); }
-        50% { opacity: 1; transform: scale(1.15); }
-    }
-
-    .dashboard-section {
-        animation: dashboardFade 0.45s ease-out;
-    }
-
-    .section-heading {
-        color: #F8FAFC;
-        font-size: 1.35rem;
-        font-weight: 800;
-        margin: 28px 0 18px 0;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-
-    .section-subtitle {
-        color: #94A3B8;
-        font-size: 0.85rem;
-        margin-top: -12px;
-        margin-bottom: 20px;
-    }
-
-    .luxury-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-        gap: 17px;
-        margin-bottom: 24px;
-        width: 100%;
-    }
-
-    .luxury-card {
-        background: linear-gradient(135deg, rgba(30, 41, 59, 0.68), rgba(15, 23, 42, 0.78));
-        border: 1px solid rgba(255,255,255,0.075);
-        border-top: 1px solid rgba(255,255,255,0.15);
-        border-radius: 20px;
-        padding: 23px 21px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        min-height: 115px;
-        position: relative;
-        overflow: hidden;
-        box-shadow: 0 12px 30px rgba(0,0,0,0.20), inset 0 1px 0 rgba(255,255,255,0.025);
-        transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
-    }
-
-    .luxury-card::before {
-        content: "";
-        position: absolute;
-        top: 0;
-        right: 0;
-        width: 100%;
-        height: 100%;
-        background: radial-gradient(circle at top right, rgba(255,255,255,0.055), transparent 65%);
-        pointer-events: none;
-    }
-
-    .luxury-card:hover {
-        transform: translateY(-4px);
-        border-color: rgba(167,139,250,0.35);
-        box-shadow: 0 18px 38px rgba(0,0,0,0.30), 0 0 18px rgba(139,92,246,0.06);
-    }
-
-    .card-content {
-        flex: 1;
-        min-width: 0;
-        position: relative;
-        z-index: 2;
-    }
-
-    .card-title {
-        color: #94A3B8;
-        font-size: 0.88rem;
-        font-weight: 600;
-        margin-bottom: 8px;
-    }
-
-    .card-value {
-        color: #F8FAFC;
-        font-size: 1.75rem;
-        font-weight: 900;
-        line-height: 1.3;
-        overflow-wrap: anywhere;
-    }
-
-    .card-delta {
-        margin-top: 7px;
-        font-size: 0.78rem;
-        font-weight: 700;
-    }
-
-    .card-icon {
-        width: 55px;
-        height: 55px;
-        min-width: 55px;
-        border-radius: 17px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 1.7rem;
-        background: rgba(255,255,255,0.045);
-        border: 1px solid rgba(255,255,255,0.07);
-        margin-right: 13px;
-        position: relative;
-        z-index: 2;
-    }
-
-    .dashboard-header {
-        background: linear-gradient(120deg, rgba(76,29,149,0.30), rgba(30,41,59,0.78), rgba(15,23,42,0.90));
-        border: 1px solid rgba(255,255,255,0.10);
-        border-top: 1px solid rgba(255,255,255,0.18);
-        border-radius: 26px;
-        padding: 30px 34px;
-        margin-bottom: 28px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 20px;
-        flex-wrap: wrap;
-        box-shadow: 0 22px 50px rgba(0,0,0,0.25);
-        animation: dashboardFade 0.5s ease-out;
-    }
-
-    .header-label {
-        color: #A78BFA;
-        font-size: 0.82rem;
-        font-weight: 800;
-        letter-spacing: 1.5px;
-        margin-bottom: 7px;
-    }
-
-    .header-title {
-        color: #FFFFFF;
-        font-size: 2.15rem;
-        font-weight: 900;
-        margin: 0;
-        line-height: 1.5;
-    }
-
-    .header-description {
-        color: #94A3B8;
-        font-size: 0.93rem;
-        margin-top: 8px;
-    }
-
-    .header-icon {
-        width: 82px;
-        height: 82px;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        border-radius: 23px;
-        font-size: 2.7rem;
-        background: rgba(255,255,255,0.045);
-        border: 1px solid rgba(255,255,255,0.08);
-    }
-
-    .alert-card {
-        display: flex;
-        align-items: flex-start;
-        gap: 12px;
-        padding: 15px 18px;
-        margin-bottom: 12px;
-        border-radius: 14px;
-        background: rgba(245,158,11,0.065);
-        border: 1px solid rgba(245,158,11,0.18);
-        border-right: 4px solid #F59E0B;
-        color: #F8FAFC;
-    }
-
-    .alert-title {
-        font-weight: 800;
-        color: #FCD34D;
-        margin-bottom: 3px;
-    }
-
-    .alert-message {
-        color: #CBD5E1;
-        font-size: 0.9rem;
-    }
-
-    .list-card {
-        background: rgba(30,41,59,0.45);
-        border: 1px solid rgba(255,255,255,0.07);
-        border-radius: 15px;
-        padding: 14px 16px;
-        margin-bottom: 10px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        transition: 0.2s ease;
-    }
-
-    .list-card:hover {
-        border-color: rgba(139,92,246,0.30);
-        background: rgba(30,41,59,0.68);
-    }
-
-    .list-name {
-        color: #F8FAFC;
-        font-weight: 600;
-        font-size: 0.9rem;
-        overflow-wrap: anywhere;
-    }
-
-    .list-value {
-        color: #FCA5A5;
-        background: rgba(239,68,68,0.13);
-        padding: 5px 11px;
-        border-radius: 8px;
-        font-weight: 800;
-        font-size: 0.78rem;
-        white-space: nowrap;
-    }
-
-    .activity-card {
-        background: rgba(30,41,59,0.40);
-        border: 1px solid rgba(255,255,255,0.06);
-        border-radius: 14px;
-        padding: 13px 15px;
-        margin-bottom: 9px;
-        display: flex;
-        align-items: center;
-        gap: 12px;
-    }
-
-    .activity-dot {
-        width: 9px;
-        height: 9px;
-        min-width: 9px;
-        border-radius: 50%;
-        animation: pulseGlow 2s infinite;
-    }
-
-    .activity-text {
-        color: #E2E8F0;
-        font-size: 0.88rem;
-        font-weight: 500;
-        overflow-wrap: anywhere;
-    }
-
-    .activity-time {
-        color: #94A3B8;
-        font-size: 0.75rem;
-        white-space: nowrap;
-    }
-
-    .empty-state {
-        background: rgba(255,255,255,0.018);
-        border: 1px dashed rgba(255,255,255,0.12);
-        border-radius: 18px;
-        padding: 25px 15px;
-        text-align: center;
-        color: #94A3B8;
-        font-size: 0.9rem;
-    }
-
-    .success-state {
-        background: rgba(16,185,129,0.045);
-        border: 1px dashed rgba(16,185,129,0.25);
-        border-radius: 18px;
-        padding: 24px;
-        text-align: center;
-        color: #6EE7B7;
-        font-weight: 700;
-    }
-
-    @media (max-width: 768px) {
-        .luxury-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 11px;
+        :root {
+            --dashboard-bg: #0B1120;
+            --dashboard-card: rgba(15, 23, 42, 0.78);
+            --dashboard-border: rgba(148, 163, 184, 0.13);
+            --dashboard-text: #F1F5F9;
+            --dashboard-muted: #94A3B8;
         }
-        .luxury-card {
-            padding: 15px 12px;
-            min-height: 100px;
+
+        html, body, [class*="css"] {
+            font-family: 'Cairo', sans-serif !important;
         }
-        .card-value {
-            font-size: 1.25rem;
+
+        .stApp {
+            background:
+                radial-gradient(
+                    circle at 90% 0%,
+                    rgba(59, 130, 246, 0.09),
+                    transparent 30%
+                ),
+                radial-gradient(
+                    circle at 0% 30%,
+                    rgba(139, 92, 246, 0.08),
+                    transparent 28%
+                ),
+                #0B1120;
+            color: var(--dashboard-text);
         }
-        .card-title {
-            font-size: 0.75rem;
+
+        [data-testid="stHeader"] {
+            background: transparent;
         }
-        .card-icon {
-            width: 40px;
-            height: 40px;
-            min-width: 40px;
-            font-size: 1.3rem;
-            margin-right: 8px;
+
+        [data-testid="stMain"] {
+            background: transparent;
         }
-        .header-title {
-            font-size: 1.55rem;
+
+        .block-container {
+            max-width: 1500px;
+            padding-top: 1.8rem;
+            padding-bottom: 3rem;
         }
+
         .dashboard-header {
-            padding: 23px 19px;
+            position: relative;
+            overflow: hidden;
+            padding: 27px 30px;
+            margin-bottom: 25px;
+            border: 1px solid var(--dashboard-border);
+            border-radius: 22px;
+            background:
+                linear-gradient(
+                    115deg,
+                    rgba(30, 41, 59, 0.96),
+                    rgba(15, 23, 42, 0.92)
+                );
+            box-shadow: 0 18px 45px rgba(0, 0, 0, 0.18);
         }
-        .header-icon {
-            width: 60px;
-            height: 60px;
-            font-size: 2rem;
-        }
-    }
 
-    @media (prefers-reduced-motion: reduce) {
-        .dashboard-section, .activity-dot {
-            animation: none !important;
+        .dashboard-header::after {
+            content: "";
+            position: absolute;
+            width: 230px;
+            height: 230px;
+            left: -80px;
+            top: -130px;
+            border-radius: 50%;
+            background: rgba(139, 92, 246, 0.13);
+            filter: blur(8px);
+            pointer-events: none;
         }
+
+        .dashboard-title {
+            color: #F8FAFC;
+            font-size: 1.75rem;
+            font-weight: 900;
+            margin: 0;
+            line-height: 1.6;
+        }
+
+        .dashboard-subtitle {
+            color: #A5B4C8;
+            font-size: 0.91rem;
+            margin-top: 5px;
+        }
+
+        .dashboard-welcome {
+            color: #C4B5FD;
+            font-size: 0.9rem;
+            font-weight: 700;
+            margin-bottom: 5px;
+        }
+
+        .section-heading {
+            margin: 28px 0 15px 0;
+            padding-right: 12px;
+            border-right: 3px solid #8B5CF6;
+        }
+
+        .section-title {
+            color: #F1F5F9;
+            font-size: 1.08rem;
+            font-weight: 900;
+        }
+
+        .section-subtitle {
+            color: #94A3B8;
+            font-size: 0.78rem;
+            margin-top: 3px;
+        }
+
         .luxury-card {
-            transition: none !important;
+            position: relative;
+            overflow: hidden;
+            min-height: 135px;
+            padding: 17px 18px;
+            border-radius: 17px;
+            border: 1px solid var(--dashboard-border);
+            background: var(--dashboard-card);
+            box-shadow: 0 10px 28px rgba(0, 0, 0, 0.13);
+            transition:
+                transform 0.22s ease,
+                border-color 0.22s ease,
+                box-shadow 0.22s ease;
+            direction: rtl;
+            text-align: right;
         }
-    }
-    </style>
-    """, unsafe_allow_html=True)
 
-def make_premium_card(title, value, icon, accent_color, delta=""):
-    delta_html = ""
-    if delta:
-        delta_color = TEXT_SECONDARY
-        if "↑" in delta:
-            delta_color = GN
-        elif "↓" in delta:
-            delta_color = RD
-        delta_html = f'<div class="card-delta" style="color:{delta_color};">{safe_text(delta)}</div>'
+        .luxury-card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(148, 163, 184, 0.30);
+            box-shadow: 0 17px 35px rgba(0, 0, 0, 0.22);
+        }
 
-    return f"""
-    <div class="luxury-card">
-        <div class="card-content">
-            <div class="card-title">{safe_text(title)}</div>
-            <div class="card-value">{safe_text(value)}</div>
-            {delta_html}
+        .luxury-card::after {
+            content: "";
+            position: absolute;
+            width: 95px;
+            height: 95px;
+            left: -35px;
+            bottom: -48px;
+            border-radius: 50%;
+            background: var(--card-accent);
+            opacity: 0.10;
+            filter: blur(4px);
+            pointer-events: none;
+        }
+
+        .card-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .card-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 39px;
+            height: 39px;
+            border-radius: 12px;
+            background: var(--icon-bg);
+            font-size: 1.2rem;
+            flex-shrink: 0;
+        }
+
+        .card-label {
+            color: #A8B5C8;
+            font-size: 0.79rem;
+            font-weight: 600;
+        }
+
+        .card-value {
+            color: #F8FAFC;
+            font-size: 1.45rem;
+            font-weight: 900;
+            margin-top: 13px;
+            line-height: 1.5;
+            overflow-wrap: anywhere;
+        }
+
+        .card-delta {
+            color: #94A3B8;
+            font-size: 0.70rem;
+            margin-top: 4px;
+        }
+
+        .list-card {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 13px 15px;
+            margin-bottom: 9px;
+            border: 1px solid rgba(148, 163, 184, 0.12);
+            border-radius: 13px;
+            background: rgba(15, 23, 42, 0.68);
+            direction: rtl;
+            text-align: right;
+            transition: background 0.2s ease, border-color 0.2s ease;
+        }
+
+        .list-card:hover {
+            background: rgba(30, 41, 59, 0.82);
+            border-color: rgba(148, 163, 184, 0.25);
+        }
+
+        .list-name {
+            color: #E2E8F0;
+            font-size: 0.86rem;
+            font-weight: 800;
+            overflow-wrap: anywhere;
+        }
+
+        .list-description {
+            color: #94A3B8;
+            font-size: 0.75rem;
+            margin-top: 4px;
+            line-height: 1.7;
+        }
+
+        .list-value {
+            color: #93C5FD;
+            background: rgba(59, 130, 246, 0.11);
+            padding: 6px 10px;
+            border-radius: 8px;
+            font-size: 0.82rem;
+            font-weight: 800;
+            white-space: nowrap;
+        }
+
+        .empty-state {
+            padding: 24px 15px;
+            border: 1px dashed rgba(148, 163, 184, 0.23);
+            border-radius: 14px;
+            color: #94A3B8;
+            background: rgba(15, 23, 42, 0.45);
+            text-align: center;
+            font-size: 0.85rem;
+        }
+
+        .alert-card {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 14px 15px;
+            margin-bottom: 10px;
+            border: 1px solid rgba(245, 158, 11, 0.18);
+            border-radius: 13px;
+            background: rgba(245, 158, 11, 0.055);
+            direction: rtl;
+            text-align: right;
+        }
+
+        .alert-icon {
+            font-size: 1.25rem;
+            flex-shrink: 0;
+        }
+
+        .alert-title {
+            color: #FDE68A;
+            font-size: 0.84rem;
+            font-weight: 800;
+        }
+
+        .alert-message {
+            color: #CBD5E1;
+            font-size: 0.76rem;
+            margin-top: 4px;
+            line-height: 1.7;
+        }
+
+        .activity-time {
+            color: #64748B;
+            font-size: 0.70rem;
+            white-space: nowrap;
+        }
+
+        .invoice-type {
+            font-size: 0.72rem;
+            font-weight: 700;
+            margin-right: 5px;
+        }
+
+        .dashboard-footer {
+            color: #64748B;
+            text-align: center;
+            font-size: 0.72rem;
+            padding: 22px 0 5px;
+        }
+
+        [data-testid="stPlotlyChart"] {
+            border: 1px solid rgba(148, 163, 184, 0.11);
+            border-radius: 15px;
+            background: rgba(15, 23, 42, 0.42);
+            padding: 7px;
+        }
+
+        @media (max-width: 768px) {
+            .block-container {
+                padding-left: 1rem;
+                padding-right: 1rem;
+            }
+
+            .dashboard-header {
+                padding: 20px;
+            }
+
+            .dashboard-title {
+                font-size: 1.35rem;
+            }
+
+            .card-value {
+                font-size: 1.2rem;
+            }
+
+            .luxury-card {
+                min-height: 120px;
+                padding: 14px;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+# =========================================================
+# البطاقات
+# =========================================================
+
+def make_premium_card(
+    title,
+    value,
+    icon,
+    accent_shadow_color,
+    delta=""
+):
+    safe_title = safe_text(title)
+    safe_value = safe_text(value, "0")
+    safe_icon = safe_text(icon, "📊")
+    safe_delta = safe_text(delta, "")
+
+    st.markdown(
+        f"""
+        <div class="luxury-card"
+             style="
+                --card-accent:{accent_shadow_color};
+                --icon-bg:{accent_shadow_color}1C;
+             ">
+            <div class="card-top">
+                <div class="card-label">{safe_title}</div>
+                <div class="card-icon">{safe_icon}</div>
+            </div>
+
+            <div class="card-value">{safe_value}</div>
+            <div class="card-delta">{safe_delta}</div>
         </div>
-        <div class="card-icon" style="color:{accent_color}; box-shadow:0 0 20px {accent_color}12;">
-            {icon}
+        """,
+        unsafe_allow_html=True
+    )
+
+
+# =========================================================
+# رأس لوحة التحكم
+# =========================================================
+
+def render_dashboard_header(user_name=""):
+    name = safe_text(user_name, "المستخدم")
+
+    st.markdown(
+        f"""
+        <div class="dashboard-header">
+            <div class="dashboard-welcome">
+                مرحباً بك، {name} 👋
+            </div>
+
+            <div class="dashboard-title">
+                لوحة التحكم الرئيسية
+            </div>
+
+            <div class="dashboard-subtitle">
+                نظرة شاملة على أداء النظام والمبيعات والمخزون
+            </div>
         </div>
-    </div>
-    """
+        """,
+        unsafe_allow_html=True
+    )
 
-def section_heading(title, subtitle=None):
-    st.markdown(f'<div class="section-heading">{title}</div>', unsafe_allow_html=True)
-    if subtitle:
-        st.markdown(f'<div class="section-subtitle">{safe_text(subtitle)}</div>', unsafe_allow_html=True)
 
-# ============================================================
-# دوال العرض
-# ============================================================
+# =========================================================
+# الإحصائيات السريعة
+# =========================================================
+
+def render_quick_stats(stats):
+    stats = stats or {}
+
+    section_heading(
+        "⚡ نظرة سريعة",
+        "ملخص أهم المؤشرات اليومية"
+    )
+
+    cards = [
+        (
+            "مبيعات اليوم",
+            format_number(stats.get("today_sales", 0)),
+            "💰",
+            GN,
+            "إجمالي مبيعات اليوم"
+        ),
+        (
+            "مشتريات اليوم",
+            format_number(stats.get("today_purchases", 0)),
+            "🛒",
+            BL,
+            "إجمالي مشتريات اليوم"
+        ),
+        (
+            "منتجات منخفضة المخزون",
+            format_number(stats.get("low_stock", 0)),
+            "📦",
+            OR,
+            "تحتاج إلى متابعة"
+        ),
+        (
+            "إجمالي العملاء",
+            format_number(stats.get("total_customers", 0)),
+            "👥",
+            PR,
+            "عدد العملاء المسجلين"
+        ),
+    ]
+
+    columns = st.columns(4)
+
+    for column, card in zip(columns, cards):
+        with column:
+            make_premium_card(*card)
+
+
+# =========================================================
+# التنبيهات
+# =========================================================
+
 def render_alerts(alerts):
-    if not alerts: return
-    section_heading("🔔 التنبيهات الذكية", "الملاحظات التي تحتاج إلى متابعة")
-    for alert in alerts:
-        if not isinstance(alert, dict): continue
-        icon = safe_text(alert.get("icon", "⚠️"))
-        title = safe_text(alert.get("title", "تنبيه"))
-        message = safe_text(alert.get("message", ""))
-        
-        st.markdown(f"""
+    if not alerts:
+        return
+
+    section_heading(
+        "🔔 التنبيهات",
+        "أهم الملاحظات التي تحتاج إلى انتباهك"
+    )
+
+    for item in alerts:
+        icon = safe_text(get_value(item, "icon", "🔔"))
+        title = safe_text(get_value(item, "title", "تنبيه"))
+        message = safe_text(get_value(item, "message", ""))
+
+        st.markdown(
+            f"""
             <div class="alert-card">
-                <div style="font-size:1.35rem;">{icon}</div>
+                <div class="alert-icon">{icon}</div>
                 <div>
                     <div class="alert-title">{title}</div>
                     <div class="alert-message">{message}</div>
                 </div>
             </div>
-            """, unsafe_allow_html=True)
+            """,
+            unsafe_allow_html=True
+        )
 
-def render_sales_chart():
-    section_heading("📈 الأداء المالي", "اتجاه المبيعات الشهرية")
-    sales_data = get_monthly_sales()
-    
-    if not sales_data:
-        st.markdown('<div class="empty-state">لا توجد سجلات مالية متوفرة حالياً</div>', unsafe_allow_html=True)
+
+# =========================================================
+# مؤشرات الأداء الرئيسية
+# =========================================================
+
+def render_kpi_cards(kpis):
+    kpis = kpis or {}
+
+    section_heading(
+        "📊 مؤشرات الأداء",
+        "ملخص الأداء المالي والتشغيلي"
+    )
+
+    cards = [
+        (
+            "إجمالي المبيعات",
+            format_number(kpis.get("total_sales", 0)),
+            "💰",
+            GN,
+            "إجمالي قيمة المبيعات"
+        ),
+        (
+            "إجمالي المشتريات",
+            format_number(kpis.get("total_purchases", 0)),
+            "🛍️",
+            BL,
+            "إجمالي قيمة المشتريات"
+        ),
+        (
+            "صافي الدخل",
+            format_number(kpis.get("net_income", 0)),
+            "📈",
+            PR,
+            "صافي الدخل المسجل"
+        ),
+        (
+            "عدد المنتجات",
+            format_number(kpis.get("products_count", 0)),
+            "📦",
+            OR,
+            "المنتجات المسجلة"
+        ),
+        (
+            "عدد العملاء",
+            format_number(kpis.get("customers_count", 0)),
+            "👥",
+            "#06B6D4",
+            "العملاء المسجلون"
+        ),
+    ]
+
+    columns = st.columns(5)
+
+    for column, card in zip(columns, cards):
+        with column:
+            make_premium_card(*card)
+
+
+# =========================================================
+# إعدادات الرسوم البيانية
+# =========================================================
+
+def apply_chart_theme(fig, height=330):
+    fig.update_layout(
+        height=height,
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(
+            family="Cairo",
+            color="#CBD5E1",
+            size=12
+        ),
+        margin=dict(
+            l=15,
+            r=15,
+            t=35,
+            b=15
+        ),
+        hoverlabel=dict(
+            bgcolor="#1E293B",
+            font=dict(
+                family="Cairo",
+                color="#F8FAFC"
+            ),
+            bordercolor="#475569"
+        ),
+        legend=dict(
+            font=dict(color="#CBD5E1"),
+            bgcolor="rgba(0,0,0,0)"
+        )
+    )
+
+    fig.update_xaxes(
+        showgrid=False,
+        zeroline=False,
+        color="#94A3B8",
+        linecolor="rgba(148,163,184,0.15)"
+    )
+
+    fig.update_yaxes(
+        showgrid=True,
+        gridcolor="rgba(148,163,184,0.10)",
+        zeroline=False,
+        color="#94A3B8"
+    )
+
+    return fig
+
+
+# =========================================================
+# مخطط المبيعات الشهرية
+# =========================================================
+
+def render_monthly_sales():
+    section_heading(
+        "📈 حركة المبيعات",
+        "تحليل المبيعات حسب الأشهر"
+    )
+
+    try:
+        data = get_monthly_sales()
+    except Exception:
+        data = []
+
+    if data is None:
+        data = []
+
+    df = pd.DataFrame(data)
+
+    if df.empty or not {"month", "total"}.issubset(df.columns):
+        st.markdown(
+            '<div class="empty-state">لا توجد بيانات مبيعات كافية لعرض المخطط</div>',
+            unsafe_allow_html=True
+        )
         return
 
-    df_sales = pd.DataFrame(sales_data)
-    if not {"month", "total"}.issubset(df_sales.columns):
-        st.warning("بيانات المبيعات لا تحتوي على الحقول المطلوبة.")
-        return
+    df["total"] = pd.to_numeric(df["total"], errors="coerce").fillna(0)
+    df["month"] = df["month"].fillna("غير محدد").astype(str)
 
-    df_sales["total"] = pd.to_numeric(df_sales["total"], errors="coerce").fillna(0)
-    df_sales = df_sales.sort_values("month")
+    df = df.sort_values("month")
+
+    df["average"] = df["total"].rolling(
+        window=2,
+        min_periods=1
+    ).mean()
 
     fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=df_sales["month"], y=df_sales["total"], name="المبيعات",
-        marker=dict(color=df_sales["total"], colorscale=[[0, "#3B82F6"], [1, "#8B5CF6"]], line=dict(width=0)),
-        hovertemplate="%{y:,.0f} ر.ي<extra></extra>"
-    ))
 
-    if len(df_sales) >= 2:
-        rolling = df_sales["total"].rolling(window=2, min_periods=1).mean()
-        fig.add_trace(go.Scatter(
-            x=df_sales["month"], y=rolling, mode="lines", name="متوسط الاتجاه",
-            line=dict(color=OR, width=3, shape="spline"),
-            hovertemplate="%{y:,.0f} ر.ي<extra></extra>"
-        ))
+    fig.add_trace(
+        go.Bar(
+            x=df["month"],
+            y=df["total"],
+            name="المبيعات",
+            marker=dict(
+                color=df["total"],
+                colorscale=[
+                    [0, "#4338CA"],
+                    [0.5, "#6366F1"],
+                    [1, "#A78BFA"]
+                ],
+                line=dict(width=0)
+            ),
+            hovertemplate=(
+                "<b>%{x}</b><br>"
+                "المبيعات: %{y:,.0f} ر.ي"
+                "<extra></extra>"
+            )
+        )
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=df["month"],
+            y=df["average"],
+            name="متوسط متحرك",
+            mode="lines+markers",
+            line=dict(
+                color="#34D399",
+                width=2.5
+            ),
+            marker=dict(size=6),
+            hovertemplate=(
+                "<b>%{x}</b><br>"
+                "المتوسط: %{y:,.0f} ر.ي"
+                "<extra></extra>"
+            )
+        )
+    )
 
     fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color=TEXT_PRIMARY, family="Cairo"),
-        margin=dict(t=15, b=15, l=10, r=10), height=330, showlegend=False,
-        xaxis=dict(showgrid=False, color=TEXT_SECONDARY, title=None),
-        yaxis=dict(showgrid=True, gridcolor="rgba(255,255,255,0.07)", color=TEXT_SECONDARY, title=None),
-        hoverlabel=dict(bgcolor="#1E293B", font_color="#FFFFFF", font_family="Cairo")
+        barmode="group",
+        yaxis_title="القيمة بالريال اليمني",
+        xaxis_title="الشهر"
     )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "responsive": True})
+
+    apply_chart_theme(fig, height=350)
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        config={"displayModeBar": False}
+    )
+
+
+# =========================================================
+# توزيع المخزون حسب الفئة
+# =========================================================
 
 def render_inventory_chart():
-    section_heading("🎯 توزيع المخزون", "توزيع الكميات حسب التصنيف")
-    inv_data = get_inventory_by_category()
-    
-    if not inv_data:
-        st.markdown('<div class="empty-state">لا توجد بيانات مخزون لعرضها حالياً</div>', unsafe_allow_html=True)
+    section_heading(
+        "📦 توزيع المخزون",
+        "توزيع المنتجات حسب التصنيفات"
+    )
+
+    try:
+        data = get_inventory_by_category()
+    except Exception:
+        data = []
+
+    if data is None:
+        data = []
+
+    df = pd.DataFrame(data)
+
+    if df.empty or not {"category", "total"}.issubset(df.columns):
+        st.markdown(
+            '<div class="empty-state">لا توجد بيانات مخزون لعرضها</div>',
+            unsafe_allow_html=True
+        )
         return
 
-    df_inv = pd.DataFrame(inv_data)
-    if not {"category", "total"}.issubset(df_inv.columns):
-        st.warning("بيانات المخزون لا تحتوي على الحقول المطلوبة.")
-        return
+    df["total"] = pd.to_numeric(df["total"], errors="coerce").fillna(0)
+    df["category"] = df["category"].fillna("غير مصنف").astype(str)
 
-    df_inv["total"] = pd.to_numeric(df_inv["total"], errors="coerce").fillna(0)
-    df_inv = df_inv[df_inv["total"] > 0]
+    df = df[df["total"] > 0]
 
-    if df_inv.empty:
-        st.markdown('<div class="empty-state">لا توجد كميات متاحة للتصنيف حالياً</div>', unsafe_allow_html=True)
+    if df.empty:
+        st.markdown(
+            '<div class="empty-state">لا توجد كميات مخزون مسجلة حالياً</div>',
+            unsafe_allow_html=True
+        )
         return
 
     fig = px.pie(
-        df_inv, names="category", values="total", hole=0.68,
-        color_discrete_sequence=["#8B5CF6", "#3B82F6", "#06B6D4", "#10B981", "#F59E0B", "#EC4899"]
+        df,
+        names="category",
+        values="total",
+        hole=0.65,
+        color_discrete_sequence=[
+            "#8B5CF6",
+            "#3B82F6",
+            "#10B981",
+            "#F59E0B",
+            "#EC4899",
+            "#06B6D4",
+            "#F87171"
+        ]
     )
+
     fig.update_traces(
-        textinfo="percent", textfont=dict(color="#FFFFFF", size=12),
-        marker=dict(line=dict(color="#0F172A", width=3)),
-        hovertemplate="<b>%{label}</b><br>%{value:,.0f}<br>%{percent}<extra></extra>"
+        textposition="inside",
+        textinfo="percent",
+        marker=dict(
+            line=dict(
+                color="#0B1120",
+                width=3
+            )
+        ),
+        hovertemplate=(
+            "<b>%{label}</b><br>"
+            "الكمية: %{value:,.0f}<br>"
+            "النسبة: %{percent}"
+            "<extra></extra>"
+        )
     )
+
+    apply_chart_theme(fig, height=350)
+
     fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)", font=dict(color=TEXT_PRIMARY, family="Cairo"),
-        margin=dict(t=10, b=10, l=10, r=10), height=330,
-        legend=dict(font=dict(color=TEXT_SECONDARY, family="Cairo"), orientation="h", y=-0.13),
-        hoverlabel=dict(bgcolor="#1E293B", font_color="#FFFFFF", font_family="Cairo")
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=-0.18,
+            xanchor="center",
+            x=0.5
+        )
     )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "responsive": True})
 
-def render_low_stock():
-    section_heading("⚠️ رقابة المخزون", "الأصناف التي وصلت إلى حد إعادة الطلب")
-    low = get_low_stock_products()
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        config={"displayModeBar": False}
+    )
 
-    if not low:
-        st.markdown('<div class="success-state">🛡️ حالة المخزون مستقرة<br>جميع الأصناف ضمن مستويات المخزون الآمنة.</div>', unsafe_allow_html=True)
-        return
 
-    for item in low:
-        name = safe_text(item.get("name", "صنف غير معروف"))
-        quantity = format_number(item.get("quantity", 0))
-        reorder = format_number(item.get("reorder_level", 0))
-        
-        st.markdown(f"""
-            <div class="list-card">
-                <div class="list-name">📦 {name}</div>
-                <div class="list-value">المتبقي: {quantity} / {reorder}</div>
-            </div>
-            """, unsafe_allow_html=True)
+# =========================================================
+# المنتجات منخفضة المخزون
+# =========================================================
 
-def render_activities():
-    section_heading("🕐 آخر العمليات", "أحدث الأنشطة المسجلة في النظام")
-    activities = get_recent_activities()
+def render_low_stock_products():
+    section_heading(
+        "⚠️ المنتجات منخفضة المخزون",
+        "المنتجات التي وصلت إلى مستوى إعادة الطلب"
+    )
 
-    if not activities:
-        st.markdown('<div class="empty-state">لا توجد أنشطة مسجلة حتى الآن</div>', unsafe_allow_html=True)
-        return
-
-    for act in activities[:6]:
-        action = safe_text(act.get("action", "عملية"))
-        time_value = safe_text(act.get("time") or act.get("created_at") or act.get("timestamp") or "")
-
-        if "فاتورة" in action:
-            dot_color = PR
-        elif "قيد" in action:
-            dot_color = BL
-        else:
-            dot_color = OR
-
-        st.markdown(f"""
-            <div class="activity-card">
-                <span class="activity-dot" style="background:{dot_color}; box-shadow:0 0 10px {dot_color};"></span>
-                <div style="flex:1; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-                    <span class="activity-text">{action}</span>
-                    <span class="activity-time">{time_value}</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-def render_top_products():
-    section_heading("🏆 المنتجات الأكثر مبيعاً", "الأصناف الأعلى أداءً وفق بيانات المبيعات")
     try:
-        products = get_top_products()
+        products = get_low_stock_products()
     except Exception:
         products = []
 
     if not products:
-        st.markdown('<div class="empty-state">لا توجد بيانات كافية لعرض المنتجات الأكثر مبيعاً</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="empty-state">لا توجد منتجات منخفضة المخزون حالياً</div>',
+            unsafe_allow_html=True
+        )
         return
 
-    for index, item in enumerate(products[:5], start=1):
-        name = safe_text(get_value(item, "name", "product_name", "item_name", default="منتج"))
-        quantity = format_number(get_value(item, "quantity", "total_quantity", "sold_quantity", default=0))
-        
-        st.markdown(f"""
+    for item in products[:7]:
+        name = safe_text(get_value(item, "name", "منتج غير محدد"))
+
+        quantity = safe_float(
+            get_value(item, "quantity", 0)
+        )
+
+        reorder_level = safe_float(
+            get_value(item, "reorder_level", 0)
+        )
+
+        if reorder_level > 0:
+            ratio = min(quantity / reorder_level, 1)
+        else:
+            ratio = 0
+
+        if quantity <= 0:
+            status = "نفد المخزون"
+            color = RD
+        else:
+            status = "مخزون منخفض"
+            color = OR
+
+        st.markdown(
+            f"""
             <div class="list-card">
-                <div class="list-name"><span style="color:#A78BFA;font-weight:900;">{index}.</span> {name}</div>
-                <div style="color:#6EE7B7; background:rgba(16,185,129,0.10); padding:5px 11px; border-radius:8px; font-size:0.8rem; font-weight:800; white-space:nowrap;">
-                    المباع: {quantity}
+                <div style="flex:1;min-width:0;">
+                    <div class="list-name">{name}</div>
+                    <div class="list-description">
+                        حد إعادة الطلب: {format_number(reorder_level)}
+                    </div>
+                </div>
+
+                <div style="text-align:left;min-width:90px;">
+                    <div style="
+                        color:{color};
+                        font-size:0.78rem;
+                        font-weight:800;
+                    ">
+                        {status}
+                    </div>
+
+                    <div style="
+                        color:#E2E8F0;
+                        font-size:0.82rem;
+                        margin-top:4px;
+                    ">
+                        الكمية: {format_number(quantity)}
+                    </div>
                 </div>
             </div>
-            """, unsafe_allow_html=True)
+            """,
+            unsafe_allow_html=True
+        )
+
+
+# =========================================================
+# أحدث الفواتير
+# =========================================================
 
 def render_recent_invoices():
-    section_heading("🧾 أحدث الفواتير", "آخر الفواتير المسجلة في النظام")
+    section_heading(
+        "🧾 أحدث الفواتير",
+        "آخر الفواتير المسجلة في النظام"
+    )
+
     try:
         invoices = get_recent_invoices()
     except Exception:
         invoices = []
 
-    if not invoices:
-        st.markdown('<div class="empty-state">لا توجد فواتير حديثة لعرضها</div>', unsafe_allow_html=True)
+    if invoices is None or len(invoices) == 0:
+        st.markdown(
+            '<div class="empty-state">لا توجد فواتير حديثة لعرضها</div>',
+            unsafe_allow_html=True
+        )
         return
 
     for item in invoices[:5]:
-        # ✅ قراءة المفاتيح من الخدمة
-        invoice_number = safe_text(get_value(item, "id", default="—"))
-        party = safe_text(get_value(item, "party_name", default="غير محدد"))
-        total = format_number(get_value(item, "total", default=0))
-        
-        inv_type = item.get("type", "")
-        type_label = "مبيعات" if inv_type == "sale" else "مشتريات"
-        type_color = "#60A5FA" if inv_type == "sale" else "#F87171"
+        invoice_number = safe_text(
+            get_value(item, "id", default="—")
+        )
 
-        st.markdown(f"""
+        party = safe_text(
+            get_value(item, "party_name", default="غير محدد")
+        )
+
+        total = format_number(
+            get_value(item, "total", default=0)
+        )
+
+        inv_type = get_value(item, "type", "")
+
+        if inv_type == "sale":
+            type_label = "مبيعات"
+            type_color = "#60A5FA"
+        elif inv_type == "purchase":
+            type_label = "مشتريات"
+            type_color = "#F87171"
+        else:
+            type_label = "فاتورة"
+            type_color = "#A78BFA"
+
+        st.markdown(
+            f"""
             <div class="list-card">
                 <div style="flex:1;min-width:0;">
                     <div class="list-name">
-                        فاتورة #{invoice_number} 
-                        <span style="color:{type_color}; font-size:0.75rem; margin-right:5px;">({type_label})</span>
+                        فاتورة #{invoice_number}
+                        <span class="invoice-type"
+                              style="color:{type_color};">
+                            ({type_label})
+                        </span>
                     </div>
-                    <div style="color:#94A3B8; font-size:0.78rem; margin-top:4px;">{party}</div>
+
+                    <div class="list-description">
+                        {party}
+                    </div>
                 </div>
-                <div style="color:#93C5FD; background:rgba(59,130,246,0.11); padding:6px 10px; border-radius:8px; font-size:0.82rem; font-weight:800; white-space:nowrap;">
+
+                <div class="list-value">
                     {total} ر.ي
                 </div>
             </div>
-            """, unsafe_allow_html=True)
+            """,
+            unsafe_allow_html=True
+        )
 
-# ============================================================
-# الدالة الرئيسية
-# ============================================================
-def show():
-    inject_executive_css()
-    
-    user = st.session_state.get("user") or {}
-    user_name = safe_text(user.get("full_name") or user.get("username") or "المستخدم")
+
+# =========================================================
+# أحدث الأنشطة
+# =========================================================
+
+def render_recent_activities():
+    section_heading(
+        "🕘 أحدث الأنشطة",
+        "آخر العمليات التي تمت داخل النظام"
+    )
 
     try:
-        kpi = get_kpi_cards() or {}
-        quick = get_quick_stats() or {}
-        alerts = get_alerts() or []
-    except Exception as error:
-        st.error(f"تعذر تحميل بيانات لوحة المعلومات: {error}")
+        activities = get_recent_activities()
+    except Exception:
+        activities = []
+
+    if not activities:
+        st.markdown(
+            '<div class="empty-state">لا توجد أنشطة حديثة لعرضها</div>',
+            unsafe_allow_html=True
+        )
         return
 
-    current_date = datetime.now().strftime("%Y-%m-%d")
+    for item in activities[:7]:
+        action = safe_text(
+            get_value(item, "action", "نشاط جديد")
+        )
 
-    # 1. الهيدر
-    st.markdown(f"""
-        <div class="dashboard-header">
-            <div>
-                <div class="header-label">✦ ENTERPRISE MANAGEMENT HUB</div>
-                <h1 class="header-title">مرحباً، {user_name}</h1>
-                <div class="header-description">
-                    إليك نظرة عامة على أداء منشأتك ومؤشرات العمليات.<br>
-                    <span style="color:#C4B5FD; font-weight:700;">📅 {current_date}</span>
+        activity_time = get_value(
+            item,
+            "time",
+            get_value(
+                item,
+                "created_at",
+                get_value(item, "timestamp", "")
+            )
+        )
+
+        activity_time = safe_text(activity_time, "")
+
+        st.markdown(
+            f"""
+            <div class="list-card">
+                <div style="
+                    display:flex;
+                    align-items:center;
+                    gap:10px;
+                    min-width:0;
+                    flex:1;
+                ">
+                    <div class="card-icon"
+                         style="
+                            width:34px;
+                            height:34px;
+                            font-size:1rem;
+                            color:#C4B5FD;
+                            background:rgba(139,92,246,0.13);
+                         ">
+                        ⚡
+                    </div>
+
+                    <div class="list-name">
+                        {action}
+                    </div>
+                </div>
+
+                <div class="activity-time">
+                    {activity_time}
                 </div>
             </div>
-            <div class="header-icon">📊</div>
-        </div>
-        """, unsafe_allow_html=True)
+            """,
+            unsafe_allow_html=True
+        )
 
-    # 2. ملخص اليوم
-    section_heading("⚡ ملخص اليوم", "مؤشرات العمليات اليومية")
-    
-    html_quick = '<div class="luxury-grid">'
-    html_quick += make_premium_card("مبيعات اليوم", f"{format_number(quick.get('today_sales', 0))} ر.ي", "💰", GN)
-    html_quick += make_premium_card("مشتريات اليوم", f"{format_number(quick.get('today_purchases', 0))} ر.ي", "🛒", RD)
-    
-    low_stock_count = safe_number(quick.get("low_stock", 0))
-    stock_status = "تحتاج إلى إعادة طلب" if low_stock_count > 0 else "المخزون مستقر"
-    
-    html_quick += make_premium_card("منتجات منخفضة", format_number(low_stock_count), "⚠️", RD if low_stock_count > 0 else GN, stock_status)
-    html_quick += make_premium_card("إجمالي العملاء", format_number(quick.get("total_customers", 0)), "👥", BL)
-    html_quick += "</div>"
-    
-    st.markdown(html_quick, unsafe_allow_html=True) # ✅ إضافة unsafe_allow_html
 
-    # 3. التنبيهات
+# =========================================================
+# الصفحة الرئيسية
+# =========================================================
+
+def show():
+    inject_executive_css()
+
+    # بيانات المستخدم
+    user_name = "المستخدم"
+
+    try:
+        if hasattr(st, "session_state"):
+            user_data = st.session_state.get("user", {})
+
+            if isinstance(user_data, dict):
+                user_name = user_data.get(
+                    "full_name",
+                    user_data.get("name", "المستخدم")
+                )
+            elif user_data:
+                user_name = getattr(
+                    user_data,
+                    "full_name",
+                    getattr(user_data, "name", "المستخدم")
+                )
+    except Exception:
+        user_name = "المستخدم"
+
+    # تحميل بيانات لوحة التحكم
+    try:
+        quick_stats = get_quick_stats() or {}
+    except Exception:
+        quick_stats = {}
+
+    try:
+        kpis = get_kpi_cards() or {}
+    except Exception:
+        kpis = {}
+
+    try:
+        alerts = get_alerts() or []
+    except Exception:
+        alerts = []
+
+    # رأس الصفحة
+    render_dashboard_header(user_name)
+
+    # الإحصائيات السريعة
+    render_quick_stats(quick_stats)
+
+    # التنبيهات
     render_alerts(alerts)
 
-    # 4. الأداء المالي
-    section_heading("💎 الأداء العام والمالي", "المؤشرات الإجمالية للمنشأة")
-    
-    html_perf = '<div class="luxury-grid">'
-    html_perf += make_premium_card("إجمالي المبيعات", format_number(kpi.get("total_sales", 0)), "💵", GN)
-    html_perf += make_premium_card("إجمالي المشتريات", format_number(kpi.get("total_purchases", 0)), "📦", RD)
-    
-    net_income = safe_number(kpi.get("net_income", 0))
-    html_perf += make_premium_card("صافي الأرباح", format_number(net_income), "💎", GN if net_income >= 0 else RD)
-    
-    html_perf += make_premium_card("عدد المنتجات", format_number(kpi.get("products_count", 0)), "🏷️", BL)
-    html_perf += make_premium_card("قاعدة العملاء", format_number(kpi.get("customers_count", 0)), "👥", OR)
-    html_perf += "</div>"
-    
-    st.markdown(html_perf, unsafe_allow_html=True) # ✅ إضافة unsafe_allow_html
+    # مؤشرات الأداء
+    render_kpi_cards(kpis)
 
-    # 5. التحليل المرئي
-    section_heading("📊 التحليل المرئي", "قراءة الاتجاهات المالية وتوزيع المخزون")
-    col_chart1, col_chart2 = st.columns(2, gap="large")
-    with col_chart1:
-        render_sales_chart()
-    with col_chart2:
+    # الرسوم البيانية
+    section_heading(
+        "📉 التحليلات والرسوم البيانية",
+        "قراءة مرئية لأداء المبيعات والمخزون"
+    )
+
+    chart_col1, chart_col2 = st.columns(
+        [1.5, 1],
+        gap="large"
+    )
+
+    with chart_col1:
+        render_monthly_sales()
+
+    with chart_col2:
         render_inventory_chart()
 
-    # 6. إدارة المخزون
-    section_heading("📦 إدارة المخزون والمنتجات", "مراقبة مستويات المخزون وأداء الأصناف")
-    col_stock, col_products = st.columns(2, gap="large")
-    with col_stock:
-        render_low_stock()
-    with col_products:
-        render_top_products()
+    # المنتجات منخفضة المخزون والفواتير
+    section_heading(
+        "📋 متابعة العمليات",
+        "المخزون والفواتير المسجلة مؤخراً"
+    )
 
-    # 7. النشاط التشغيلي
-    section_heading("🧾 النشاط التشغيلي", "متابعة آخر الحركات والفواتير")
-    col_activity, col_invoices = st.columns(2, gap="large")
-    with col_activity:
-        render_activities()
-    with col_invoices:
+    col1, col2 = st.columns(
+        2,
+        gap="large"
+    )
+
+    with col1:
+        render_low_stock_products()
+
+    with col2:
         render_recent_invoices()
 
-    # 8. التذييل
-    st.markdown("""
-        <div style="margin-top:35px; padding:18px 10px; border-top:1px solid rgba(255,255,255,0.07); text-align:center; color:#64748B; font-size:0.78rem;">
-            حوكمة ERP <span style="color:#8B5CF6;">✦</span> نظام الإدارة الذكية
+    # الأنشطة الأخيرة
+    render_recent_activities()
+
+    # التذييل
+    st.markdown(
+        """
+        <div class="dashboard-footer">
+            لوحة التحكم الرئيسية · جميع الحقوق محفوظة
         </div>
-        """, unsafe_allow_html=True)
+        """,
+        unsafe_allow_html=True
+    )
