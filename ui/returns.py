@@ -1,7 +1,5 @@
-# ui/returns.py – واجهة مرتجعات البضاعة (v3.0)
-# ✅ 3 طرق استرداد: حساب / صندوق / بنك
-# ✅ عرض الكميات المباعة/المرجعة/المتبقية
-# ✅ فحص فوري للرصيد
+# ui/returns.py – واجهة مرتجعات البضاعة (v3.1)
+# ✅ إصلاح: عرض رسائل النجاح/الفشل بشكل دائم (لا تختفي مع الـ rerun)
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -52,7 +50,6 @@ def glass(content):
 # مساعد: عرض بنود الفاتورة + اختيار المرتجع
 # ============================================================
 def _render_return_items(items, prefix, invoice_id):
-    """عرض بنود الفاتورة مع الكميات، وإرجاع قائمة المنتجات المختارة"""
     display_items = []
     for item in items:
         display_items.append({
@@ -115,13 +112,6 @@ def _render_return_items(items, prefix, invoice_id):
 # ✅ مساعد: خيارات الاسترداد (حساب / نقدي / بنكي)
 # ============================================================
 def _render_refund_options(prefix, total_estimate):
-    """
-    يعرض 3 خيارات للاسترداد.
-    
-    Returns:
-        (refund_method, cash_account_code, bank_account_code)
-        refund_method ∈ {'account', 'cash', 'bank', 'invalid'}
-    """
     st.markdown("---")
     h3("طريقة الاسترداد", GR)
 
@@ -136,12 +126,10 @@ def _render_refund_options(prefix, total_estimate):
         key=f"{prefix}_refund_method"
     )
 
-    # ============ خصم من الحساب ============
     if "خصم من الحساب" in refund_choice:
         st.info(f"📌 سيتم خصم **{total_estimate:,.2f}** من رصيد الطرف")
         return "account", None, None
 
-    # ============ استرداد نقدي ============
     if "استرداد نقدي" in refund_choice:
         cash_accounts = get_all_cash_accounts(active_only=True)
         if not cash_accounts:
@@ -171,7 +159,6 @@ def _render_refund_options(prefix, total_estimate):
 
         return "cash", cash_acc["account_code"], None
 
-    # ============ تحويل بنكي ============
     if "تحويل بنكي" in refund_choice:
         bank_accounts = get_all_bank_accounts(active_only=True)
         if not bank_accounts:
@@ -208,9 +195,6 @@ def _render_refund_options(prefix, total_estimate):
 # مساعد: نموذج مرتجع كامل (مبيعات/مشتريات)
 # ============================================================
 def _render_return_form(invoice_type, inv, items, prefix):
-    """
-    نموذج موحّد لمرتجع مبيعات أو مشتريات.
-    """
     return_items = _render_return_items(items, prefix, inv["id"])
 
     if not return_items:
@@ -226,7 +210,6 @@ def _render_return_form(invoice_type, inv, items, prefix):
         key=f"{prefix}_reason"
     )
 
-    # حساب تقريبي للإجمالي
     estimate = 0.0
     for name, qty in return_items:
         for it in items:
@@ -281,17 +264,29 @@ def _render_return_form(invoice_type, inv, items, prefix):
                 cash_account_code=p["cash_code"],
                 bank_account_code=p["bank_code"],
             )
+            
+            # ✅ التعديل: تخزين الرسالة في session_state بدلاً من عرضها ومسحها
             if ok:
                 msg = f"✅ تم تسجيل المرتجع رقم {result} — الإجمالي: {total:,.2f}"
                 if note:
                     msg += f"\n\n{note}"
-                glass(msg)
+                st.session_state[f"msg_{prefix}"] = ("success", msg)
             else:
-                st.error(f"❌ فشل العملية: {result}")
+                st.session_state[f"msg_{prefix}"] = ("error", f"❌ فشل العملية: {result}")
 
         st.session_state[session_key] = False
         st.session_state.pop(f"_pending_{prefix}_return", None)
         st.rerun()
+
+    # ✅ عرض الرسالة (تظهر بعد الـ rerun)
+    if f"msg_{prefix}" in st.session_state:
+        msg_type, msg_text = st.session_state[f"msg_{prefix}"]
+        if msg_type == "success":
+            glass(msg_text)
+        else:
+            st.error(msg_text)
+        # مسح الرسالة بعد عرضها
+        del st.session_state[f"msg_{prefix}"]
 
 
 # ============================================================
@@ -302,9 +297,6 @@ def show():
 
     tab1, tab2, tab3 = st.tabs(["مرتجع مبيعات", "مرتجع مشتريات", "سجل المرتجعات"])
 
-    # ============================================================
-    # تبويب 1: مرتجع مبيعات
-    # ============================================================
     with tab1:
         h3("إرجاع بضاعة من عميل", GR)
         invoices = get_sales_invoices()
@@ -328,9 +320,6 @@ def show():
                 if items:
                     _render_return_form("sale", inv, items, "sret")
 
-    # ============================================================
-    # تبويب 2: مرتجع مشتريات
-    # ============================================================
     with tab2:
         h3("إرجاع بضاعة للمورد", BL)
         invoices = get_purchase_invoices()
@@ -354,9 +343,6 @@ def show():
                 if items:
                     _render_return_form("purchase", inv, items, "pret")
 
-    # ============================================================
-    # تبويب 3: سجل المرتجعات
-    # ============================================================
     with tab3:
         h3("سجل عمليات المرتجعات", PR)
         returns = get_return_history()
