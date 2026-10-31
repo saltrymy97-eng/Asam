@@ -1,5 +1,5 @@
-# ui/accounting_ui.py – واجهة الحسابات (v2.1)
-# ✅ v2.1: جلب جميع الحسابات النشطة بدون أي فلاتر + تمييز النظامية بصرياً
+# ui/accounting_ui.py – واجهة الحسابات (v2.2)
+# ✅ إصلاح: منع حفظ القيد إذا كان المدين لا يساوي الدائن (حماية استباقية)
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -34,12 +34,8 @@ ACCENT_PURPLE = "#8B5CF6"
 # ✅ دوال مساعدة
 # ============================================================
 def get_account_display_name(code):
-    """
-    تحويل كود الحساب إلى اسمه الكامل من شجرة الحسابات.
-    """
     if not code:
         return ""
-
     conn = get_connection()
     try:
         if code.isdigit() or "." in code:
@@ -56,28 +52,22 @@ def get_account_display_name(code):
 
 def get_accounts_list():
     """
-    ✅ v2.1: جلب *جميع* الحسابات النشطة بدون أي استثناء.
-    نضع علامة (🔒 نظامي) للحسابات النظامية لكي يميزها المحاسب بصرياً.
+    ✅ جلب *جميع* الحسابات النشطة بدون أي استثناء.
     """
     conn = get_connection()
     try:
-        # الاستعلام الأبسط: اجلب كل الحسابات النشطة
         query = "SELECT code, name, is_system FROM accounts WHERE is_active = 1 ORDER BY code"
         accounts = conn.execute(query).fetchall()
-        
         result = []
         for a in accounts:
-            # إضافة علامة للنظامي فقط لتوضيح أنه حساب مرتبط بوحدة أخرى
             prefix = "🔒 [نظامي] " if a['is_system'] == 1 else ""
             result.append(f"{prefix}{a['code']} - {a['name']}")
-            
         return result
     finally:
         close_connection(conn)
 
 
 def get_cost_centers_list():
-    """جلب قائمة مراكز التكلفة النشطة للاختيار"""
     centers = cost_center_service.get_all_cost_centers(active_only=True)
     if not centers:
         return [], {}
@@ -87,7 +77,6 @@ def get_cost_centers_list():
 
 
 def get_all_currencies():
-    """جلب جميع العملات النشطة من قاعدة البيانات"""
     conn = get_connection()
     try:
         currencies = conn.execute(
@@ -136,6 +125,10 @@ def show():
 
                 lines = []
                 cost_center_allocations = []
+                
+                # ✅ متغيرات لحساب الإجمالي في الوقت الفعلي
+                total_debit = 0.0
+                total_credit = 0.0
 
                 for i in range(4):
                     cols = st.columns([3, 1.5, 1.5, 1])
@@ -171,8 +164,7 @@ def show():
                         currency_code = "YER"
 
                     if account:
-                        # ✅ إصلاح استخراج الكود:
-                        # إزالة العلامة (إن وجدت) ثم أخذ الجزء الأول قبل الشرطة
+                        # استخراج الكود الصافي
                         clean_acc = account.replace("🔒 [نظامي] ", "").strip()
                         code = clean_acc.split(" - ")[0].strip()
 
@@ -182,6 +174,10 @@ def show():
                             "credit": credit,
                             "currency_code": currency_code
                         })
+                        
+                        # ✅ جمع الإجماليات
+                        total_debit += debit
+                        total_credit += credit
 
                         if cc_options:
                             with st.expander(
@@ -238,6 +234,18 @@ def show():
                                         'allocations': allocs_for_line
                                     })
 
+                # ✅ عرض الإجماليات في الوقت الفعلي
+                st.markdown("---")
+                col_d, col_c = st.columns(2)
+                col_d.metric("إجمالي المدين", f"{total_debit:,.2f}")
+                col_c.metric("إجمالي الدائن", f"{total_credit:,.2f}")
+                
+                difference = total_debit - total_credit
+                if abs(difference) > 0.01:
+                    st.error(f"⚠️ القيد غير متوازن! الفرق: {abs(difference):,.2f}")
+                else:
+                    st.success("✅ القيد متوازن")
+
                 submitted = st.form_submit_button("💾 حفظ القيد", type="primary")
 
                 if submitted:
@@ -245,6 +253,9 @@ def show():
                         st.error("البيان مطلوب")
                     elif not lines:
                         st.error("أضف سطراً محاسبياً واحداً على الأقل")
+                    # ✅ الحماية الاستباقية: منع الحفظ إذا كان غير متوازن
+                    elif abs(total_debit - total_credit) > 0.01:
+                        st.error(f"لا يمكن حفظ القيد لأنه غير متوازن! (الفرق: {abs(total_debit - total_credit):,.2f})")
                     else:
                         entry_id, error = save_journal_entry(
                             description, lines,
