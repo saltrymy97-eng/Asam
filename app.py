@@ -1,38 +1,39 @@
+
 import streamlit as st
 import database
 
-# ✅ يجب أن يكون هذا السطر هو الأول بعد استيراد streamlit مباشرة
-# 🎯 تمت إضافة page_icon لجعل أيقونة التطبيق تظهر في شريط المهام وفي أعلى النافذة
+# ============================================================
+# إعداد الصفحة
+# ============================================================
 st.set_page_config(
     page_title="حوكمة ERP",
     page_icon="icon.ico",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# تهيئة قاعدة البيانات
+# ============================================================
+# تهيئة قاعدة البيانات والنظام
+# ============================================================
 database.init_db()
 database.create_default_admin()
 
-# تهيئة العملات الافتراضية
 from services.currency_service import create_default_currencies
 create_default_currencies()
 
-# استيراد وحدات المصادقة
 from ui.auth_ui import show as auth_show
 from services.auth_service import logout_session
 
-# استيراد وحدات الصلاحيات
 from services.roles_service import (
     seed_default_roles,
     check_permission,
     get_allowed_modules
 )
 
-# تهيئة الأدوار والصلاحيات الافتراضية
 seed_default_roles()
 
 # ============================================================
-# استيراد جميع الوحدات
+# استيراد الوحدات
 # ============================================================
 from ui.dashboard_ui import show as dashboard_show
 from ui.inventory_ui import show as inventory_show
@@ -66,346 +67,778 @@ from ui.pdf_reports import show as pdf_show
 from ui.ai_ui import show as ai_show
 from ui.cash_ui import show as cash_show
 
-# ========== تصميم القائمة الجانبية الفاخرة ==========
+# ============================================================
+# التصميم العام
+# ============================================================
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap');
-    
-    [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, rgba(20,20,40,0.95) 0%, rgba(10,10,30,0.98) 100%);
-        backdrop-filter: blur(20px);
-        border-right: 1px solid rgba(255,255,255,0.1);
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap');
+
+:root {
+    --primary: #8B5CF6;
+    --primary-light: #A78BFA;
+    --primary-dark: #6D28D9;
+    --surface: #17172B;
+    --surface-light: #20203A;
+    --text-main: #F8FAFC;
+    --text-muted: #A1A1AA;
+    --border: rgba(255,255,255,0.08);
+}
+
+/* الخط العام */
+html, body, [class*="css"] {
+    font-family: 'Cairo', sans-serif !important;
+}
+
+/* خلفية التطبيق */
+.stApp {
+    background:
+        radial-gradient(
+            circle at 85% 5%,
+            rgba(109, 40, 217, 0.09),
+            transparent 28%
+        ),
+        linear-gradient(
+            135deg,
+            #0B0B18 0%,
+            #101024 50%,
+            #0B0B18 100%
+        );
+}
+
+/* إخفاء عناصر Streamlit غير الضرورية */
+#MainMenu {
+    visibility: hidden;
+}
+
+footer {
+    visibility: hidden;
+}
+
+[data-testid="stHeader"] {
+    background: transparent;
+}
+
+/* مساحة المحتوى */
+.block-container {
+    padding-top: 2rem;
+    padding-bottom: 3rem;
+    max-width: 100%;
+}
+
+/* القائمة الجانبية */
+[data-testid="stSidebar"] {
+    background: linear-gradient(
+        180deg,
+        #17172D 0%,
+        #111124 55%,
+        #0D0D1D 100%
+    );
+    border-right: 1px solid rgba(167,139,250,0.15);
+}
+
+[data-testid="stSidebar"] > div:first-child {
+    padding: 1.2rem 0.9rem 2rem 0.9rem;
+}
+
+/* عناوين أقسام القائمة */
+.menu-section {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 22px 4px 9px 4px;
+    padding: 10px 13px;
+    border-radius: 10px;
+    background: linear-gradient(
+        90deg,
+        rgba(139,92,246,0.13),
+        rgba(139,92,246,0.025)
+    );
+    border-right: 3px solid #8B5CF6;
+    color: #C4B5FD;
+    font-size: 0.83rem;
+    font-weight: 800;
+    letter-spacing: 0.3px;
+}
+
+/* جميع أزرار القائمة */
+[data-testid="stSidebar"] .stButton {
+    width: 100%;
+    margin-bottom: 5px;
+}
+
+[data-testid="stSidebar"] .stButton > button {
+    width: 100%;
+    min-height: 43px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    padding: 9px 13px;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    background: rgba(255,255,255,0.025);
+    color: #D4D4E0;
+    font-family: 'Cairo', sans-serif !important;
+    font-size: 0.91rem;
+    font-weight: 600;
+    text-align: right;
+    transition: all 0.2s ease;
+}
+
+/* تمرير المؤشر على الزر */
+[data-testid="stSidebar"] .stButton > button:hover {
+    background: rgba(139,92,246,0.16);
+    border-color: rgba(167,139,250,0.35);
+    color: #FFFFFF;
+    transform: translateX(-3px);
+}
+
+/* الصفحة النشطة - زر primary */
+[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+    background: linear-gradient(
+        100deg,
+        #6D28D9,
+        #8B5CF6
+    );
+    border: 1px solid rgba(196,181,253,0.45);
+    color: #FFFFFF;
+    font-weight: 800;
+    box-shadow: 0 4px 14px rgba(109,40,217,0.25);
+}
+
+[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
+    background: linear-gradient(
+        100deg,
+        #7C3AED,
+        #A78BFA
+    );
+    color: #FFFFFF;
+}
+
+/* زر تسجيل الخروج */
+.logout-area .stButton > button {
+    margin-top: 12px;
+    background: rgba(239,68,68,0.10);
+    border: 1px solid rgba(239,68,68,0.25);
+    color: #FCA5A5;
+}
+
+.logout-area .stButton > button:hover {
+    background: rgba(239,68,68,0.25);
+    border-color: rgba(239,68,68,0.55);
+    color: #FFFFFF;
+}
+
+/* فاصل القائمة */
+[data-testid="stSidebar"] hr {
+    border-color: rgba(255,255,255,0.09);
+    margin: 18px 0;
+}
+
+/* عنوان النظام */
+.brand-panel {
+    text-align: center;
+    padding: 22px 10px 17px 10px;
+    margin-bottom: 12px;
+    border-radius: 16px;
+    background: linear-gradient(
+        145deg,
+        rgba(139,92,246,0.15),
+        rgba(255,255,255,0.025)
+    );
+    border: 1px solid rgba(167,139,250,0.15);
+}
+
+.brand-icon {
+    font-size: 2.5rem;
+    line-height: 1.4;
+}
+
+.brand-title {
+    margin: 5px 0 2px 0;
+    font-size: 1.65rem;
+    font-weight: 800;
+    color: #FFFFFF;
+    background: linear-gradient(
+        110deg,
+        #FFFFFF,
+        #C4B5FD
+    );
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.brand-subtitle {
+    color: #A78BFA;
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+/* بطاقة المستخدم */
+.user-panel {
+    padding: 12px 14px;
+    margin: 12px 2px 15px 2px;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.045);
+    border: 1px solid rgba(255,255,255,0.075);
+}
+
+.user-label {
+    color: #A1A1AA;
+    font-size: 0.72rem;
+    margin-bottom: 3px;
+}
+
+.user-name {
+    color: #E9D5FF;
+    font-size: 0.95rem;
+    font-weight: 800;
+}
+
+/* رسائل عدم الصلاحية */
+.permission-denied {
+    background: linear-gradient(
+        145deg,
+        rgba(239,68,68,0.12),
+        rgba(127,29,29,0.08)
+    );
+    border: 1px solid rgba(239,68,68,0.35);
+    border-radius: 16px;
+    padding: 2.5rem 1.5rem;
+    text-align: center;
+    color: #FCA5A5;
+    margin-top: 2rem;
+}
+
+.permission-denied h2 {
+    color: #FCA5A5;
+    font-weight: 800;
+}
+
+/* أزرار المحتوى */
+.stButton > button {
+    font-family: 'Cairo', sans-serif !important;
+    border-radius: 10px;
+}
+
+/* حقول الإدخال */
+.stTextInput input,
+.stNumberInput input,
+.stTextArea textarea,
+.stSelectbox div[data-baseweb="select"] {
+    border-radius: 9px;
+}
+
+/* البطاقات */
+[data-testid="stMetric"] {
+    background: rgba(255,255,255,0.035);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 13px;
+    padding: 15px;
+}
+
+/* الجداول */
+[data-testid="stDataFrame"],
+[data-testid="stTable"] {
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+/* الشاشات الصغيرة */
+@media (max-width: 768px) {
+    .block-container {
+        padding: 1rem 0.8rem 2rem 0.8rem;
     }
-    .menu-section {
-        margin: 15px 10px 5px 10px;
-        padding: 8px 12px;
-        border-radius: 12px;
-        background: rgba(255,255,255,0.03);
-        font-size: 0.75rem;
-        font-weight: 700;
-        letter-spacing: 2px;
-        color: #a78bfa;
-        text-transform: uppercase;
+
+    .brand-title {
+        font-size: 1.4rem;
     }
-    .stButton > button {
-        width: 100%;
-        background: rgba(255,255,255,0.05);
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 12px;
-        color: #ddd;
-        text-align: right;
-        padding: 10px 15px;
-        font-size: 0.95rem;
-        transition: all 0.3s ease;
-        margin-bottom: 3px;
-        font-family: 'Cairo', sans-serif;
-    }
-    .stButton > button:hover {
-        background: rgba(139, 92, 246, 0.25);
-        border-color: #a78bfa;
-        color: white;
-        transform: translateX(-5px);
-    }
-    .logout-btn > button {
-        background: rgba(239, 68, 68, 0.2);
-        border-color: rgba(239, 68, 68, 0.4);
-        color: #fca5a5;
-        margin-top: 20px;
-    }
-    .logout-btn > button:hover {
-        background: rgba(239, 68, 68, 0.4);
-        color: white;
-    }
-    .permission-denied {
-        background: rgba(239, 68, 68, 0.1);
-        border: 1px solid #EF4444;
-        border-radius: 16px;
-        padding: 2rem;
-        text-align: center;
-        color: #FCA5A5;
-        margin-top: 2rem;
-    }
+}
 </style>
 """, unsafe_allow_html=True)
 
-if 'logged_in' not in st.session_state:
+# ============================================================
+# تهيئة الجلسة
+# ============================================================
+if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
-if 'user' not in st.session_state:
+
+if "user" not in st.session_state:
     st.session_state.user = None
-if 'current_page' not in st.session_state:
+
+if "current_page" not in st.session_state:
     st.session_state.current_page = "لوحة المعلومات"
 
+if "run_seed" not in st.session_state:
+    st.session_state.run_seed = False
+
+# ============================================================
+# دالة موحدة لأزرار القائمة
+# ============================================================
+def nav_button(label, page, key, icon, module=None):
+    """
+    إنشاء زر تنقل موحد مع إبراز الصفحة النشطة.
+    لا يغير الأيقونات أو مفاتيح الأزرار الأصلية.
+    """
+    if module and not can_access(module):
+        return
+
+    is_active = st.session_state.current_page == page
+
+    if st.button(
+        label,
+        key=key,
+        icon=icon,
+        type="primary" if is_active else "secondary",
+        use_container_width=True
+    ):
+        st.session_state.current_page = page
+        st.rerun()
+
+
+# ============================================================
+# شاشة تسجيل الدخول
+# ============================================================
 if not st.session_state.logged_in:
     auth_show()
+
+# ============================================================
+# واجهة النظام بعد تسجيل الدخول
+# ============================================================
 else:
-    username = st.session_state.user.get('username', '')
-    # المدير يرى كل شيء
-    if username == 'admin':
+    user_data = st.session_state.get("user") or {}
+    username = user_data.get("username", "")
+
+    # المدير يرى جميع الوحدات
+    if username == "admin":
         allowed_modules = None
     else:
         allowed_modules = get_allowed_modules(username)
 
     def can_access(module):
-        if username == 'admin':
+        if username == "admin":
             return True
+
         return module in allowed_modules if allowed_modules else False
 
+    # ========================================================
+    # القائمة الجانبية
+    # ========================================================
     with st.sidebar:
-        # شعار النظام
+
+        # الشعار
         st.markdown("""
-        <div style="text-align:center; padding:20px 0 5px 0;">
-            <span style="font-size:2.5rem;">🏢</span>
-            <h2 style="margin:5px 0; font-weight:800; font-size:1.8rem;
-                background: linear-gradient(135deg, #FFFFFF 20%, #A78BFA 100%);
-                -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-            ">حوكمة ERP</h2>
-            <p style="color:#A78BFA; font-size:0.85rem; letter-spacing:1px; margin:0;">
+        <div class="brand-panel">
+            <div class="brand-icon">🏢</div>
+            <div class="brand-title">حوكمة ERP</div>
+            <p class="brand-subtitle">
                 إدارة ذكية .. قرارات واثقة
             </p>
         </div>
         """, unsafe_allow_html=True)
 
+        # بيانات المستخدم
+        display_name = (
+            user_data.get("full_name")
+            or user_data.get("username")
+            or "مستخدم النظام"
+        )
+
+        st.markdown(f"""
+        <div class="user-panel">
+            <div class="user-label">المستخدم الحالي</div>
+            <div class="user-name">👤 {display_name}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
         st.divider()
 
-        # ============================================================
+        # ====================================================
         # المجموعة 1: الرئيسية
-        # ============================================================
-        st.markdown('<div class="menu-section">🏠 الرئيسية</div>', unsafe_allow_html=True)
-        if st.button("📊 لوحة المعلومات", key="dashboard"):
-            st.session_state.current_page = "لوحة المعلومات"
+        # ====================================================
+        st.markdown(
+            '<div class="menu-section">🏠 الرئيسية</div>',
+            unsafe_allow_html=True
+        )
 
-        # ============================================================
+        nav_button(
+            "لوحة المعلومات",
+            "لوحة المعلومات",
+            "dashboard",
+            ":material/dashboard:"
+        )
+
+        # ====================================================
         # المجموعة 2: العمليات
-        # ============================================================
-        st.markdown('<div class="menu-section">📦 العمليات</div>', unsafe_allow_html=True)
-        if can_access("المبيعات") and st.button("🛒 مبيعات", key="sales"):
-            st.session_state.current_page = "المبيعات"
-        if can_access("المشتريات") and st.button("📋 مشتريات", key="purchases"):
-            st.session_state.current_page = "المشتريات"
-        if can_access("مرتجعات البضاعة") and st.button("🔄 مرتجعات", key="returns"):
-            st.session_state.current_page = "مرتجعات البضاعة"
-        if can_access("سندات القبض والصرف") and st.button("💵 سندات قبض/صرف", key="receipts"):
-            st.session_state.current_page = "سندات القبض والصرف"
-        if can_access("المخزون") and st.button("📦 مخزون", key="inventory"):
-            st.session_state.current_page = "المخزون"
-        if can_access("التسويات المخزنية") and st.button("📦 تسويات مخزنية", key="adjustments"):
-            st.session_state.current_page = "التسويات المخزنية"
-        if can_access("المصروفات") and st.button("🧾 مصروفات", key="expenses"):
-            st.session_state.current_page = "المصروفات"
-        if can_access("إدارة العملاء") and st.button("👥 CRM", key="crm"):
-            st.session_state.current_page = "إدارة العملاء"
+        # ====================================================
+        st.markdown(
+            '<div class="menu-section">📦 العمليات</div>',
+            unsafe_allow_html=True
+        )
 
-        # ============================================================
+        nav_button("مبيعات", "المبيعات", "sales",
+                   ":material/shopping_cart:", "المبيعات")
+
+        nav_button("مشتريات", "المشتريات", "purchases",
+                   ":material/receipt_long:", "المشتريات")
+
+        nav_button("مرتجعات", "مرتجعات البضاعة", "returns",
+                   ":material/assignment_return:", "مرتجعات البضاعة")
+
+        nav_button("سندات قبض/صرف", "سندات القبض والصرف", "receipts",
+                   ":material/payments:", "سندات القبض والصرف")
+
+        nav_button("مخزون", "المخزون", "inventory",
+                   ":material/inventory:", "المخزون")
+
+        nav_button("تسويات مخزنية", "التسويات المخزنية", "adjustments",
+                   ":material/rule:", "التسويات المخزنية")
+
+        nav_button("مصروفات", "المصروفات", "expenses",
+                   ":material/money_off:", "المصروفات")
+
+        nav_button("CRM", "إدارة العملاء", "crm",
+                   ":material/people:", "إدارة العملاء")
+
+        # ====================================================
         # المجموعة 3: المحاسبة والمالية
-        # ============================================================
-        st.markdown('<div class="menu-section">💰 المحاسبة والمالية</div>', unsafe_allow_html=True)
-        if can_access("الحسابات") and st.button("🧾 حسابات", key="accounting"):
-            st.session_state.current_page = "الحسابات"
-        if can_access("شجرة الحسابات") and st.button("🌳 شجرة الحسابات", key="chart"):
-            st.session_state.current_page = "شجرة الحسابات"
-        if can_access("القوائم المالية") and st.button("📈 قوائم مالية", key="financial"):
-            st.session_state.current_page = "القوائم المالية"
-        if can_access("مراكز التكلفة") and st.button("🏢 مراكز تكلفة", key="cost_center"):
-            st.session_state.current_page = "مراكز التكلفة"
-        if can_access("العملات") and st.button("💱 عملات", key="currency"):
-            st.session_state.current_page = "العملات"
-        if can_access("الأرصدة الافتتاحية") and st.button("📋 أرصدة افتتاحية", key="opening"):
-            st.session_state.current_page = "الأرصدة الافتتاحية"
-        if can_access("الصندوق") and st.button("💰 صندوق", key="cash"):
-            st.session_state.current_page = "الصندوق"
-        if can_access("التعاملات البنكية") and st.button("🏦 بنوك", key="bank"):
-            st.session_state.current_page = "التعاملات البنكية"
-        if can_access("الضريبة") and st.button("🧾 ضريبة", key="vat"):
-            st.session_state.current_page = "الضريبة"
-        if can_access("إغلاق الحسابات") and st.button("🔒 إغلاق حسابات", key="closing"):
-            st.session_state.current_page = "إغلاق الحسابات"
-        if can_access("إغلاق الفترات") and st.button("📅 إغلاق فترات", key="period"):
-            st.session_state.current_page = "إغلاق الفترات"
-        if can_access("FIFO المخزون") and st.button("📊 FIFO", key="fifo"):
-            st.session_state.current_page = "FIFO المخزون"
-        if can_access("تقييم العملات") and st.button("💱 تقييم عملات", key="revaluation"):
-            st.session_state.current_page = "تقييم العملات"
-        if can_access("التقارير المالية XBRL") and st.button("🌐 تقارير XBRL", key="pdf"):
-            st.session_state.current_page = "التقارير المالية XBRL"
+        # ====================================================
+        st.markdown(
+            '<div class="menu-section">💰 المحاسبة والمالية</div>',
+            unsafe_allow_html=True
+        )
 
-        # ============================================================
+        nav_button("حسابات", "الحسابات", "accounting",
+                   ":material/edit_note:", "الحسابات")
+
+        nav_button("شجرة الحسابات", "شجرة الحسابات", "chart",
+                   ":material/account_tree:", "شجرة الحسابات")
+
+        nav_button("قوائم مالية", "القوائم المالية", "financial",
+                   ":material/analytics:", "القوائم المالية")
+
+        nav_button("مراكز تكلفة", "مراكز التكلفة", "cost_center",
+                   ":material/request_quote:", "مراكز التكلفة")
+
+        nav_button("عملات", "العملات", "currency",
+                   ":material/currency_exchange:", "العملات")
+
+        nav_button("أرصدة افتتاحية", "الأرصدة الافتتاحية", "opening",
+                   ":material/book:", "الأرصدة الافتتاحية")
+
+        nav_button("صندوق", "الصندوق", "cash",
+                   ":material/account_balance_wallet:", "الصندوق")
+
+        nav_button("بنوك", "التعاملات البنكية", "bank",
+                   ":material/account_balance:", "التعاملات البنكية")
+
+        nav_button("ضريبة", "الضريبة", "vat",
+                   ":material/receipt:", "الضريبة")
+
+        nav_button("إغلاق حسابات", "إغلاق الحسابات", "closing",
+                   ":material/lock:", "إغلاق الحسابات")
+
+        nav_button("إغلاق فترات", "إغلاق الفترات", "period",
+                   ":material/calendar_month:", "إغلاق الفترات")
+
+        nav_button("FIFO", "FIFO المخزون", "fifo",
+                   ":material/swap_vert:", "FIFO المخزون")
+
+        nav_button("تقييم عملات", "تقييم العملات", "revaluation",
+                   ":material/currency_exchange:", "تقييم العملات")
+
+        nav_button("تقارير XBRL", "التقارير المالية XBRL", "pdf",
+                   ":material/language:", "التقارير المالية XBRL")
+
+        # ====================================================
         # المجموعة 4: إدارة الأعمال
-        # ============================================================
-        st.markdown('<div class="menu-section">👥 إدارة الأعمال</div>', unsafe_allow_html=True)
-        if can_access("الموارد البشرية") and st.button("👔 موارد بشرية", key="hr"):
-            st.session_state.current_page = "الموارد البشرية"
-        if can_access("كشف الرواتب") and st.button("💰 رواتب", key="payroll"):
-            st.session_state.current_page = "كشف الرواتب"
-        if can_access("الأصول الثابتة") and st.button("🏗️ أصول ثابتة", key="assets"):
-            st.session_state.current_page = "الأصول الثابتة"
-        if can_access("المرفقات") and st.button("📎 مرفقات", key="attachments"):
-            st.session_state.current_page = "المرفقات"
+        # ====================================================
+        st.markdown(
+            '<div class="menu-section">👥 إدارة الأعمال</div>',
+            unsafe_allow_html=True
+        )
 
-        # ============================================================
+        nav_button("موارد بشرية", "الموارد البشرية", "hr",
+                   ":material/badge:", "الموارد البشرية")
+
+        nav_button("رواتب", "كشف الرواتب", "payroll",
+                   ":material/payments:", "كشف الرواتب")
+
+        nav_button("أصول ثابتة", "الأصول الثابتة", "assets",
+                   ":material/foundation:", "الأصول الثابتة")
+
+        nav_button("مرفقات", "المرفقات", "attachments",
+                   ":material/attach_file:", "المرفقات")
+
+        # ====================================================
         # المجموعة 5: النظام والأمان
-        # ============================================================
-        st.markdown('<div class="menu-section">⚙️ النظام والأمان</div>', unsafe_allow_html=True)
-        if can_access("الصلاحيات") and st.button("🛡️ صلاحيات", key="roles"):
-            st.session_state.current_page = "الصلاحيات"
-        if can_access("سجل التدقيق") and st.button("📋 سجل تدقيق", key="audit"):
-            st.session_state.current_page = "سجل التدقيق"
-        if can_access("نسخ احتياطي") and st.button("💾 نسخ احتياطي", key="backup"):
-            st.session_state.current_page = "نسخ احتياطي"
+        # ====================================================
+        st.markdown(
+            '<div class="menu-section">⚙️ النظام والأمان</div>',
+            unsafe_allow_html=True
+        )
 
-        # ============================================================
-        # ✅ زر حقن البيانات — تشغيل مباشر (بدون صفحة منفصلة)
-        # ============================================================
-        if username == 'admin':
+        nav_button("صلاحيات", "الصلاحيات", "roles",
+                   ":material/security:", "الصلاحيات")
+
+        nav_button("سجل تدقيق", "سجل التدقيق", "audit",
+                   ":material/history:", "سجل التدقيق")
+
+        nav_button("نسخ احتياطي", "نسخ احتياطي", "backup",
+                   ":material/backup:", "نسخ احتياطي")
+
+        # ====================================================
+        # أدوات المطور
+        # ====================================================
+        if username == "admin":
+
             st.markdown("---")
+
             st.markdown(
-                '<div class="menu-section" style="color:#fca5a5;">🧪 أدوات المطور</div>',
+                '<div class="menu-section" style="color:#FCA5A5;">'
+                '🧪 أدوات المطور</div>',
                 unsafe_allow_html=True
             )
+
             seed_clicked = st.button(
-                "🌱 حقن بيانات تجريبية",
+                "حقن بيانات تجريبية",
                 key="seed_data_btn",
-                help="حذف كل البيانات + حقن بيانات واقعية في كل الوحدات",
-                type="primary"
+                help="حذف كل البيانات ثم حقن بيانات تجريبية",
+                type="primary",
+                icon=":material/eco:",
+                use_container_width=True
             )
+
             if seed_clicked:
                 st.session_state.run_seed = True
+                st.rerun()
 
-        # ============================================================
+        # ====================================================
         # المجموعة 6: الذكاء الاصطناعي
-        # ============================================================
-        st.markdown('<div class="menu-section">🤖 الذكاء الاصطناعي</div>', unsafe_allow_html=True)
-        if can_access("المساعد الذكي") and st.button("🧠 المساعد الذكي", key="ai"):
-            st.session_state.current_page = "المساعد الذكي"
+        # ====================================================
+        st.markdown(
+            '<div class="menu-section">🤖 الذكاء الاصطناعي</div>',
+            unsafe_allow_html=True
+        )
 
+        nav_button("المساعد الذكي", "المساعد الذكي", "ai",
+                   ":material/psychology:", "المساعد الذكي")
+
+        # ====================================================
+        # تسجيل الخروج
+        # ====================================================
         st.divider()
 
-        # ============================================================
-        # ✅ زر الخروج
-        # ============================================================
-        if st.button("🚪 تسجيل الخروج", key="logout", help="تسجيل الخروج من النظام"):
-            _u = st.session_state.get('user') or {}
+        st.markdown('<div class="logout-area">', unsafe_allow_html=True)
+
+        logout_clicked = st.button(
+            "تسجيل الخروج",
+            key="logout",
+            help="تسجيل الخروج من النظام",
+            icon=":material/logout:",
+            use_container_width=True
+        )
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        if logout_clicked:
+            _user = st.session_state.get("user") or {}
+
             logout_session(
-                username=_u.get('username'),
-                user_id=_u.get('id'),
+                username=_user.get("username"),
+                user_id=_user.get("id"),
             )
 
-    # ============================================================
-    # ✅ تنفيذ الحقن مباشرة (بدون صفحة منفصلة)
-    # ============================================================
-    if st.session_state.get('run_seed', False):
+            st.rerun()
+
+    # ========================================================
+    # تنفيذ الحقن التجريبي
+    # ========================================================
+    if st.session_state.get("run_seed", False):
+
         from services.seed_service import run_full_seed
 
         st.markdown("""
-        <div style="text-align:center; padding:3rem 1rem;">
-            <h1 style="color:#F8FAFC; font-size:2.5rem;">🌱 حقن البيانات التجريبية</h1>
-            <p style="color:#94A3B8; font-size:1.1rem;">جاري تجهيز النظام ببيانات واقعية...</p>
+        <div style="
+            text-align:center;
+            padding:3rem 1rem;
+            border-radius:18px;
+            background:linear-gradient(
+                145deg,
+                rgba(139,92,246,0.14),
+                rgba(255,255,255,0.025)
+            );
+            border:1px solid rgba(167,139,250,0.18);
+            margin-bottom:25px;
+        ">
+            <h1 style="color:#F8FAFC;font-size:2.3rem;">
+                🌱 حقن البيانات التجريبية
+            </h1>
+            <p style="color:#A1A1AA;font-size:1.05rem;">
+                جاري تجهيز النظام ببيانات واقعية...
+            </p>
         </div>
         """, unsafe_allow_html=True)
 
         with st.spinner("⏳ جاري الحقن... قد يستغرق دقيقة إلى دقيقتين"):
+
             try:
                 result = run_full_seed(progress_callback=None)
 
                 if result.get("success"):
+
                     st.success("✅ تم حقن البيانات بنجاح!")
                     st.balloons()
 
                     st.markdown("### 📊 ملخص البيانات المُحقنة")
+
                     summary = result.get("summary", {})
-                    cols = st.columns(3)
                     items = list(summary.items())
+
+                    cols = st.columns(3)
+
                     for i, (key, value) in enumerate(items):
                         with cols[i % 3]:
                             st.metric(key, value)
+
                 else:
-                    st.error(f"❌ فشل الحقن: {result.get('error', 'خطأ غير معروف')}")
+                    st.error(
+                        f"❌ فشل الحقن: "
+                        f"{result.get('error', 'خطأ غير معروف')}"
+                    )
 
             except Exception as e:
                 st.error(f"❌ خطأ غير متوقع: {e}")
+
                 import traceback
                 st.code(traceback.format_exc())
 
-        if st.button("✅ تم — العودة للنظام", type="primary", key="close_seed"):
+        if st.button(
+            "✅ تم — العودة للنظام",
+            type="primary",
+            key="close_seed",
+            use_container_width=True
+        ):
             st.session_state.run_seed = False
             st.rerun()
 
         st.stop()
 
-    # ============================================================
-    # توجيه الصفحات (كما هي)
-    # ============================================================
+    # ========================================================
+    # توجيه الصفحات
+    # ========================================================
     page = st.session_state.current_page
 
     def show_if_permitted(module, show_func):
+
         if can_access(module):
             show_func()
+
         else:
             st.markdown(f"""
             <div class="permission-denied">
                 <h2>⛔ غير مصرح</h2>
-                <p>ليس لديك صلاحية للوصول إلى وحدة "{module}".</p>
+                <p>
+                    ليس لديك صلاحية للوصول إلى وحدة
+                    "{module}".
+                </p>
             </div>
             """, unsafe_allow_html=True)
 
+    # ========================================================
+    # الصفحات
+    # ========================================================
     if page == "لوحة المعلومات":
         dashboard_show()
+
     elif page == "المخزون":
         show_if_permitted("المخزون", inventory_show)
+
     elif page == "التسويات المخزنية":
         show_if_permitted("التسويات المخزنية", inventory_adjustment_show)
+
     elif page == "المبيعات":
         show_if_permitted("المبيعات", sales_show)
+
     elif page == "المشتريات":
         show_if_permitted("المشتريات", purchases_show)
+
     elif page == "مرتجعات البضاعة":
         show_if_permitted("مرتجعات البضاعة", returns_show)
+
     elif page == "سندات القبض والصرف":
         show_if_permitted("سندات القبض والصرف", receipts_show)
+
     elif page == "المصروفات":
         show_if_permitted("المصروفات", expenses_show)
+
     elif page == "الأرصدة الافتتاحية":
         show_if_permitted("الأرصدة الافتتاحية", opening_show)
+
     elif page == "تقييم العملات":
         show_if_permitted("تقييم العملات", revaluation_show)
+
     elif page == "الحسابات":
         show_if_permitted("الحسابات", accounting_show)
+
     elif page == "الموارد البشرية":
         show_if_permitted("الموارد البشرية", hr_show)
+
     elif page == "إدارة العملاء":
         show_if_permitted("إدارة العملاء", crm_show)
+
     elif page == "الأصول الثابتة":
         show_if_permitted("الأصول الثابتة", assets_show)
+
     elif page == "شجرة الحسابات":
         show_if_permitted("شجرة الحسابات", chart_show)
+
     elif page == "القوائم المالية":
         show_if_permitted("القوائم المالية", financial_show)
+
     elif page == "العملات":
         show_if_permitted("العملات", currency_show)
+
     elif page == "التعاملات البنكية":
         show_if_permitted("التعاملات البنكية", bank_show)
+
     elif page == "مراكز التكلفة":
         show_if_permitted("مراكز التكلفة", cost_center_show)
+
     elif page == "المرفقات":
         show_if_permitted("المرفقات", attachment_show)
+
     elif page == "الصلاحيات":
         show_if_permitted("الصلاحيات", roles_show)
+
     elif page == "إغلاق الفترات":
         show_if_permitted("إغلاق الفترات", period_show)
+
     elif page == "إغلاق الحسابات":
         show_if_permitted("إغلاق الحسابات", closing_show)
+
     elif page == "FIFO المخزون":
         show_if_permitted("FIFO المخزون", fifo_show)
+
     elif page == "كشف الرواتب":
         show_if_permitted("كشف الرواتب", payroll_show)
+
     elif page == "الضريبة":
         show_if_permitted("الضريبة", vat_show)
+
     elif page == "المساعد الذكي":
         show_if_permitted("المساعد الذكي", ai_show)
+
     elif page == "سجل التدقيق":
         show_if_permitted("سجل التدقيق", audit_show)
+
     elif page == "نسخ احتياطي":
         show_if_permitted("نسخ احتياطي", backup_show)
+
     elif page == "التقارير المالية XBRL":
         show_if_permitted("التقارير المالية XBRL", pdf_show)
+
     elif page == "الصندوق":
         show_if_permitted("الصندوق", cash_show)
