@@ -1,5 +1,5 @@
 # services/accounting_service.py - منطق الحسابات وقيود اليومية
-# v4.3 — ✅ دعم كامل للحسابات الفرعية (أكواد بنقطة مثل 1102.04)
+# v4.4 — ✅ إصلاح: دفتر الأستاذ يعرض القيمة بالعملة الأساسية (ضرب في سعر الصرف)
 import uuid
 import re
 from datetime import date
@@ -561,8 +561,11 @@ def get_entry_details(entry_id, conn=None):
 def get_ledger(account_name, conn=None):
     c, owns = _resolve_conn(conn)
     try:
+        # ✅ التعديل: نضرب المبلغ في سعر الصرف لعرض القيمة بالعملة الأساسية
         ledger = c.execute("""
-            SELECT je.date, je.description, jl.debit, jl.credit,
+            SELECT je.date, je.description, 
+                   (jl.debit * jl.exchange_rate) as debit, 
+                   (jl.credit * jl.exchange_rate) as credit,
                    jl.currency_code, jl.exchange_rate
             FROM journal_lines jl
             JOIN journal_entries je ON jl.entry_id = je.id
