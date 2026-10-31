@@ -1434,6 +1434,13 @@ def show() -> None:
     _ensure_session()
     _apply_design()
 
+    # ✅ 1. استدعاء الشريط الجانبي مرة واحدة فقط (خارج التبويبات)
+    _render_sidebar()
+
+    # ✅ 2. تصميم الهيدر الرئيسي
+    _render_hero()
+
+    # ✅ 3. التبويبات الرئيسية
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         ":material/psychology: المساعد الذكي",
         ":material/bar_chart: المحلل المالي",
@@ -1443,22 +1450,16 @@ def show() -> None:
     ])
 
     with tab1:
-        _render_hero()
-        _render_sidebar()
         _render_chat_tab(LOCAL_MODEL_ID)
 
     with tab2:
-        _render_sidebar()
         _render_financial_analysis_tab(LOCAL_MODEL_ID)
 
     with tab3:
-        _render_sidebar()
         _render_inventory_tab(LOCAL_MODEL_ID)
 
     with tab4:
-        _render_sidebar()
         _render_hr_tab(LOCAL_MODEL_ID)
 
     with tab5:
-        _render_sidebar()
         _render_entries_tab()
