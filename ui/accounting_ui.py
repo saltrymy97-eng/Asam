@@ -1,5 +1,5 @@
-# ui/accounting_ui.py – واجهة الحسابات (v2.2)
-# ✅ إصلاح: منع حفظ القيد إذا كان المدين لا يساوي الدائن (حماية استباقية)
+# ui/accounting_ui.py – واجهة الحسابات (v2.3)
+# ✅ إصلاح: الفحص في الواجهة ذكي (يفحص فقط إذا كانت كل العملات متساوية، ويترك التحويل للخلفية)
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -51,9 +51,6 @@ def get_account_display_name(code):
 
 
 def get_accounts_list():
-    """
-    ✅ جلب *جميع* الحسابات النشطة بدون أي استثناء.
-    """
     conn = get_connection()
     try:
         query = "SELECT code, name, is_system FROM accounts WHERE is_active = 1 ORDER BY code"
@@ -126,9 +123,9 @@ def show():
                 lines = []
                 cost_center_allocations = []
                 
-                # ✅ متغيرات لحساب الإجمالي في الوقت الفعلي
                 total_debit = 0.0
                 total_credit = 0.0
+                used_currencies = set() # ✅ لتجميع العملات المستخدمة
 
                 for i in range(4):
                     cols = st.columns([3, 1.5, 1.5, 1])
@@ -144,7 +141,6 @@ def show():
                         f"دائن {i+1}", min_value=0.0, step=0.01, key=f"cred_{i}"
                     )
 
-                    # قائمة العملات
                     curr_names = [f"{c['code']} - {c['name']}" for c in currencies]
                     if curr_names:
                         base_currency = get_base_currency()
@@ -164,7 +160,6 @@ def show():
                         currency_code = "YER"
 
                     if account:
-                        # استخراج الكود الصافي
                         clean_acc = account.replace("🔒 [نظامي] ", "").strip()
                         code = clean_acc.split(" - ")[0].strip()
 
@@ -175,9 +170,12 @@ def show():
                             "currency_code": currency_code
                         })
                         
-                        # ✅ جمع الإجماليات
                         total_debit += debit
                         total_credit += credit
+                        
+                        # ✅ إضافة العملة للمجموعة
+                        if debit > 0 or credit > 0:
+                            used_currencies.add(currency_code)
 
                         if cc_options:
                             with st.expander(
@@ -242,9 +240,9 @@ def show():
                 
                 difference = total_debit - total_credit
                 if abs(difference) > 0.01:
-                    st.error(f"⚠️ القيد غير متوازن! الفرق: {abs(difference):,.2f}")
+                    st.warning(f"⚠️ تنبيه: الأرقام الظاهرة غير متوازنة. النظام سيتحقق من سعر الصرف عند الحفظ.")
                 else:
-                    st.success("✅ القيد متوازن")
+                    st.success("✅ القيد متوازن (ظاهرياً)")
 
                 submitted = st.form_submit_button("💾 حفظ القيد", type="primary")
 
@@ -253,38 +251,48 @@ def show():
                         st.error("البيان مطلوب")
                     elif not lines:
                         st.error("أضف سطراً محاسبياً واحداً على الأقل")
-                    # ✅ الحماية الاستباقية: منع الحفظ إذا كان غير متوازن
-                    elif abs(total_debit - total_credit) > 0.01:
-                        st.error(f"لا يمكن حفظ القيد لأنه غير متوازن! (الفرق: {abs(total_debit - total_credit):,.2f})")
                     else:
-                        entry_id, error = save_journal_entry(
-                            description, lines,
-                            entry_date.strftime("%Y-%m-%d"),
-                            cost_center_allocations=(
-                                cost_center_allocations
-                                if cost_center_allocations else None
-                            )
-                        )
+                        # ✅ الفحص الذكي في الواجهة:
+                        # نمنع الحفظ فقط إذا كانت جميع العملات هي نفسها وكانت الأرقام غير متساوية.
+                        # أما إذا كانت العملات مختلفة، نترك الحكم للخلفية.
+                        base_curr = get_base_currency()
+                        base_code = base_curr['code'] if base_curr else 'YER'
+                        
+                        is_multi_currency = len(used_currencies) > 1
+                        is_same_currency_unbalanced = (not is_multi_currency) and (abs(total_debit - total_credit) > 0.01)
 
-                        if error:
-                            st.error(error)
+                        if is_same_currency_unbalanced:
+                            st.error(f"لا يمكن حفظ القيد لأنه غير متوازن! (الفرق: {abs(total_debit - total_credit):,.2f})")
                         else:
-                            username = (
-                                st.session_state.user.get('username', 'admin')
-                                if 'user' in st.session_state else 'admin'
+                            # إذا كانت العملات مختلفة أو القيد متوازن، نمرر للخلفية
+                            entry_id, error = save_journal_entry(
+                                description, lines,
+                                entry_date.strftime("%Y-%m-%d"),
+                                cost_center_allocations=(
+                                    cost_center_allocations
+                                    if cost_center_allocations else None
+                                )
                             )
-                            log_action(
-                                username=username,
-                                action="قيد يومية",
-                                table_name="journal_entries",
-                                record_id=entry_id,
-                                new_value=f"البيان: {description}"
-                            )
-                            st.success(
-                                "تم تسجيل القيد بنجاح مع تحويل العملات "
-                                "وتوزيعات مراكز التكلفة ✅"
-                            )
-                            st.rerun()
+
+                            if error:
+                                st.error(error) # عرض خطأ الخلفية (إذا كان غير متوازن بعد التحويل)
+                            else:
+                                username = (
+                                    st.session_state.user.get('username', 'admin')
+                                    if 'user' in st.session_state else 'admin'
+                                )
+                                log_action(
+                                    username=username,
+                                    action="قيد يومية",
+                                    table_name="journal_entries",
+                                    record_id=entry_id,
+                                    new_value=f"البيان: {description}"
+                                )
+                                st.success(
+                                    "تم تسجيل القيد بنجاح مع تحويل العملات "
+                                    "وتوزيعات مراكز التكلفة ✅"
+                                )
+                                st.rerun()
 
         # عرض آخر القيود
         st.markdown("---")
