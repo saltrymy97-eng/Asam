@@ -1,6 +1,6 @@
-# services/returns_service.py – منطق أعمال المرتجعات (v3.2)
+# services/returns_service.py – منطق أعمال المرتجعات (v3.3)
 # ✅ تحديث رصيد الفاتورة الأصلية (للسندات)
-# ✅ إضافة قيد المخزون لمرتجع المشتريات
+# ✅ إصلاح: توازن القيد المحاسبي لمرتجع المشتريات (فصل المخزون عن الضريبة)
 # ✅ Fail Fast للحسابات قبل تعديل المخزون
 import sqlite3
 from collections import defaultdict
@@ -345,12 +345,16 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date,
                     {"account": acc_inventory, "debit": total_fifo_cost, "credit": 0, "currency_code": currency_code, "exchange_rate": exchange_rate},
                     {"account": acc_cogs, "debit": 0, "credit": total_fifo_cost, "currency_code": currency_code, "exchange_rate": exchange_rate},
                 ]
-        else: # purchase
+        else: # purchase (✅ تم تصحيح هذا القسم)
             lines = [
+                # 1. مدين: الموردون (بإجمالي قيمة الفاتورة)
                 {"account": acc_payables, "debit": total_return, "credit": 0, "currency_code": currency_code, "exchange_rate": exchange_rate},
-                {"account": acc_purchase_tax, "debit": 0, "credit": subtotal_return, "currency_code": currency_code, "exchange_rate": exchange_rate},
-                {"account": acc_vat, "debit": 0, "credit": vat_amount, "currency_code": currency_code, "exchange_rate": exchange_rate},
-                {"account": acc_inventory, "debit": 0, "credit": total_fifo_cost, "currency_code": currency_code, "exchange_rate": exchange_rate}, # ✅ أضفنا قيد المخزون
+                
+                # 2. دائن: المخزون (بصافي قيمة البضاعة)
+                {"account": acc_inventory, "debit": 0, "credit": subtotal_return, "currency_code": currency_code, "exchange_rate": exchange_rate},
+                
+                # 3. دائن: ضريبة المدخلات (بمبلغ الضريبة فقط)
+                {"account": acc_purchase_tax, "debit": 0, "credit": vat_amount, "currency_code": currency_code, "exchange_rate": exchange_rate},
             ]
 
         entry_id, entry_error = save_journal_entry(
@@ -366,7 +370,7 @@ def process_return(invoice_type, invoice_id, items_to_return, return_date,
 
     except Exception as e:
         try:
-            conn.rollback() # سيعمل الآن بعد حذف الكلاس من database.py
+            conn.rollback()
         except Exception:
             pass
         return False, str(e), 0, None
