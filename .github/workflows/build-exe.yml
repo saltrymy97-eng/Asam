@@ -31,20 +31,43 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
       
+      # ✅ 1. إنشاء مجلد النموذج والملف الفارغ
+      - name: Create Model Placeholder
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path models | Out-Null
+          New-Item -ItemType File -Force -Path models\ai-model.gguf | Out-Null
+      
+      # ✅ 2. تحميل النموذج الصغير (Qwen2 0.5B) للتجربة
+      - name: Download Small AI Model (For Testing)
+        shell: pwsh
+        run: |
+          Write-Host "Downloading Small AI Model (approx. 270 MB)..."
+          $url = "https://huggingface.co/Qwen/Qwen2-0.5B-Instruct-GGUF/resolve/main/qwen2-0_5b-instruct-q4_k_m.gguf"
+          Invoke-WebRequest -Uri $url -OutFile "models\ai-model.gguf"
+          Write-Host "Model downloaded successfully. Size:"
+          Get-Item "models\ai-model.gguf" | Select-Object Length
+      
       - name: Build EXE (Edge Native Mode)
         shell: cmd
         run: |
           pyinstaller --noconfirm --onedir --windowed --icon=icon.ico --name=HokamaERP ^
           --copy-metadata streamlit --copy-metadata pandas --copy-metadata altair --copy-metadata numpy --copy-metadata plotly ^
-          --collect-submodules streamlit --collect-submodules groq ^
+          --collect-submodules streamlit ^
           --collect-data streamlit ^
           --hidden-import streamlit.web.cli ^
           --hidden-import cryptography.fernet ^
-          --hidden-import groq ^
           --hidden-import database ^
           --add-data "app.py;." --add-data "database.py;." --add-data "ui;ui" --add-data "services;services" --add-data "icon.ico;." ^
           --exclude-module tkinter --exclude-module matplotlib --exclude-module scipy --exclude-module IPython --exclude-module jupyter --exclude-module notebook --exclude-module pytest --exclude-module sphinx ^
           app_desktop.py
+      
+      # ✅ 3. نسخ النموذج إلى مجلد التوزيع النهائي
+      - name: Copy AI Model to Dist Folder
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist\HokamaERP\models | Out-Null
+          Copy-Item -Path models\ai-model.gguf -Destination dist\HokamaERP\models\ai-model.gguf -Force
       
       - name: Cleanup tests and pycache
         shell: pwsh
