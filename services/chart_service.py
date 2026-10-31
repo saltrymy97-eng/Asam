@@ -1,8 +1,5 @@
-# services/chart_service.py – منطق شجرة الحسابات (v3.1)
-# ✅ Connection Registry — لا يُغلق الاتصال
-# ✅ v2.1: تسجيل كامل (username + record_id + dict) + تسجيل الحذف
-# ✅ v3.0: دعم is_system (الحسابات النظامية) + حماية
-# ✅ v3.1: إصلاح — get_accounts_tree تُعيد dict بدل sqlite3.Row (لدعم .get())
+# services/chart_service.py – منطق شجرة الحسابات (v3.2)
+# ✅ v3.2: إصلاح get_functional_account — إزالة شرط is_system لكي تتمكن الوحدات الآلية من رؤية الحسابات النظامية
 import sqlite3
 from database import get_connection, close_connection
 from services.audit_service import log_action
@@ -199,7 +196,8 @@ def get_account_options(conn=None, include_system=False,
 def get_functional_account(functional_type, conn=None):
     """
     إرجاع كود الحساب حسب النوع الوظيفي.
-    ✅ v3.0: يستثني الحسابات النظامية (الفرعية).
+    ✅ v3.2: تم إزالة شرط is_system لكي تعمل الوحدات الآلية (المرتجعات، المبيعات، إلخ) 
+             بشكل صحيح حتى مع الحسابات النظامية.
     """
     c, owns = _resolve_conn(conn)
     try:
@@ -207,7 +205,6 @@ def get_functional_account(functional_type, conn=None):
         row = c.execute(
             "SELECT code, name FROM accounts "
             "WHERE functional_type = ? AND is_active = 1 "
-            "AND (is_system IS NULL OR is_system = 0) "
             "LIMIT 1",
             (functional_type,)
         ).fetchone()
