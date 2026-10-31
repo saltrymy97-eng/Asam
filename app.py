@@ -1,4 +1,3 @@
-
 import streamlit as st
 import database
 
@@ -378,10 +377,6 @@ if "run_seed" not in st.session_state:
 # دالة موحدة لأزرار القائمة
 # ============================================================
 def nav_button(label, page, key, icon, module=None):
-    """
-    إنشاء زر تنقل موحد مع إبراز الصفحة النشطة.
-    لا يغير الأيقونات أو مفاتيح الأزرار الأصلية.
-    """
     if module and not can_access(module):
         return
 
@@ -411,7 +406,6 @@ else:
     user_data = st.session_state.get("user") or {}
     username = user_data.get("username", "")
 
-    # المدير يرى جميع الوحدات
     if username == "admin":
         allowed_modules = None
     else:
@@ -420,18 +414,15 @@ else:
     def can_access(module):
         if username == "admin":
             return True
-
         return module in allowed_modules if allowed_modules else False
 
     # ========================================================
     # القائمة الجانبية
     # ========================================================
     with st.sidebar:
-
-        # الشعار
         st.markdown("""
         <div class="brand-panel">
-            <div class="brand-icon">🏢</div>
+            <div class="brand-icon">:material/domain:</div>
             <div class="brand-title">حوكمة ERP</div>
             <p class="brand-subtitle">
                 إدارة ذكية .. قرارات واثقة
@@ -439,7 +430,6 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-        # بيانات المستخدم
         display_name = (
             user_data.get("full_name")
             or user_data.get("username")
@@ -449,7 +439,7 @@ else:
         st.markdown(f"""
         <div class="user-panel">
             <div class="user-label">المستخدم الحالي</div>
-            <div class="user-name">👤 {display_name}</div>
+            <div class="user-name">:material/person: {display_name}</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -459,7 +449,7 @@ else:
         # المجموعة 1: الرئيسية
         # ====================================================
         st.markdown(
-            '<div class="menu-section">🏠 الرئيسية</div>',
+            '<div class="menu-section">:material/home: الرئيسية</div>',
             unsafe_allow_html=True
         )
 
@@ -474,7 +464,7 @@ else:
         # المجموعة 2: العمليات
         # ====================================================
         st.markdown(
-            '<div class="menu-section">📦 العمليات</div>',
+            '<div class="menu-section">:material/inventory_2: العمليات</div>',
             unsafe_allow_html=True
         )
 
@@ -506,7 +496,7 @@ else:
         # المجموعة 3: المحاسبة والمالية
         # ====================================================
         st.markdown(
-            '<div class="menu-section">💰 المحاسبة والمالية</div>',
+            '<div class="menu-section">:material/account_balance: المحاسبة والمالية</div>',
             unsafe_allow_html=True
         )
 
@@ -556,7 +546,7 @@ else:
         # المجموعة 4: إدارة الأعمال
         # ====================================================
         st.markdown(
-            '<div class="menu-section">👥 إدارة الأعمال</div>',
+            '<div class="menu-section">:material/group: إدارة الأعمال</div>',
             unsafe_allow_html=True
         )
 
@@ -576,7 +566,7 @@ else:
         # المجموعة 5: النظام والأمان
         # ====================================================
         st.markdown(
-            '<div class="menu-section">⚙️ النظام والأمان</div>',
+            '<div class="menu-section">:material/settings: النظام والأمان</div>',
             unsafe_allow_html=True
         )
 
@@ -593,12 +583,9 @@ else:
         # أدوات المطور
         # ====================================================
         if username == "admin":
-
             st.markdown("---")
-
             st.markdown(
-                '<div class="menu-section" style="color:#FCA5A5;">'
-                '🧪 أدوات المطور</div>',
+                '<div class="menu-section" style="color:#FCA5A5;">:material/developer_mode: أدوات المطور</div>',
                 unsafe_allow_html=True
             )
 
@@ -619,7 +606,7 @@ else:
         # المجموعة 6: الذكاء الاصطناعي
         # ====================================================
         st.markdown(
-            '<div class="menu-section">🤖 الذكاء الاصطناعي</div>',
+            '<div class="menu-section">:material/smart_toy: الذكاء الاصطناعي</div>',
             unsafe_allow_html=True
         )
 
@@ -645,19 +632,16 @@ else:
 
         if logout_clicked:
             _user = st.session_state.get("user") or {}
-
             logout_session(
                 username=_user.get("username"),
                 user_id=_user.get("id"),
             )
-
             st.rerun()
 
     # ========================================================
     # تنفيذ الحقن التجريبي
     # ========================================================
     if st.session_state.get("run_seed", False):
-
         from services.seed_service import run_full_seed
 
         st.markdown("""
@@ -674,7 +658,7 @@ else:
             margin-bottom:25px;
         ">
             <h1 style="color:#F8FAFC;font-size:2.3rem;">
-                🌱 حقن البيانات التجريبية
+                :material/eco: حقن البيانات التجريبية
             </h1>
             <p style="color:#A1A1AA;font-size:1.05rem;">
                 جاري تجهيز النظام ببيانات واقعية...
@@ -682,43 +666,38 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-        with st.spinner("⏳ جاري الحقن... قد يستغرق دقيقة إلى دقيقتين"):
-
+        with st.spinner(":material/hourglass_empty: جاري الحقن... قد يستغرق دقيقة إلى دقيقتين"):
             try:
                 result = run_full_seed(progress_callback=None)
 
                 if result.get("success"):
-
-                    st.success("✅ تم حقن البيانات بنجاح!")
+                    st.success(":material/check_circle: تم حقن البيانات بنجاح!")
                     st.balloons()
 
-                    st.markdown("### 📊 ملخص البيانات المُحقنة")
+                    st.markdown("### :material/bar_chart: ملخص البيانات المُحقنة")
 
                     summary = result.get("summary", {})
                     items = list(summary.items())
-
                     cols = st.columns(3)
 
                     for i, (key, value) in enumerate(items):
                         with cols[i % 3]:
                             st.metric(key, value)
-
                 else:
                     st.error(
-                        f"❌ فشل الحقن: "
+                        f":material/error: فشل الحقن: "
                         f"{result.get('error', 'خطأ غير معروف')}"
                     )
-
             except Exception as e:
-                st.error(f"❌ خطأ غير متوقع: {e}")
-
+                st.error(f":material/error: خطأ غير متوقع: {e}")
                 import traceback
                 st.code(traceback.format_exc())
 
         if st.button(
-            "✅ تم — العودة للنظام",
+            "تم — العودة للنظام",
             type="primary",
             key="close_seed",
+            icon=":material/check_circle:",
             use_container_width=True
         ):
             st.session_state.run_seed = False
@@ -732,14 +711,12 @@ else:
     page = st.session_state.current_page
 
     def show_if_permitted(module, show_func):
-
         if can_access(module):
             show_func()
-
         else:
             st.markdown(f"""
             <div class="permission-denied">
-                <h2>⛔ غير مصرح</h2>
+                <h2>:material/block: غير مصرح</h2>
                 <p>
                     ليس لديك صلاحية للوصول إلى وحدة
                     "{module}".
@@ -752,93 +729,63 @@ else:
     # ========================================================
     if page == "لوحة المعلومات":
         dashboard_show()
-
     elif page == "المخزون":
         show_if_permitted("المخزون", inventory_show)
-
     elif page == "التسويات المخزنية":
         show_if_permitted("التسويات المخزنية", inventory_adjustment_show)
-
     elif page == "المبيعات":
         show_if_permitted("المبيعات", sales_show)
-
     elif page == "المشتريات":
         show_if_permitted("المشتريات", purchases_show)
-
     elif page == "مرتجعات البضاعة":
         show_if_permitted("مرتجعات البضاعة", returns_show)
-
     elif page == "سندات القبض والصرف":
         show_if_permitted("سندات القبض والصرف", receipts_show)
-
     elif page == "المصروفات":
         show_if_permitted("المصروفات", expenses_show)
-
     elif page == "الأرصدة الافتتاحية":
         show_if_permitted("الأرصدة الافتتاحية", opening_show)
-
     elif page == "تقييم العملات":
         show_if_permitted("تقييم العملات", revaluation_show)
-
     elif page == "الحسابات":
         show_if_permitted("الحسابات", accounting_show)
-
     elif page == "الموارد البشرية":
         show_if_permitted("الموارد البشرية", hr_show)
-
     elif page == "إدارة العملاء":
         show_if_permitted("إدارة العملاء", crm_show)
-
     elif page == "الأصول الثابتة":
         show_if_permitted("الأصول الثابتة", assets_show)
-
     elif page == "شجرة الحسابات":
         show_if_permitted("شجرة الحسابات", chart_show)
-
     elif page == "القوائم المالية":
         show_if_permitted("القوائم المالية", financial_show)
-
     elif page == "العملات":
         show_if_permitted("العملات", currency_show)
-
     elif page == "التعاملات البنكية":
         show_if_permitted("التعاملات البنكية", bank_show)
-
     elif page == "مراكز التكلفة":
         show_if_permitted("مراكز التكلفة", cost_center_show)
-
     elif page == "المرفقات":
         show_if_permitted("المرفقات", attachment_show)
-
     elif page == "الصلاحيات":
         show_if_permitted("الصلاحيات", roles_show)
-
     elif page == "إغلاق الفترات":
         show_if_permitted("إغلاق الفترات", period_show)
-
     elif page == "إغلاق الحسابات":
         show_if_permitted("إغلاق الحسابات", closing_show)
-
     elif page == "FIFO المخزون":
         show_if_permitted("FIFO المخزون", fifo_show)
-
     elif page == "كشف الرواتب":
         show_if_permitted("كشف الرواتب", payroll_show)
-
     elif page == "الضريبة":
         show_if_permitted("الضريبة", vat_show)
-
     elif page == "المساعد الذكي":
         show_if_permitted("المساعد الذكي", ai_show)
-
     elif page == "سجل التدقيق":
         show_if_permitted("سجل التدقيق", audit_show)
-
     elif page == "نسخ احتياطي":
         show_if_permitted("نسخ احتياطي", backup_show)
-
     elif page == "التقارير المالية XBRL":
         show_if_permitted("التقارير المالية XBRL", pdf_show)
-
     elif page == "الصندوق":
         show_if_permitted("الصندوق", cash_show)
