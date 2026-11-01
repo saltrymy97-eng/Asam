@@ -1425,7 +1425,6 @@ def _render_entries_tab() -> None:
             else:
                 st.error(display_text)
 
-
 # =========================================================
 # 15. الدالة الرئيسية للواجهة
 # =========================================================
@@ -1440,26 +1439,157 @@ def show() -> None:
     # ✅ 2. تصميم الهيدر الرئيسي
     _render_hero()
 
-    # ✅ 3. التبويبات الرئيسية
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        ":material/psychology: المساعد الذكي",
-        ":material/bar_chart: المحلل المالي",
-        ":material/inventory_2: المخزون",
-        ":material/badge: الموظفون",
-        ":material/edit_note: توليد القيود",
+    # ✅ 3. التبويبات الرئيسية (9 تبويبات)
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+        ":material/psychology: مساعد",
+        ":material/bar_chart: محلل",
+        ":material/inventory_2: مخزون",
+        ":material/badge: موظفين",
+        ":material/edit_note: قيود",
+        ":material/gavel: احتيال",          # تبويب كشف الاحتيال
+        ":material/online_prediction: تنبؤات", # تبويب التنبؤات المستقبلية
+        ":material/assessment: تقرير شامل",   # تبويب التقرير الشامل
+        ":material/request_quote: مراكز تكلفة", # تبويب مراكز التكلفة
     ])
 
+    # 1. المساعد الذكي
     with tab1:
         _render_chat_tab(LOCAL_MODEL_ID)
 
+    # 2. المحلل المالي
     with tab2:
         _render_financial_analysis_tab(LOCAL_MODEL_ID)
 
+    # 3. المخزون
     with tab3:
         _render_inventory_tab(LOCAL_MODEL_ID)
 
+    # 4. الموظفون
     with tab4:
         _render_hr_tab(LOCAL_MODEL_ID)
 
+    # 5. توليد القيود
     with tab5:
         _render_entries_tab()
+
+    # 6. كشف الاحتيال (يتطلب بناء واجهة بسيطة)
+    with tab6:
+        _section_title(
+            "كشف العمليات غير الطبيعية (الاحتيال)",
+            "تحليل القيود والفواتير لاكتشاف أي شذوذ أو تلاعب محتمل.",
+        )
+        if st.button("بدء فحص الاحتيال", type="primary", use_container_width=True, icon=":material/search:"):
+            with st.spinner("جاري فحص العمليات..."):
+                entries = get_recent_entries() # دالة تجلب آخر القيود
+                prompt = _make_prompt(
+                    data=entries,
+                    task="كشف العمليات المشبوهة أو غير الطبيعية",
+                    instructions="""
+حلل القيود التالية وابحث عن:
+1. قيود بمبالغ غير طبيعية (كبيرة جداً أو متكررة).
+2. قيود تم تسجيلها في أوقات غير معتادة (إن توفر الوقت).
+3. عمليات لا تتوافق مع طبيعة النشاط.
+4. أي نمط يشير إلى خطأ بشري أو تلاعب.
+قدم تقريراً مفصلاً بالعمليات المشتبه بها.
+"""
+                )
+                answer = query_local_ai(prompt, "فحص الاحتيال", LOCAL_MODEL_ID)
+            render_ai_response(answer)
+
+    # 7. التنبؤات المستقبلية (يتطلب بناء واجهة بسيطة)
+    with tab7:
+        _section_title(
+            "التنبؤات المستقبلية",
+            "توقع الإيرادات والتدفقات النقدية بناءً على البيانات التاريخية.",
+        )
+        if st.button("توليد التوقعات", type="primary", use_container_width=True, icon=":material/auto_graph:"):
+            with st.spinner("جاري تحليل البيانات وتوليد التوقعات..."):
+                trends = get_trend_analysis()
+                business = get_business_snapshot()
+                prompt = _make_prompt(
+                    data={"trends": trends, "business": business},
+                    task="توقع الإيرادات والتدفقات النقدية",
+                    instructions="""
+بناءً على بيانات الاتجاهات والأعمال السابقة:
+1. توقع حجم المبيعات للفترة القادمة.
+2. توقع التدفقات النقدية المتوقعة.
+3. حدد المخاطر المالية المحتملة.
+4. اذكر أن هذه التوقعات تقديرية وتعتمد على البيانات التاريخية.
+"""
+                )
+                answer = query_local_ai(prompt, "توليد التوقعات", LOCAL_MODEL_ID)
+            render_ai_response(answer)
+
+    # 8. التقرير الشامل (يتطلب بناء واجهة بسيطة)
+    with tab8:
+        _section_title(
+            "التقرير الشامل للمنشأة",
+            "توليد تقرير إداري ومالي متكامل يغطي كافة الجوانب.",
+        )
+        if st.button("توليد التقرير الشامل", type="primary", use_container_width=True, icon=":material/description:"):
+            with st.spinner("جاري تجميع البيانات وإعداد التقرير..."):
+                comprehensive_data = get_comprehensive_data()
+                prompt = _make_prompt(
+                    data=comprehensive_data,
+                    task="إعداد تقرير إداري شامل",
+                    instructions="""
+قدم تقريراً شاملاً للمنشأة يتضمن:
+1. الملخص التنفيذي.
+2. تحليل الوضع المالي الحالي.
+3. حالة المخزون والمبيعات.
+4. أداء الموارد البشرية.
+5. التوصيات الاستراتيجية العامة.
+"""
+                )
+                answer = query_local_ai(prompt, "التقرير الشامل", LOCAL_MODEL_ID)
+            render_ai_response(answer)
+
+    # 9. مراكز التكلفة
+    with tab9:
+        _section_title(
+            "تحليل مراكز التكلفة",
+            "مقارنة الأداء المالي للمراكز، التنبؤ بالمصروفات، وتحليل الانحرافات.",
+        )
+        
+        centers = ccs.get_all_cost_centers(active_only=True)
+        if not centers:
+            st.info("لا توجد مراكز تكلفة مسجلة حالياً.")
+        else:
+            center_options = {c['id']: f"{c['code']} - {c['name']}" for c in centers}
+            selected_center_id = st.selectbox(
+                "اختر المركز للتحليل",
+                options=list(center_options.keys()),
+                format_func=lambda x: center_options[x],
+                key="ai_cost_center_select",
+            )
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("تحليل أداء المركز", type="primary", use_container_width=True, icon=":material/analytics:"):
+                    with st.spinner("جاري تحليل أداء المركز..."):
+                        result = analyze_cost_center_performance(selected_center_id)
+                    render_ai_response(result)
+            
+            with col2:
+                if st.button("مقارنة جميع المراكز", type="primary", use_container_width=True, icon=":material/compare_arrows:"):
+                    with st.spinner("جاري مقارنة المراكز..."):
+                        result = compare_cost_centers()
+                    render_ai_response(result)
+            
+            st.markdown("---")
+            
+            col3, col4 = st.columns(2)
+            
+            with col3:
+                if st.button("توقع مصروفات المركز (3 أشهر)", use_container_width=True, icon=":material/trending_up:"):
+                    with st.spinner("جاري التنبؤ بالمصروفات..."):
+                        result = predict_cost_center_expenses(selected_center_id, months=3)
+                    render_ai_response(result)
+            
+            with col4:
+                fiscal_year = st.number_input("السنة المالية", min_value=2020, max_value=2030, value=2026, key="ai_budget_year")
+                if st.button("تحليل الموازنة والانحرافات", use_container_width=True, icon=":material/assessment:"):
+                    with st.spinner("جاري تحليل الموازنة..."):
+                        result = get_cost_center_budget_analysis(selected_center_id, fiscal_year)
+                    render_ai_response(result)
