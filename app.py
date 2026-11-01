@@ -1,6 +1,13 @@
+
 import html
+import os
+import sys
+import traceback
+from pathlib import Path
+
 import streamlit as st
 import database
+
 
 # ============================================================
 # إعداد الصفحة
@@ -12,60 +19,116 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+
+# ============================================================
+# معالجة أخطاء بدء التشغيل
+# ============================================================
+def show_startup_error(title, error):
+    """عرض خطأ بدء التشغيل داخل واجهة Streamlit."""
+    st.markdown("""
+    <div style="
+        direction:rtl;
+        text-align:center;
+        padding:35px 20px;
+        margin:30px auto;
+        max-width:900px;
+        border-radius:18px;
+        background:linear-gradient(145deg,#351b28,#211525);
+        border:1px solid rgba(248,113,113,.4);
+    ">
+        <div style="font-size:48px;">⚠️</div>
+        <h2 style="color:#FCA5A5;">تعذر تشغيل النظام</h2>
+        <p style="color:#E5E7EB;">حدث خطأ أثناء تجهيز التطبيق.</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.error(title)
+    st.code(str(error), language="text")
+
+    with st.expander("تفاصيل الخطأ الكاملة"):
+        st.code(traceback.format_exc(), language="python")
+
+    st.info(
+        "راجع ملف السجل الموجود في مجلد بيانات التطبيق "
+        "أو تواصل مع مسؤول النظام."
+    )
+
+
+def stop_on_startup_error(title, error):
+    show_startup_error(title, error)
+    st.stop()
+
+
 # ============================================================
 # تهيئة قاعدة البيانات والنظام
 # ============================================================
-database.init_db()
-database.create_default_admin()
+try:
+    database.init_db()
+    database.create_default_admin()
 
-from services.currency_service import create_default_currencies
-create_default_currencies()
+    from services.currency_service import create_default_currencies
+    create_default_currencies()
 
-from ui.auth_ui import show as auth_show
-from services.auth_service import logout_session
+    from ui.auth_ui import show as auth_show
+    from services.auth_service import logout_session
 
-from services.roles_service import (
-    seed_default_roles,
-    check_permission,
-    get_allowed_modules
-)
+    from services.roles_service import (
+        seed_default_roles,
+        check_permission,
+        get_allowed_modules
+    )
 
-seed_default_roles()
+    seed_default_roles()
+
+except Exception as exc:
+    stop_on_startup_error(
+        "فشلت تهيئة قاعدة البيانات أو خدمات النظام.",
+        exc
+    )
+
 
 # ============================================================
-# استيراد الوحدات
+# استيراد وحدات النظام
 # ============================================================
-from ui.dashboard_ui import show as dashboard_show
-from ui.inventory_ui import show as inventory_show
-from ui.inventory_adjustment_ui import show as inventory_adjustment_show
-from ui.sales_ui import show as sales_show
-from ui.purchases_ui import show as purchases_show
-from ui.returns import show as returns_show
-from ui.receipts_ui import show as receipts_show
-from ui.expenses_ui import show as expenses_show
-from ui.opening_balances_ui import show as opening_show
-from ui.currency_revaluation_ui import show as revaluation_show
-from ui.accounting_ui import show as accounting_show
-from ui.chart_ui import show as chart_show
-from ui.financial_ui import show as financial_show
-from ui.cost_center_ui import show as cost_center_show
-from ui.currency_ui import show as currency_show
-from ui.bank_ui import show as bank_show
-from ui.vat_ui import show as vat_show
-from ui.closing_ui import show as closing_show
-from ui.period_ui import show as period_show
-from ui.fifo_ui import show as fifo_show
-from ui.crm_ui import show as crm_show
-from ui.hr_ui import show as hr_show
-from ui.assets_ui import show as assets_show
-from ui.attachment_ui import show as attachment_show
-from ui.payroll_ui import show as payroll_show
-from ui.roles_ui import show as roles_show
-from ui.audit_log import show as audit_show
-from ui.backup import show as backup_show
-from ui.pdf_reports import show as pdf_show
-from ui.ai_ui import show as ai_show
-from ui.cash_ui import show as cash_show
+try:
+    from ui.dashboard_ui import show as dashboard_show
+    from ui.inventory_ui import show as inventory_show
+    from ui.inventory_adjustment_ui import show as inventory_adjustment_show
+    from ui.sales_ui import show as sales_show
+    from ui.purchases_ui import show as purchases_show
+    from ui.returns import show as returns_show
+    from ui.receipts_ui import show as receipts_show
+    from ui.expenses_ui import show as expenses_show
+    from ui.opening_balances_ui import show as opening_show
+    from ui.currency_revaluation_ui import show as revaluation_show
+    from ui.accounting_ui import show as accounting_show
+    from ui.chart_ui import show as chart_show
+    from ui.financial_ui import show as financial_show
+    from ui.cost_center_ui import show as cost_center_show
+    from ui.currency_ui import show as currency_show
+    from ui.bank_ui import show as bank_show
+    from ui.vat_ui import show as vat_show
+    from ui.closing_ui import show as closing_show
+    from ui.period_ui import show as period_show
+    from ui.fifo_ui import show as fifo_show
+    from ui.crm_ui import show as crm_show
+    from ui.hr_ui import show as hr_show
+    from ui.assets_ui import show as assets_show
+    from ui.attachment_ui import show as attachment_show
+    from ui.payroll_ui import show as payroll_show
+    from ui.roles_ui import show as roles_show
+    from ui.audit_log import show as audit_show
+    from ui.backup import show as backup_show
+    from ui.pdf_reports import show as pdf_show
+    from ui.ai_ui import show as ai_show
+    from ui.cash_ui import show as cash_show
+
+except Exception as exc:
+    stop_on_startup_error(
+        "فشل استيراد إحدى وحدات النظام. تحقق من ملفات مجلد ui والخدمات المرتبطة بها.",
+        exc
+    )
+
 
 # ============================================================
 # أدوات مساعدة
@@ -74,6 +137,7 @@ def safe_html(value, default=""):
     if value is None:
         value = default
     return html.escape(str(value))
+
 
 # ============================================================
 # التصميم العام
@@ -214,17 +278,22 @@ html, body, [class*="css"] {
 </style>
 """, unsafe_allow_html=True)
 
+
 # ============================================================
 # تهيئة الجلسة
 # ============================================================
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
+
 if "user" not in st.session_state:
     st.session_state.user = None
+
 if "current_page" not in st.session_state:
     st.session_state.current_page = "لوحة المعلومات"
+
 if "run_seed" not in st.session_state:
     st.session_state.run_seed = False
+
 
 # ============================================================
 # دالة موحدة لأزرار القائمة
@@ -232,18 +301,30 @@ if "run_seed" not in st.session_state:
 def nav_button(label, page, key, icon, module=None):
     if module and not can_access(module):
         return
+
     is_active = st.session_state.current_page == page
+
     if st.button(
-        label, key=key, icon=icon, type="primary" if is_active else "secondary", use_container_width=True
+        label,
+        key=key,
+        icon=icon,
+        type="primary" if is_active else "secondary",
+        use_container_width=True
     ):
         st.session_state.current_page = page
         st.rerun()
+
 
 # ============================================================
 # شاشة تسجيل الدخول
 # ============================================================
 if not st.session_state.logged_in:
-    auth_show()
+    try:
+        auth_show()
+    except Exception as exc:
+        st.error("حدث خطأ أثناء عرض شاشة تسجيل الدخول.")
+        st.code(traceback.format_exc(), language="python")
+
 else:
     user_data = st.session_state.get("user") or {}
     username = user_data.get("username", "")
@@ -251,12 +332,19 @@ else:
     if username == "admin":
         allowed_modules = None
     else:
-        allowed_modules = get_allowed_modules(username)
+        try:
+            allowed_modules = get_allowed_modules(username)
+        except Exception as exc:
+            st.error("تعذر تحميل صلاحيات المستخدم.")
+            st.code(traceback.format_exc(), language="python")
+            st.stop()
 
     def can_access(module):
         if username == "admin":
             return True
+
         return module in allowed_modules if allowed_modules else False
+
 
     # ========================================================
     # القائمة الجانبية
@@ -270,7 +358,12 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-        display_name = user_data.get("full_name") or user_data.get("username") or "مستخدم النظام"
+        display_name = (
+            user_data.get("full_name")
+            or user_data.get("username")
+            or "مستخدم النظام"
+        )
+
         st.markdown(f"""
         <div class="user-panel">
             <div class="user-label">المستخدم الحالي</div>
@@ -284,11 +377,22 @@ else:
         st.divider()
 
         # 1. الرئيسية
-        st.markdown('<div class="menu-section"><span class="material-icon">home</span><span>الرئيسية</span></div>', unsafe_allow_html=True)
-        nav_button("لوحة المعلومات", "لوحة المعلومات", "dashboard", ":material/dashboard:")
+        st.markdown(
+            '<div class="menu-section"><span class="material-icon">home</span><span>الرئيسية</span></div>',
+            unsafe_allow_html=True
+        )
+        nav_button(
+            "لوحة المعلومات",
+            "لوحة المعلومات",
+            "dashboard",
+            ":material/dashboard:"
+        )
 
         # 2. العمليات
-        st.markdown('<div class="menu-section"><span class="material-icon">inventory_2</span><span>العمليات</span></div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="menu-section"><span class="material-icon">inventory_2</span><span>العمليات</span></div>',
+            unsafe_allow_html=True
+        )
         nav_button("مبيعات", "المبيعات", "sales", ":material/shopping_cart:", "المبيعات")
         nav_button("مشتريات", "المشتريات", "purchases", ":material/receipt_long:", "المشتريات")
         nav_button("مرتجعات", "مرتجعات البضاعة", "returns", ":material/assignment_return:", "مرتجعات البضاعة")
@@ -299,7 +403,10 @@ else:
         nav_button("CRM", "إدارة العملاء", "crm", ":material/people:", "إدارة العملاء")
 
         # 3. المحاسبة والمالية
-        st.markdown('<div class="menu-section"><span class="material-icon">account_balance</span><span>المحاسبة والمالية</span></div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="menu-section"><span class="material-icon">account_balance</span><span>المحاسبة والمالية</span></div>',
+            unsafe_allow_html=True
+        )
         nav_button("حسابات", "الحسابات", "accounting", ":material/edit_note:", "الحسابات")
         nav_button("شجرة الحسابات", "شجرة الحسابات", "chart", ":material/account_tree:", "شجرة الحسابات")
         nav_button("قوائم مالية", "القوائم المالية", "financial", ":material/analytics:", "القوائم المالية")
@@ -316,14 +423,20 @@ else:
         nav_button("تقارير XBRL", "التقارير المالية XBRL", "pdf", ":material/language:", "التقارير المالية XBRL")
 
         # 4. إدارة الأعمال
-        st.markdown('<div class="menu-section"><span class="material-icon">groups</span><span>إدارة الأعمال</span></div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="menu-section"><span class="material-icon">groups</span><span>إدارة الأعمال</span></div>',
+            unsafe_allow_html=True
+        )
         nav_button("موارد بشرية", "الموارد البشرية", "hr", ":material/badge:", "الموارد البشرية")
         nav_button("رواتب", "كشف الرواتب", "payroll", ":material/payments:", "كشف الرواتب")
         nav_button("أصول ثابتة", "الأصول الثابتة", "assets", ":material/foundation:", "الأصول الثابتة")
         nav_button("مرفقات", "المرفقات", "attachments", ":material/attach_file:", "المرفقات")
 
         # 5. النظام والأمان
-        st.markdown('<div class="menu-section"><span class="material-icon">admin_panel_settings</span><span>النظام والأمان</span></div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="menu-section"><span class="material-icon">admin_panel_settings</span><span>النظام والأمان</span></div>',
+            unsafe_allow_html=True
+        )
         nav_button("صلاحيات", "الصلاحيات", "roles", ":material/security:", "الصلاحيات")
         nav_button("سجل تدقيق", "سجل التدقيق", "audit", ":material/history:", "سجل التدقيق")
         nav_button("نسخ احتياطي", "نسخ احتياطي", "backup", ":material/backup:", "نسخ احتياطي")
@@ -339,71 +452,115 @@ else:
             """, unsafe_allow_html=True)
 
             seed_clicked = st.button(
-                "حقن بيانات تجريبية", key="seed_data_btn",
+                "حقن بيانات تجريبية",
+                key="seed_data_btn",
                 help="حذف كل البيانات ثم حقن بيانات تجريبية",
-                type="primary", icon=":material/eco:", use_container_width=True
+                type="primary",
+                icon=":material/eco:",
+                use_container_width=True
             )
+
             if seed_clicked:
                 st.session_state.run_seed = True
                 st.rerun()
 
         # 7. الذكاء الاصطناعي
-        st.markdown('<div class="menu-section"><span class="material-icon">psychology</span><span>الذكاء الاصطناعي</span></div>', unsafe_allow_html=True)
-        nav_button("المساعد الذكي", "المساعد الذكي", "ai", ":material/psychology:", "المساعد الذكي")
+        st.markdown(
+            '<div class="menu-section"><span class="material-icon">psychology</span><span>الذكاء الاصطناعي</span></div>',
+            unsafe_allow_html=True
+        )
+        nav_button(
+            "المساعد الذكي",
+            "المساعد الذكي",
+            "ai",
+            ":material/psychology:",
+            "المساعد الذكي"
+        )
 
         # 8. تسجيل الخروج
         st.divider()
         st.markdown('<div class="logout-area">', unsafe_allow_html=True)
+
         logout_clicked = st.button(
-            "تسجيل الخروج", key="logout", help="تسجيل الخروج من النظام", icon=":material/logout:", use_container_width=True
+            "تسجيل الخروج",
+            key="logout",
+            help="تسجيل الخروج من النظام",
+            icon=":material/logout:",
+            use_container_width=True
         )
+
         st.markdown("</div>", unsafe_allow_html=True)
 
         if logout_clicked:
-            _user = st.session_state.get("user") or {}
-            logout_session(username=_user.get("username"), user_id=_user.get("id"))
-            st.rerun()
+            try:
+                current_user = st.session_state.get("user") or {}
+
+                logout_session(
+                    username=current_user.get("username"),
+                    user_id=current_user.get("id")
+                )
+
+                st.rerun()
+
+            except Exception:
+                st.error("حدث خطأ أثناء تسجيل الخروج.")
+                st.code(traceback.format_exc(), language="python")
+
 
     # ========================================================
     # تنفيذ الحقن التجريبي
     # ========================================================
     if st.session_state.get("run_seed", False):
-        from services.seed_service import run_full_seed
+        try:
+            from services.seed_service import run_full_seed
 
-        st.markdown("""
-        <div style="text-align:center; padding:3rem 1rem; border-radius:18px;
-                    background:linear-gradient(145deg, rgba(139,92,246,0.14), rgba(255,255,255,0.025));
-                    border:1px solid rgba(167,139,250,0.18); margin-bottom:25px;">
-            <div class="seed-icon"><span class="material-icon">database</span></div>
-            <h1 style="color:#F8FAFC;font-size:2.3rem;">حقن البيانات التجريبية</h1>
-            <p style="color:#A1A1AA;font-size:1.05rem;">جاري تجهيز النظام ببيانات واقعية...</p>
-        </div>
-        """, unsafe_allow_html=True)
+            st.markdown("""
+            <div style="text-align:center; padding:3rem 1rem; border-radius:18px;
+                        background:linear-gradient(145deg, rgba(139,92,246,0.14), rgba(255,255,255,0.025));
+                        border:1px solid rgba(167,139,250,0.18); margin-bottom:25px;">
+                <div class="seed-icon"><span class="material-icon">database</span></div>
+                <h1 style="color:#F8FAFC;font-size:2.3rem;">حقن البيانات التجريبية</h1>
+                <p style="color:#A1A1AA;font-size:1.05rem;">جاري تجهيز النظام ببيانات واقعية...</p>
+            </div>
+            """, unsafe_allow_html=True)
 
-        with st.spinner("جاري الحقن... قد يستغرق دقيقة إلى دقيقتين"):
-            try:
+            with st.spinner("جاري الحقن... قد يستغرق دقيقة إلى دقيقتين"):
                 result = run_full_seed(progress_callback=None)
-                if result.get("success"):
-                    st.success("تم حقن البيانات بنجاح!")
-                    st.balloons()
-                    st.markdown("### ملخص البيانات المحقونة")
-                    summary = result.get("summary", {})
-                    items = list(summary.items())
-                    cols = st.columns(3)
-                    for i, (key, value) in enumerate(items):
-                        with cols[i % 3]:
-                            st.metric(key, value)
-                else:
-                    st.error(f"فشل الحقن: {result.get('error', 'خطأ غير معروف')}")
-            except Exception as e:
-                st.error(f"خطأ غير متوقع: {e}")
-                import traceback
-                st.code(traceback.format_exc())
 
-        if st.button("تم — العودة للنظام", type="primary", key="close_seed", use_container_width=True):
+            if result.get("success"):
+                st.success("تم حقن البيانات بنجاح!")
+                st.balloons()
+
+                st.markdown("### ملخص البيانات المحقونة")
+
+                summary = result.get("summary", {})
+                items = list(summary.items())
+                cols = st.columns(3)
+
+                for i, (key, value) in enumerate(items):
+                    with cols[i % 3]:
+                        st.metric(key, value)
+
+            else:
+                st.error(
+                    f"فشل الحقن: {result.get('error', 'خطأ غير معروف')}"
+                )
+
+        except Exception:
+            st.error("حدث خطأ أثناء تنفيذ الحقن التجريبي.")
+            st.code(traceback.format_exc(), language="python")
+
+        if st.button(
+            "تم — العودة للنظام",
+            type="primary",
+            key="close_seed",
+            use_container_width=True
+        ):
             st.session_state.run_seed = False
             st.rerun()
+
         st.stop()
+
 
     # ========================================================
     # توجيه الصفحات
@@ -412,7 +569,11 @@ else:
 
     def show_if_permitted(module, show_func):
         if can_access(module):
-            show_func()
+            try:
+                show_func()
+            except Exception:
+                st.error(f"حدث خطأ أثناء فتح وحدة: {module}")
+                st.code(traceback.format_exc(), language="python")
         else:
             st.markdown(f"""
             <div class="permission-denied">
@@ -422,37 +583,110 @@ else:
             </div>
             """, unsafe_allow_html=True)
 
+
     # ========================================================
     # الصفحات
     # ========================================================
-    if page == "لوحة المعلومات": dashboard_show()
-    elif page == "المخزون": show_if_permitted("المخزون", inventory_show)
-    elif page == "التسويات المخزنية": show_if_permitted("التسويات المخزنية", inventory_adjustment_show)
-    elif page == "المبيعات": show_if_permitted("المبيعات", sales_show)
-    elif page == "المشتريات": show_if_permitted("المشتريات", purchases_show)
-    elif page == "مرتجعات البضاعة": show_if_permitted("مرتجعات البضاعة", returns_show)
-    elif page == "سندات القبض والصرف": show_if_permitted("سندات القبض والصرف", receipts_show)
-    elif page == "المصروفات": show_if_permitted("المصروفات", expenses_show)
-    elif page == "الأرصدة الافتتاحية": show_if_permitted("الأرصدة الافتتاحية", opening_show)
-    elif page == "تقييم العملات": show_if_permitted("تقييم العملات", revaluation_show)
-    elif page == "الحسابات": show_if_permitted("الحسابات", accounting_show)
-    elif page == "الموارد البشرية": show_if_permitted("الموارد البشرية", hr_show)
-    elif page == "إدارة العملاء": show_if_permitted("إدارة العملاء", crm_show)
-    elif page == "الأصول الثابتة": show_if_permitted("الأصول الثابتة", assets_show)
-    elif page == "شجرة الحسابات": show_if_permitted("شجرة الحسابات", chart_show)
-    elif page == "القوائم المالية": show_if_permitted("القوائم المالية", financial_show)
-    elif page == "العملات": show_if_permitted("العملات", currency_show)
-    elif page == "التعاملات البنكية": show_if_permitted("التعاملات البنكية", bank_show)
-    elif page == "مراكز التكلفة": show_if_permitted("مراكز التكلفة", cost_center_show)
-    elif page == "المرفقات": show_if_permitted("المرفقات", attachment_show)
-    elif page == "الصلاحيات": show_if_permitted("الصلاحيات", roles_show)
-    elif page == "إغلاق الفترات": show_if_permitted("إغلاق الفترات", period_show)
-    elif page == "إغلاق الحسابات": show_if_permitted("إغلاق الحسابات", closing_show)
-    elif page == "FIFO المخزون": show_if_permitted("FIFO المخزون", fifo_show)
-    elif page == "كشف الرواتب": show_if_permitted("كشف الرواتب", payroll_show)
-    elif page == "الضريبة": show_if_permitted("الضريبة", vat_show)
-    elif page == "المساعد الذكي": show_if_permitted("المساعد الذكي", ai_show)
-    elif page == "سجل التدقيق": show_if_permitted("سجل التدقيق", audit_show)
-    elif page == "نسخ احتياطي": show_if_permitted("نسخ احتياطي", backup_show)
-    elif page == "التقارير المالية XBRL": show_if_permitted("التقارير المالية XBRL", pdf_show)
-    elif page == "الصندوق": show_if_permitted("الصندوق", cash_show)
+    try:
+        if page == "لوحة المعلومات":
+            dashboard_show()
+
+        elif page == "المخزون":
+            show_if_permitted("المخزون", inventory_show)
+
+        elif page == "التسويات المخزنية":
+            show_if_permitted("التسويات المخزنية", inventory_adjustment_show)
+
+        elif page == "المبيعات":
+            show_if_permitted("المبيعات", sales_show)
+
+        elif page == "المشتريات":
+            show_if_permitted("المشتريات", purchases_show)
+
+        elif page == "مرتجعات البضاعة":
+            show_if_permitted("مرتجعات البضاعة", returns_show)
+
+        elif page == "سندات القبض والصرف":
+            show_if_permitted("سندات القبض والصرف", receipts_show)
+
+        elif page == "المصروفات":
+            show_if_permitted("المصروفات", expenses_show)
+
+        elif page == "الأرصدة الافتتاحية":
+            show_if_permitted("الأرصدة الافتتاحية", opening_show)
+
+        elif page == "تقييم العملات":
+            show_if_permitted("تقييم العملات", revaluation_show)
+
+        elif page == "الحسابات":
+            show_if_permitted("الحسابات", accounting_show)
+
+        elif page == "الموارد البشرية":
+            show_if_permitted("الموارد البشرية", hr_show)
+
+        elif page == "إدارة العملاء":
+            show_if_permitted("إدارة العملاء", crm_show)
+
+        elif page == "الأصول الثابتة":
+            show_if_permitted("الأصول الثابتة", assets_show)
+
+        elif page == "شجرة الحسابات":
+            show_if_permitted("شجرة الحسابات", chart_show)
+
+        elif page == "القوائم المالية":
+            show_if_permitted("القوائم المالية", financial_show)
+
+        elif page == "العملات":
+            show_if_permitted("العملات", currency_show)
+
+        elif page == "التعاملات البنكية":
+            show_if_permitted("التعاملات البنكية", bank_show)
+
+        elif page == "مراكز التكلفة":
+            show_if_permitted("مراكز التكلفة", cost_center_show)
+
+        elif page == "المرفقات":
+            show_if_permitted("المرفقات", attachment_show)
+
+        elif page == "الصلاحيات":
+            show_if_permitted("الصلاحيات", roles_show)
+
+        elif page == "إغلاق الفترات":
+            show_if_permitted("إغلاق الفترات", period_show)
+
+        elif page == "إغلاق الحسابات":
+            show_if_permitted("إغلاق الحسابات", closing_show)
+
+        elif page == "FIFO المخزون":
+            show_if_permitted("FIFO المخزون", fifo_show)
+
+        elif page == "كشف الرواتب":
+            show_if_permitted("كشف الرواتب", payroll_show)
+
+        elif page == "الضريبة":
+            show_if_permitted("الضريبة", vat_show)
+
+        elif page == "المساعد الذكي":
+            show_if_permitted("المساعد الذكي", ai_show)
+
+        elif page == "سجل التدقيق":
+            show_if_permitted("سجل التدقيق", audit_show)
+
+        elif page == "نسخ احتياطي":
+            show_if_permitted("نسخ احتياطي", backup_show)
+
+        elif page == "التقارير المالية XBRL":
+            show_if_permitted("التقارير المالية XBRL", pdf_show)
+
+        elif page == "الصندوق":
+            show_if_permitted("الصندوق", cash_show)
+
+        else:
+            st.warning("الصفحة المطلوبة غير موجودة.")
+            if st.button("العودة إلى لوحة المعلومات"):
+                st.session_state.current_page = "لوحة المعلومات"
+                st.rerun()
+
+    except Exception:
+        st.error("حدث خطأ غير متوقع أثناء عرض الصفحة.")
+        st.code(traceback.format_exc(), language="python")
