@@ -1,8 +1,10 @@
-
 import html
 import os
 import sys
 import traceback
+import json
+import uuid
+from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
@@ -21,19 +23,90 @@ st.set_page_config(
 
 
 # ============================================================
+# 1. بروتوكول الجاهزية (Readiness Protocol)
+# ============================================================
+def get_readiness_dir():
+    """مجلد لحفظ ملفات الجاهزية في LocalAppData"""
+    base = os.getenv("LOCALAPPDATA") or os.path.expanduser("~")
+    path = Path(base) / "HokamaERP" / "run"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def get_startup_id():
+    """جلب معرف التشغيل من البيئة، أو إنشاء واحد جديد إذا لم يوجد (للتشغيل من الكود المصدري)"""
+    return os.environ.get("HOKAMA_STARTUP_ID", "dev-mode-" + str(uuid.uuid4()))
+
+
+def write_readiness_signal(status: str, error_msg: str = ""):
+    """كتابة ملف الجاهزية أو الخطأ بشكل ذري (Atomic)"""
+    startup_id = get_startup_id()
+    ready_dir = get_readiness_dir()
+    
+    # اسم الملف مرتبط بمعرف التشغيل
+    target_file = ready_dir / f"{startup_id}.json"
+    temp_file = ready_dir / f"{startup_id}.tmp"
+    
+    data = {
+        "startup_id": startup_id,
+        "status": status,  # "ready" or "error"
+        "timestamp": datetime.now().isoformat(),
+        "error": error_msg,
+        "pid": os.getpid()
+    }
+    
+    try:
+        # كتابة ذرية: نكتب في ملف مؤقت ثم نستبدل
+        with open(temp_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno()) # ضمان الكتابة على القرص
+            
+        os.replace(temp_file, target_file)
+    except Exception as e:
+        print(f"Failed to write readiness signal: {e}", file=sys.stderr)
+
+
+# ============================================================
+# 2. دوال التهيئة الأساسية (تُنفذ مرة واحدة فقط)
+# ============================================================
+@st.cache_resource(show_spinner=False)
+def perform_initial_setup():
+    """
+    تنفيذ جميع مراحل التهيئة الأساسية.
+    محمية بـ cache_resource لتعمل مرة واحدة عند بدء الخادم.
+    """
+    try:
+        # 1. تهيئة قاعدة البيانات
+        database.init_db()
+        database.create_default_admin()
+
+        # 2. تهيئة العملات
+        from services.currency_service import create_default_currencies
+        create_default_currencies()
+
+        # 3. تهيئة الأدوار والصلاحيات
+        from services.roles_service import seed_default_roles
+        seed_default_roles()
+
+        # ✅ إذا وصلنا هنا، فكل شيء نجح.
+        write_readiness_signal("ready")
+        return True, None
+
+    except Exception as exc:
+        error_msg = traceback.format_exc()
+        write_readiness_signal("error", error_msg)
+        return False, error_msg
+
+
+# ============================================================
 # معالجة أخطاء بدء التشغيل
 # ============================================================
 def show_startup_error(title, error):
-    """عرض خطأ بدء التشغيل داخل واجهة Streamlit."""
     st.markdown("""
     <div style="
-        direction:rtl;
-        text-align:center;
-        padding:35px 20px;
-        margin:30px auto;
-        max-width:900px;
-        border-radius:18px;
-        background:linear-gradient(145deg,#351b28,#211525);
+        direction:rtl; text-align:center; padding:35px 20px; margin:30px auto; max-width:900px;
+        border-radius:18px; background:linear-gradient(145deg,#351b28,#211525);
         border:1px solid rgba(248,113,113,.4);
     ">
         <div style="font-size:48px;">⚠️</div>
@@ -41,56 +114,30 @@ def show_startup_error(title, error):
         <p style="color:#E5E7EB;">حدث خطأ أثناء تجهيز التطبيق.</p>
     </div>
     """, unsafe_allow_html=True)
-
     st.error(title)
     st.code(str(error), language="text")
-
     with st.expander("تفاصيل الخطأ الكاملة"):
-        st.code(traceback.format_exc(), language="python")
-
-    st.info(
-        "راجع ملف السجل الموجود في مجلد بيانات التطبيق "
-        "أو تواصل مع مسؤول النظام."
-    )
+        st.code(error, language="python")
 
 
-def stop_on_startup_error(title, error):
-    show_startup_error(title, error)
+# ============================================================
+# 3. تنفيذ التهيئة
+# ============================================================
+setup_success, setup_error = perform_initial_setup()
+
+if not setup_success:
+    show_startup_error("فشلت تهيئة قاعدة البيانات أو خدمات النظام.", setup_error)
     st.stop()
 
 
 # ============================================================
-# تهيئة قاعدة البيانات والنظام
+# 4. استيراد وحدات النظام (بعد نجاح التهيئة)
 # ============================================================
 try:
-    database.init_db()
-    database.create_default_admin()
-
-    from services.currency_service import create_default_currencies
-    create_default_currencies()
-
     from ui.auth_ui import show as auth_show
     from services.auth_service import logout_session
+    from services.roles_service import check_permission, get_allowed_modules
 
-    from services.roles_service import (
-        seed_default_roles,
-        check_permission,
-        get_allowed_modules
-    )
-
-    seed_default_roles()
-
-except Exception as exc:
-    stop_on_startup_error(
-        "فشلت تهيئة قاعدة البيانات أو خدمات النظام.",
-        exc
-    )
-
-
-# ============================================================
-# استيراد وحدات النظام
-# ============================================================
-try:
     from ui.dashboard_ui import show as dashboard_show
     from ui.inventory_ui import show as inventory_show
     from ui.inventory_adjustment_ui import show as inventory_adjustment_show
@@ -124,10 +171,9 @@ try:
     from ui.cash_ui import show as cash_show
 
 except Exception as exc:
-    stop_on_startup_error(
-        "فشل استيراد إحدى وحدات النظام. تحقق من ملفات مجلد ui والخدمات المرتبطة بها.",
-        exc
-    )
+    # إذا فشل الاستيراد، فهذه مشكلة في الكود وليست في التهيئة
+    show_startup_error("فشل استيراد إحدى وحدات النظام. تحقق من ملفات مجلد ui.", traceback.format_exc())
+    st.stop()
 
 
 # ============================================================
