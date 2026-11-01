@@ -1,9 +1,10 @@
-# app_desktop.py
-# Hokama ERP — Windows Desktop Launcher (v3.0)
+# -*- coding: utf-8 -*-
+# Hokama ERP — Windows Desktop Launcher
 # Streamlit + Microsoft Edge App Mode
-# Readiness Protocol implementation to prevent white screen.
+# Readiness Protocol v1
 
 import asyncio
+import base64
 import json
 import multiprocessing
 import os
@@ -18,16 +19,29 @@ import uuid
 from pathlib import Path
 
 
+# ============================================================
+# Windows
+# ============================================================
+
 if sys.platform == "win32":
     os.environ["PYTHONIOENCODING"] = "utf-8"
     os.environ["PYTHONUTF8"] = "1"
 
 
+# ============================================================
+# إعدادات التطبيق
+# ============================================================
+
 APP_NAME = "Hokama ERP"
 HOST = "127.0.0.1"
 
-STARTUP_TIMEOUT = 90
+PROTOCOL_VERSION = 1
+
+HTTP_STARTUP_TIMEOUT = 60
+APP_READINESS_TIMEOUT = 120
+
 STARTUP_RETRIES = 3
+
 HEALTH_CHECK_INTERVAL = 0.5
 READY_CHECK_INTERVAL = 0.5
 
@@ -36,8 +50,12 @@ EDGE_CLOSE_GRACE = 15
 EDGE_DETECTION_TIMEOUT = 60
 
 
+# ============================================================
+# المسارات
+# ============================================================
+
 def get_base_path():
-    """مجلد ملفات التطبيق المضمّنة."""
+    """مجلد الملفات المضمّنة بواسطة PyInstaller."""
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         return Path(sys._MEIPASS)
 
@@ -45,7 +63,7 @@ def get_base_path():
 
 
 def get_data_dir():
-    """مجلد بيانات المشغّل وملفات السجل وملف تعريف Edge."""
+    """بيانات المشغّل وملف تعريف Edge فقط."""
     root = Path(os.getenv("LOCALAPPDATA") or Path.home())
     path = root / "HokamaERP"
     path.mkdir(parents=True, exist_ok=True)
@@ -59,11 +77,18 @@ def get_logs_dir():
 
 
 def get_run_dir():
-    """مجلد ملفات الجاهزية لكل تشغيل."""
     path = get_data_dir() / "run"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
+
+def get_readiness_file(startup_id):
+    return get_run_dir() / f"{startup_id}.json"
+
+
+# ============================================================
+# السجلات
+# ============================================================
 
 def log_message(message):
     try:
@@ -80,12 +105,31 @@ def log_message(message):
         pass
 
 
+def read_streamlit_log_tail(max_chars=8000):
+    path = get_logs_dir() / "streamlit.log"
+
+    try:
+        if path.exists():
+            return path.read_text(
+                encoding="utf-8",
+                errors="replace",
+            )[-max_chars:]
+    except Exception:
+        pass
+
+    return "لا يوجد سجل Streamlit متاح."
+
+
 def show_error(title, message):
     if sys.platform == "win32":
         try:
             import ctypes
+
             ctypes.windll.user32.MessageBoxW(
-                None, message, title, 0x10
+                None,
+                str(message),
+                str(title),
+                0x10,
             )
             return
         except Exception:
@@ -94,31 +138,88 @@ def show_error(title, message):
     print(f"{title}: {message}", file=sys.stderr)
 
 
-def cleanup_old_readiness_files():
-    """حذف ملفات الجاهزية القديمة قبل بدء التشغيل."""
-    run_dir = get_run_dir()
-    for file in run_dir.glob("*.json"):
-        try:
-            file.unlink()
-        except Exception:
-            pass
+# ============================================================
+# ملفات الجاهزية
+# ============================================================
 
+def cleanup_readiness_file(startup_id):
+    """حذف ملف المحاولة الحالية فقط."""
+    try:
+        path = get_readiness_file(startup_id)
+
+        if path.exists():
+            path.unlink()
+    except Exception as exc:
+        log_message(f"Readiness cleanup failed: {exc}")
+
+
+def read_readiness_file(startup_id):
+    """
+    قراءة ملف الجاهزية والتحقق من هويته وإصدار البروتوكول.
+    تعيد:
+        ("ready", None)
+        ("error", رسالة)
+        (None, None) إذا لم تصل إشارة صالحة بعد.
+    """
+    path = get_readiness_file(startup_id)
+
+    if not path.exists():
+        return None, None
+
+    try:
+        with path.open("r", encoding="utf-8") as file:
+            data = json.load(file)
+
+        if data.get("startup_id") != startup_id:
+            log_message("Ignored readiness file: startup_id mismatch.")
+            return None, None
+
+        if data.get("protocol_version") != PROTOCOL_VERSION:
+            return (
+                "error",
+                "إصدار بروتوكول الجاهزية غير متوافق بين المشغّل والتطبيق.",
+            )
+
+        status = data.get("status")
+
+        if status == "ready":
+            return "ready", None
+
+        if status == "error":
+            return (
+                "error",
+                data.get("error") or "خطأ غير معروف أثناء تهيئة التطبيق.",
+            )
+
+        return None, None
+
+    except json.JSONDecodeError:
+        # قد يكون الملف في طور الاستبدال.
+        return None, None
+
+    except Exception as exc:
+        log_message(f"Readiness read error: {exc}")
+        return None, None
+
+
+# ============================================================
+# اختيار المنفذ
+# ============================================================
 
 def find_free_port():
-    """اختيار منفذ متاح مبدئيًا."""
+    """
+    اختيار منفذ متاح مبدئيًا.
+    إذا حدث تعارض عند ربط Streamlit بالمنفذ،
+    ستتعامل إعادة المحاولة مع ذلك.
+    """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((HOST, 0))
         return sock.getsockname()[1]
 
 
-def is_port_open(host, port):
-    try:
-        with socket.create_connection((host, port), timeout=1):
-            return True
-    except OSError:
-        return False
-
+# ============================================================
+# HTTP Health Check
+# ============================================================
 
 def http_get(url, timeout=3):
     request = urllib.request.Request(
@@ -131,9 +232,9 @@ def http_get(url, timeout=3):
 
 
 def is_streamlit_healthy(host, port):
-    """فحص صحة خادم Streamlit واستجابة الصفحة الرئيسية."""
+    """التحقق من استجابة Streamlit الفعلية."""
     try:
-        status, _ = http_get(
+        status, health_body = http_get(
             f"http://{host}:{port}/_stcore/health",
             timeout=2,
         )
@@ -141,7 +242,15 @@ def is_streamlit_healthy(host, port):
         if status != 200:
             return False
 
-        status, body = http_get(
+        health_text = health_body.decode(
+            "utf-8",
+            errors="ignore",
+        ).strip().lower()
+
+        if health_text not in ("ok", "healthy"):
+            return False
+
+        status, page_body = http_get(
             f"http://{host}:{port}/",
             timeout=4,
         )
@@ -149,64 +258,96 @@ def is_streamlit_healthy(host, port):
         if status != 200:
             return False
 
-        html = body.decode("utf-8", errors="ignore").lower()
+        html_text = page_body.decode(
+            "utf-8",
+            errors="ignore",
+        ).lower()
 
-        return (
-            "<!doctype html>" in html
-            or "<html" in html
-        )
+        return "<html" in html_text or "<!doctype html>" in html_text
 
     except Exception:
         return False
 
 
-def wait_for_readiness(server, host, port, startup_id, timeout=STARTUP_TIMEOUT):
-    """
-    ينتظر إشارة الجاهزية من التطبيق (ملف JSON) بعد نجاح التهيئة.
-    يتحقق من استجابة الخادم الأساسية أيضاً.
-    """
+def wait_for_http_health(server, host, port, timeout):
+    """انتظار صحة خادم Streamlit قبل فتح Edge."""
     deadline = time.monotonic() + timeout
-    ready_file = get_run_dir() / f"{startup_id}.json"
 
     while time.monotonic() < deadline:
         if not server.is_alive():
-            log_message("Streamlit process exited during startup")
-            return False, "انتهت عملية Streamlit قبل إرسال إشارة الجاهزية."
+            log_message("Streamlit process exited before HTTP readiness.")
+            return False
 
-        # 1. التحقق من ملف الجاهزية
-        if ready_file.exists():
-            try:
-                with open(ready_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
+        if is_streamlit_healthy(host, port):
+            return True
 
-                status = data.get("status")
-                
-                if status == "ready":
-                    log_message("Readiness signal received: READY")
-                    return True, None
-                elif status == "error":
-                    error_msg = data.get("error", "خطأ غير معروف")
-                    log_message(f"Readiness signal received: ERROR -> {error_msg}")
-                    return False, f"فشلت تهيئة التطبيق:\n{error_msg}"
+        time.sleep(HEALTH_CHECK_INTERVAL)
 
-            except json.JSONDecodeError:
-                # الملف قد يكون قيد الكتابة، ننتظر
-                pass
-            except Exception as e:
-                log_message(f"Error reading readiness file: {e}")
+    return False
 
-        # 2. التحقق من استجابة الخادم الأساسية (لضمان أنه لم يتوقف)
-        if not is_streamlit_healthy(host, port):
-            # الخادم قد لا يكون جاهزاً بعد، نتابع الانتظار
-            pass
+
+# ============================================================
+# انتظار جاهزية التطبيق
+# ============================================================
+
+def wait_for_readiness(
+    server,
+    host,
+    port,
+    startup_id,
+    timeout=APP_READINESS_TIMEOUT,
+):
+    """
+    هذه المرحلة تبدأ بعد فتح Edge؛ لأن app.py يحتاج
+    إلى جلسة Streamlit حتى يبدأ التنفيذ.
+    """
+    deadline = time.monotonic() + timeout
+    last_health_check = 0
+
+    while time.monotonic() < deadline:
+
+        if not server.is_alive():
+            return (
+                False,
+                "توقفت عملية Streamlit قبل اكتمال تهيئة التطبيق.",
+            )
+
+        status, error_message = read_readiness_file(startup_id)
+
+        if status == "ready":
+            log_message("Application readiness confirmed.")
+            return True, None
+
+        if status == "error":
+            log_message(f"Application startup error: {error_message}")
+            return False, error_message
+
+        now = time.monotonic()
+
+        if now - last_health_check >= 3:
+            last_health_check = now
+
+            if not is_streamlit_healthy(host, port):
+                log_message(
+                    "Warning: Streamlit HTTP health check failed "
+                    "while waiting for app readiness."
+                )
 
         time.sleep(READY_CHECK_INTERVAL)
 
-    return False, "انتهت المهلة المحددة لبدء التطبيق ولم تُستلم إشارة الجاهزية."
+    return (
+        False,
+        "انتهت مهلة انتظار إشارة الجاهزية من app.py.\n"
+        "راجع سجل Streamlit لمعرفة سبب التأخير.",
+    )
 
+
+# ============================================================
+# تشغيل Streamlit
+# ============================================================
 
 def run_streamlit(port, app_path, startup_id):
-    """تشغيل Streamlit في عملية مستقلة."""
+    """تشغيل Streamlit داخل عملية مستقلة."""
     try:
         if sys.platform == "win32":
             asyncio.set_event_loop_policy(
@@ -225,38 +366,46 @@ def run_streamlit(port, app_path, startup_id):
 
             sys.stdout = child_log
             sys.stderr = child_log
-            
-            # ✅ تعيين متغير البيئة لتمرير المعرف
+
             os.environ["HOKAMA_STARTUP_ID"] = startup_id
+            os.environ["HOKAMA_READINESS_PROTOCOL"] = str(
+                PROTOCOL_VERSION
+            )
 
             from streamlit.web import cli as stcli
 
             sys.argv = [
                 "streamlit",
                 "run",
-                app_path,
+                str(app_path),
+
                 f"--server.port={port}",
                 f"--server.address={HOST}",
+
                 "--server.headless=true",
                 "--server.fileWatcherType=none",
                 "--server.runOnSave=false",
-                "--server.enableCORS=false",
-                "--server.enableXsrfProtection=false",
+
                 "--browser.gatherUsageStats=false",
                 "--global.developmentMode=false",
             ]
 
+            # نترك CORS وXSRF على الإعدادات الافتراضية.
             stcli.main()
 
-    except SystemExit:
-        pass
+    except SystemExit as exc:
+        log_message(f"Streamlit exited with code: {exc.code}")
 
     except Exception:
         log_message(
-            "Streamlit child error:\n"
+            "Streamlit child fatal error:\n"
             + traceback.format_exc()
         )
 
+
+# ============================================================
+# اكتشاف Edge
+# ============================================================
 
 def find_edge():
     candidates = []
@@ -303,27 +452,44 @@ def find_edge():
     return None
 
 
+# ============================================================
+# فحص عمليات Edge الخاصة بملف التعريف
+# ============================================================
+
 def edge_process_using_profile(edge_profile):
     """
     True  = توجد عملية Edge تستخدم الملف الشخصي.
     False = لا توجد عملية.
-    None  = تعذر إجراء الفحص.
+    None  = تعذر الفحص.
     """
     if sys.platform != "win32":
         return None
 
-    profile_text = str(edge_profile).replace("'", "''")
-
-    powershell_script = (
-        "$p = Get-CimInstance Win32_Process "
-        "-Filter \"Name = 'msedge.exe'\" "
-        "-ErrorAction SilentlyContinue; "
-        f"$p | Where-Object {{ $_.CommandLine -like "
-        f"('*' + '{profile_text}' + '*') }} | "
-        "Select-Object -First 1 -ExpandProperty ProcessId"
-    )
-
     try:
+        profile_text = str(edge_profile)
+
+        encoded_profile = base64.b64encode(
+            profile_text.encode("utf-8")
+        ).decode("ascii")
+
+        powershell_script = (
+            "$profile = [Text.Encoding]::UTF8.GetString("
+            "[Convert]::FromBase64String('"
+            + encoded_profile
+            + "')); "
+
+            "$processes = Get-CimInstance Win32_Process "
+            "-Filter \"Name = 'msedge.exe'\" "
+            "-ErrorAction SilentlyContinue; "
+
+            "$match = $processes | Where-Object { "
+            "$_.CommandLine -and "
+            "$_.CommandLine.Contains($profile) "
+            "} | Select-Object -First 1; "
+
+            "if ($match) { $match.ProcessId }"
+        )
+
         result = subprocess.run(
             [
                 "powershell.exe",
@@ -337,7 +503,7 @@ def edge_process_using_profile(edge_profile):
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
-            timeout=6,
+            timeout=8,
             creationflags=getattr(
                 subprocess,
                 "CREATE_NO_WINDOW",
@@ -351,28 +517,33 @@ def edge_process_using_profile(edge_profile):
         return bool(result.stdout.strip())
 
     except Exception as exc:
-        log_message("Edge process check failed: " + str(exc))
+        log_message(f"Edge process check failed: {exc}")
         return None
 
 
-def launch_edge(edge_exe, edge_profile, url, logs_dir):
-    """فتح نافذة Edge مرة واحدة."""
+# ============================================================
+# تشغيل Edge
+# ============================================================
+
+def launch_edge(edge_exe, edge_profile, url):
+    """فتح نافذة Edge App Mode."""
     browser_args = [
         edge_exe,
         f"--user-data-dir={edge_profile}",
         f"--app={url}",
+
         "--start-maximized",
         "--no-first-run",
         "--no-default-browser-check",
+
         "--disable-background-mode",
         "--disable-features=Translate",
-        "--disable-gpu",
         "--force-color-profile=srgb",
     ]
 
-    edge_log_path = logs_dir / "edge.log"
+    edge_log_path = get_logs_dir() / "edge.log"
 
-    log_message("Launching Edge app mode")
+    log_message("Launching Microsoft Edge App Mode.")
 
     with edge_log_path.open("a", encoding="utf-8") as edge_log:
         process = subprocess.Popen(
@@ -388,9 +559,12 @@ def launch_edge(edge_exe, edge_profile, url, logs_dir):
         )
 
     log_message(f"Edge launcher process started: {process.pid}")
-
     return process
 
+
+# ============================================================
+# إيقاف Streamlit
+# ============================================================
 
 def stop_server(server):
     if server is None:
@@ -398,7 +572,7 @@ def stop_server(server):
 
     try:
         if server.is_alive():
-            log_message("Stopping Streamlit server")
+            log_message("Stopping Streamlit server.")
 
             server.terminate()
             server.join(timeout=5)
@@ -414,50 +588,41 @@ def stop_server(server):
         )
 
 
-def read_streamlit_log_tail(logs_dir):
-    path = logs_dir / "streamlit.log"
-
-    try:
-        if path.exists():
-            return path.read_text(
-                encoding="utf-8",
-                errors="replace",
-            )[-4000:]
-    except Exception:
-        pass
-
-    return ""
-
+# ============================================================
+# مراقبة التطبيق
+# ============================================================
 
 def monitor_application(server, edge_profile):
-    """
-    مراقبة خادم Streamlit ونافذة Edge.
-    لا يعتمد على browser.poll().
-    """
-    log_message("Monitoring Hokama ERP")
+    """مراقبة الخادم وإغلاقه بعد إغلاق نافذة Edge."""
+    log_message("Monitoring Hokama ERP.")
 
     first_detection = False
     missing_since = None
+
     detection_deadline = (
         time.monotonic() + EDGE_DETECTION_TIMEOUT
     )
 
     while True:
+
         if not server.is_alive():
-            log_message("ERROR: Streamlit process stopped")
+            log_message("ERROR: Streamlit server process stopped.")
             return False
 
         edge_state = edge_process_using_profile(edge_profile)
 
         if edge_state is True:
+
             if not first_detection:
-                log_message("Edge application detected")
+                log_message("Edge application detected.")
 
             first_detection = True
             missing_since = None
 
         elif edge_state is False:
+
             if first_detection:
+
                 if missing_since is None:
                     missing_since = time.monotonic()
 
@@ -465,15 +630,13 @@ def monitor_application(server, edge_profile):
                     time.monotonic() - missing_since
                     >= EDGE_CLOSE_GRACE
                 ):
-                    log_message(
-                        "Edge profile process is no longer detected"
-                    )
+                    log_message("Edge application closed.")
                     return True
 
             elif time.monotonic() >= detection_deadline:
+
                 log_message(
-                    "WARNING: Edge was not detected within "
-                    "the initial detection period. "
+                    "WARNING: Edge not detected during initial period. "
                     "Keeping server alive."
                 )
 
@@ -482,29 +645,39 @@ def monitor_application(server, edge_profile):
                 )
 
         else:
+            # الفحص المجهول لا يعتبر إغلاقًا للمتصفح.
             missing_since = None
 
         time.sleep(MONITOR_INTERVAL)
 
 
-def start_streamlit_with_retry(app_path, startup_id):
+# ============================================================
+# تشغيل Streamlit مع إعادة المحاولة
+# ============================================================
+
+def start_streamlit_with_retry(app_path):
     """
-    تشغيل Streamlit مع إعادة المحاولة عند فشل بدء الخادم
-    أو تعارض المنفذ، والانتظار حتى إشارة الجاهزية.
+    كل محاولة لها startup_id مستقل.
+    ننتظر HTTP فقط هنا، ثم نفتح Edge وننتظر جاهزية app.py.
     """
     for attempt in range(1, STARTUP_RETRIES + 1):
+
         port = find_free_port()
+        startup_id = str(uuid.uuid4())
+
+        cleanup_readiness_file(startup_id)
 
         log_message(
             f"Starting Streamlit attempt {attempt}/"
-            f"{STARTUP_RETRIES} on port {port}"
+            f"{STARTUP_RETRIES}, port={port}, "
+            f"startup_id={startup_id}"
         )
 
         server = multiprocessing.Process(
             target=run_streamlit,
             args=(port, str(app_path), startup_id),
             name="HokamaERP-Streamlit",
-            daemon=True,
+            daemon=False,
         )
 
         server.start()
@@ -513,40 +686,49 @@ def start_streamlit_with_retry(app_path, startup_id):
             f"Streamlit process started: {server.pid}"
         )
 
-        success, error_msg = wait_for_readiness(
-            server, HOST, port, startup_id, STARTUP_TIMEOUT
+        http_ready = wait_for_http_health(
+            server,
+            HOST,
+            port,
+            HTTP_STARTUP_TIMEOUT,
         )
 
-        if success:
+        if http_ready:
             log_message(
-                f"Streamlit server is ready on port {port}"
+                f"Streamlit HTTP is healthy on port {port}."
             )
-            return server, port, None
-        else:
-            log_message(
-                f"Streamlit startup attempt {attempt} failed: {error_msg}"
-            )
-            stop_server(server)
-            
-            # إذا كان الخطأ هو فشل التهيئة (وليس timeout)، لا داعي لإعادة المحاولة
-            if "فشلت تهيئة التطبيق" in str(error_msg):
-                return None, None, error_msg
+            return server, port, startup_id, None
+
+        log_message(
+            f"Streamlit HTTP startup attempt {attempt} failed."
+        )
+
+        stop_server(server)
+        cleanup_readiness_file(startup_id)
 
         if attempt < STARTUP_RETRIES:
             time.sleep(1)
 
-    return None, None, "فشل تشغيل الخادم بعد عدة محاولات."
+    return (
+        None,
+        None,
+        None,
+        "فشل تشغيل خادم Streamlit بعد عدة محاولات.",
+    )
 
+
+# ============================================================
+# الدالة الرئيسية
+# ============================================================
 
 def main():
     server = None
-    browser = None
-    
-    # ✅ 1. توليد معرف تشغيل فريد
-    startup_id = str(uuid.uuid4())
-    log_message(f"Generated Startup ID: {startup_id}")
+    startup_id = None
 
     try:
+        log_message("=" * 60)
+        log_message("Starting Hokama ERP Desktop.")
+
         app_path = get_base_path() / "app.py"
 
         if not app_path.is_file():
@@ -564,7 +746,7 @@ def main():
         if not edge_exe:
             message = (
                 "لم يتم العثور على Microsoft Edge.\n"
-                "ثبّت Edge ثم شغّل Hokama ERP مرة أخرى."
+                "ثبّت Edge ثم أعد تشغيل النظام."
             )
 
             log_message("ERROR: " + message)
@@ -572,27 +754,29 @@ def main():
             return 1
 
         data_dir = get_data_dir()
-        logs_dir = get_logs_dir()
 
         edge_profile = data_dir / "EdgeProfile"
         edge_profile.mkdir(parents=True, exist_ok=True)
 
-        # ✅ 2. تنظيف أي ملفات جاهزية قديمة
-        cleanup_old_readiness_files()
+        logs_dir = get_logs_dir()
 
-        log_message("=" * 55)
-        log_message("Starting Hokama ERP Desktop v3.0")
         log_message(f"Application: {app_path}")
         log_message(f"Edge: {edge_exe}")
         log_message(f"Edge profile: {edge_profile}")
 
-        # ✅ 3. تشغيل Streamlit وانتظار إشارة الجاهزية
-        server, port, error_msg = start_streamlit_with_retry(app_path, startup_id)
+        # ----------------------------------------------------
+        # 1. تشغيل Streamlit وانتظار صحة HTTP
+        # ----------------------------------------------------
+
+        server, port, startup_id, error_msg = (
+            start_streamlit_with_retry(app_path)
+        )
 
         if server is None:
-            detail = read_streamlit_log_tail(logs_dir)
+            detail = read_streamlit_log_tail()
+
             message = (
-                f"تعذّر تشغيل التطبيق:\n{error_msg}\n\n"
+                f"{error_msg}\n\n"
                 f"آخر سجل Streamlit:\n{detail}\n\n"
                 f"ملفات السجل:\n{logs_dir}"
             )
@@ -602,33 +786,65 @@ def main():
             return 1
 
         url = f"http://{HOST}:{port}"
+
         log_message(f"Local URL: {url}")
 
-        # ✅ 4. فتح Edge بعد تأكيد الجاهزية
-        browser = launch_edge(
+        # ----------------------------------------------------
+        # 2. فتح Edge لإنشاء جلسة Streamlit
+        # ----------------------------------------------------
+
+        launch_edge(
             edge_exe,
             edge_profile,
             url,
-            logs_dir,
         )
+
+        # ----------------------------------------------------
+        # 3. انتظار جاهزية app.py
+        # ----------------------------------------------------
+
+        ready, readiness_error = wait_for_readiness(
+            server=server,
+            host=HOST,
+            port=port,
+            startup_id=startup_id,
+            timeout=APP_READINESS_TIMEOUT,
+        )
+
+        if not ready:
+            detail = read_streamlit_log_tail()
+
+            message = (
+                "تعذّر إكمال تهيئة التطبيق:\n\n"
+                f"{readiness_error}\n\n"
+                f"آخر سجل Streamlit:\n{detail}\n\n"
+                f"ملفات السجل:\n{logs_dir}"
+            )
+
+            log_message("ERROR: " + message)
+
+            show_error(
+                "تعذّر تشغيل Hokama ERP",
+                message,
+            )
+
+            return 1
 
         log_message(
-            "Edge launch requested. "
-            "No automatic second window will be opened."
+            "Application readiness confirmed successfully."
         )
 
-        # ✅ 5. المراقبة
+        # ----------------------------------------------------
+        # 4. مراقبة التطبيق
+        # ----------------------------------------------------
+
         monitor_ok = monitor_application(
             server,
             edge_profile,
         )
 
         if not monitor_ok:
-            detail = read_streamlit_log_tail(logs_dir)
-
-            log_message(
-                "Application monitor detected a server failure"
-            )
+            detail = read_streamlit_log_tail()
 
             show_error(
                 APP_NAME,
@@ -639,11 +855,11 @@ def main():
 
             return 1
 
-        log_message("Hokama ERP browser session closed")
+        log_message("Hokama ERP browser session closed.")
         return 0
 
     except KeyboardInterrupt:
-        log_message("Interrupted by user")
+        log_message("Interrupted by user.")
         return 0
 
     except Exception:
@@ -655,7 +871,7 @@ def main():
 
         show_error(
             "Hokama ERP — خطأ",
-            "حدث خطأ أثناء تشغيل التطبيق.\n"
+            "حدث خطأ أثناء تشغيل التطبيق.\n\n"
             f"راجع السجل:\n"
             f"{get_logs_dir() / 'startup.log'}",
         )
@@ -664,16 +880,16 @@ def main():
 
     finally:
         stop_server(server)
-        # ✅ 6. تنظيف ملف الجاهزية الخاص بهذا التشغيل
-        try:
-            ready_file = get_run_dir() / f"{startup_id}.json"
-            if ready_file.exists():
-                ready_file.unlink()
-        except Exception:
-            pass
-            
-        log_message("Hokama ERP launcher stopped")
 
+        if startup_id:
+            cleanup_readiness_file(startup_id)
+
+        log_message("Hokama ERP launcher stopped.")
+
+
+# ============================================================
+# نقطة الدخول
+# ============================================================
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
