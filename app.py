@@ -59,7 +59,8 @@ def get_startup_id():
         return None
 
 
-STARTUP_ID = get_startup_id()
+# لا نعتمد على متغير STARTUP_ID عام.
+# يتم جلب المعرف داخل دالة الكتابة عند كل استدعاء.
 
 
 def get_readiness_dir():
@@ -88,33 +89,35 @@ def write_readiness_signal(status, error_msg=""):
     لا يتم إنشاء ملف عند التشغيل المباشر من المصدر
     دون وجود HOKAMA_STARTUP_ID.
     """
-    if not STARTUP_ID:
+    startup_id = get_startup_id()
+
+    if not startup_id:
         return False
 
     if status not in ("ready", "error"):
         return False
 
-    ready_dir = get_readiness_dir()
-
-    target_file = ready_dir / f"{STARTUP_ID}.json"
-
-    temp_file = ready_dir / (
-        f"{STARTUP_ID}."
-        f"{os.getpid()}."
-        f"{threading.get_ident()}."
-        f"{uuid.uuid4().hex}.tmp"
-    )
-
-    data = {
-        "protocol_version": READINESS_PROTOCOL_VERSION,
-        "startup_id": STARTUP_ID,
-        "status": status,
-        "timestamp": datetime.now().astimezone().isoformat(),
-        "pid": os.getpid(),
-        "error": str(error_msg or ""),
-    }
-
     try:
+        ready_dir = get_readiness_dir()
+
+        target_file = ready_dir / f"{startup_id}.json"
+
+        temp_file = ready_dir / (
+            f"{startup_id}."
+            f"{os.getpid()}."
+            f"{threading.get_ident()}."
+            f"{uuid.uuid4().hex}.tmp"
+        )
+
+        data = {
+            "protocol_version": READINESS_PROTOCOL_VERSION,
+            "startup_id": startup_id,
+            "status": status,
+            "timestamp": datetime.now().astimezone().isoformat(),
+            "pid": os.getpid(),
+            "error": str(error_msg or ""),
+        }
+
         with temp_file.open("w", encoding="utf-8") as file:
             json.dump(
                 data,
@@ -143,7 +146,7 @@ def write_readiness_signal(status, error_msg=""):
         )
 
         try:
-            if temp_file.exists():
+            if "temp_file" in locals() and temp_file.exists():
                 temp_file.unlink()
         except Exception:
             pass
@@ -195,11 +198,16 @@ def show_startup_error(title, error):
 
 
 # ============================================================
-# 4. استيراد قاعدة البيانات
+# 4. استيراد قاعدة البيانات والتهيئة الإجبارية
+#    قبل استيراد أي واجهة أو خدمة تعتمد على الجداول
 # ============================================================
 
 try:
     import database
+
+    # تنفيذ التهيئة صراحةً قبل استيراد وحدات الواجهات.
+    database.init_db()
+    database.create_default_admin()
 
 except Exception:
     database_error = traceback.format_exc()
@@ -226,26 +234,15 @@ def perform_initial_setup():
     """
     تهيئة الخدمات التي لا ينفذها database.py تلقائيًا.
 
-    ملاحظة:
-    database.py عندك ينفذ init_db() و
-    create_default_admin() عند الاستيراد.
-
-    لذلك لا نكرر استدعاءهما هنا.
+    تم تنفيذ تهيئة قاعدة البيانات في القسم السابق،
+    لذلك تجهز هذه الدالة العملات والأدوار الافتراضية فقط.
     """
     try:
-        # ----------------------------------------------------
-        # العملات الافتراضية
-        # ----------------------------------------------------
-
         from services.currency_service import (
             create_default_currencies
         )
 
         create_default_currencies()
-
-        # ----------------------------------------------------
-        # الأدوار والصلاحيات
-        # ----------------------------------------------------
 
         from services.roles_service import (
             seed_default_roles
@@ -417,8 +414,9 @@ except Exception:
 
 # لا يرسل التطبيق هذه الإشارة إلا بعد:
 # 1. نجاح استيراد database.
-# 2. نجاح التهيئة الأساسية.
-# 3. نجاح استيراد جميع وحدات النظام المطلوبة.
+# 2. نجاح تهيئة قاعدة البيانات.
+# 3. نجاح التهيئة الأساسية.
+# 4. نجاح استيراد جميع وحدات النظام المطلوبة.
 #
 # يرسل المشغّل إشارة HTTP أولًا ويفتح Edge،
 # ثم تصل جلسة Streamlit إلى هذه النقطة وترسل READY.
