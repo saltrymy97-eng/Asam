@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # services/ai_service.py
 # المساعد الذكي المحلي لنظام حوكمة ERP
 # المحرك: llama.cpp
@@ -7,34 +8,102 @@
 import sqlite3
 import json
 import os
+import sys
+
 from datetime import datetime, timedelta
 from threading import Lock
 
+
 # =========================================================
-# إعدادات المحرك المحلي
+# 1. تحديد المسارات الصحيحة للتطبيق
 # =========================================================
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH = os.path.join(BASE_DIR, "data", "erp.db")
+if getattr(sys, "frozen", False):
+    # عند التشغيل من EXE:
+    # sys.executable يشير إلى ملف التشغيل نفسه.
+    # مثال: C:\salim\HokamaERP.exe
+
+    _APP_BASE = os.path.dirname(
+        os.path.abspath(sys.executable)
+    )
+
+else:
+    # عند التشغيل من الكود المصدري:
+    # ai_service.py موجود داخل services.
+    # نصعد مستويين للوصول إلى مجلد المشروع.
+
+    _APP_BASE = os.path.dirname(
+        os.path.dirname(
+            os.path.abspath(__file__)
+        )
+    )
+
+
+# الإبقاء على BASE_DIR للتوافق مع بقية أجزاء المشروع.
+BASE_DIR = _APP_BASE
+
+
+# المسار الموحد لقاعدة البيانات.
+# يجب أن يطابق المسار الذي يستخدمه database.py.
+
+DB_PATH = os.path.join(
+    BASE_DIR,
+    "data",
+    "erp.db"
+)
+
+
+# مسار نموذج الذكاء الاصطناعي المحلي.
 
 MODEL_PATH = os.environ.get(
     "ERP_AI_MODEL_PATH",
-    os.path.join(BASE_DIR, "models", "ai-model.gguf")
+    os.path.join(
+        BASE_DIR,
+        "models",
+        "ai-model.gguf"
+    )
 )
 
-LLAMA_CONTEXT_SIZE = int(os.environ.get("ERP_AI_CONTEXT", "2048"))
-LLAMA_THREADS = int(os.environ.get(
-    "ERP_AI_THREADS",
-    str(max(1, (os.cpu_count() or 2) - 1))
-))
-LLAMA_GPU_LAYERS = int(os.environ.get("ERP_AI_GPU_LAYERS", "0"))
-LLAMA_BATCH_SIZE = int(os.environ.get("ERP_AI_BATCH_SIZE", "128"))
+
+# =========================================================
+# 2. إعدادات محرك الذكاء الاصطناعي
+# =========================================================
+
+LLAMA_CONTEXT_SIZE = int(
+    os.environ.get(
+        "ERP_AI_CONTEXT",
+        "2048"
+    )
+)
+
+LLAMA_THREADS = int(
+    os.environ.get(
+        "ERP_AI_THREADS",
+        str(max(1, (os.cpu_count() or 2) - 1))
+    )
+)
+
+LLAMA_GPU_LAYERS = int(
+    os.environ.get(
+        "ERP_AI_GPU_LAYERS",
+        "0"
+    )
+)
+
+LLAMA_BATCH_SIZE = int(
+    os.environ.get(
+        "ERP_AI_BATCH_SIZE",
+        "128"
+    )
+)
+
 
 _llm = None
 _llm_lock = Lock()
 
+
 # =========================================================
-# موجه الذكاء الاصطناعي المالي
+# 3. موجه الذكاء الاصطناعي المالي
 # =========================================================
 
 MASTER_FINANCIAL_PROMPT = """أنت المساعد الذكي لنظام (حوكمة ERP)،
@@ -51,11 +120,13 @@ MASTER_FINANCIAL_PROMPT = """أنت المساعد الذكي لنظام (حوك
 5. لا تخترع أرقاماً أو بيانات غير موجودة.
 """
 
+
 # =========================================================
-# التخزين المؤقت
+# 4. التخزين المؤقت
 # =========================================================
 
 _cache = {}
+
 CACHE_TTL_SECONDS = 300
 
 
@@ -65,7 +136,10 @@ def _cache_get(key):
     if entry:
         data, ts = entry
 
-        if (datetime.now() - ts).total_seconds() < CACHE_TTL_SECONDS:
+        if (
+            datetime.now() - ts
+        ).total_seconds() < CACHE_TTL_SECONDS:
+
             return data
 
         del _cache[key]
@@ -74,21 +148,52 @@ def _cache_get(key):
 
 
 def _cache_set(key, data):
-    _cache[key] = (data, datetime.now())
+    _cache[key] = (
+        data,
+        datetime.now()
+    )
 
 
 # =========================================================
-# الاتصال بقاعدة البيانات
+# 5. الاتصال بقاعدة البيانات
 # =========================================================
 
 def get_conn():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    """
+    فتح اتصال بقاعدة البيانات الموجودة بجوار التطبيق.
 
-    conn = sqlite3.connect(DB_PATH)
+    المصدر:
+        project/data/erp.db
+
+    EXE:
+        folder_of_exe/data/erp.db
+
+    لا يستخدم هذا الملف مسار _internal.
+    """
+
+    db_directory = os.path.dirname(DB_PATH)
+
+    os.makedirs(
+        db_directory,
+        exist_ok=True
+    )
+
+    conn = sqlite3.connect(
+        DB_PATH,
+        timeout=30
+    )
+
     conn.row_factory = sqlite3.Row
+
+    # تفعيل المفاتيح الخارجية.
+    conn.execute("PRAGMA foreign_keys = ON")
 
     return conn
 
+
+# =========================================================
+# 6. إنشاء جداول الذكاء الاصطناعي
+# =========================================================
 
 def create_ai_tables():
     conn = get_conn()
@@ -125,7 +230,7 @@ def create_ai_tables():
 
 
 # =========================================================
-# محرك llama.cpp المحلي
+# 7. محرك llama.cpp المحلي
 # =========================================================
 
 def _get_local_model():
@@ -190,23 +295,40 @@ def query_local_ai(
             messages=[
                 {
                     "role": "system",
-                    "content": str(system_prompt or MASTER_FINANCIAL_PROMPT)
+                    "content": str(
+                        system_prompt or MASTER_FINANCIAL_PROMPT
+                    )
                 },
                 {
                     "role": "user",
                     "content": str(user_query or "")
                 }
             ],
-            temperature=max(0.0, min(float(temperature), 2.0)),
-            max_tokens=max(1, min(int(max_tokens), 2048))
+            temperature=max(
+                0.0,
+                min(float(temperature), 2.0)
+            ),
+            max_tokens=max(
+                1,
+                min(int(max_tokens), 2048)
+            )
         )
 
-        choices = response.get("choices", [])
+        choices = response.get(
+            "choices",
+            []
+        )
 
         if not choices:
             return "⚠️ لم يُرجع النموذج المحلي إجابة."
 
-        content = choices[0].get("message", {}).get("content", "")
+        content = choices[0].get(
+            "message",
+            {}
+        ).get(
+            "content",
+            ""
+        )
 
         return content.strip() or "⚠️ الإجابة فارغة."
 
@@ -214,10 +336,14 @@ def query_local_ai(
         return f"⚠️ {e}"
 
     except Exception as e:
-        return f"❌ تعذر تشغيل الذكاء الاصطناعي المحلي: {str(e)}"
+        return (
+            "❌ تعذر تشغيل الذكاء الاصطناعي المحلي: "
+            + str(e)
+        )
 
 
 # اسم قديم للتوافق مع الواجهة والدوال السابقة
+
 def query_groq(
     system_prompt,
     user_query,
@@ -235,10 +361,16 @@ def query_groq(
 
 
 # =========================================================
-# سجل المحادثات
+# 8. سجل المحادثات
 # =========================================================
 
-def save_chat_history(session_id, role, content, model="", tab_name=""):
+def save_chat_history(
+    session_id,
+    role,
+    content,
+    model="",
+    tab_name=""
+):
     conn = get_conn()
 
     try:
@@ -254,7 +386,9 @@ def save_chat_history(session_id, role, content, model="", tab_name=""):
                 content,
                 model or "llama.cpp-local",
                 tab_name,
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                datetime.now().strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
             )
         )
 
@@ -287,7 +421,9 @@ def get_chat_history(session_id=None, limit=20):
                 (limit,)
             ).fetchall()
 
-        return [dict(r) for r in rows]
+        return [
+            dict(r) for r in rows
+        ]
 
     finally:
         conn.close()
@@ -307,18 +443,23 @@ def get_chat_sessions():
             LIMIT 10
         """).fetchall()
 
-        return [dict(r) for r in rows]
+        return [
+            dict(r) for r in rows
+        ]
 
     finally:
         conn.close()
 
 
 # =========================================================
-# ذاكرة المحادثة
+# 9. ذاكرة المحادثة
 # =========================================================
 
 def compress_chat_memory(session_id, model=None):
-    history = get_chat_history(session_id, limit=10)
+    history = get_chat_history(
+        session_id,
+        limit=10
+    )
 
     if not history:
         return ""
@@ -356,7 +497,7 @@ def compress_chat_memory(session_id, model=None):
 
 
 # =========================================================
-# التحقق من صحة البيانات
+# 10. التحقق من صحة البيانات
 # =========================================================
 
 def validate_financial_snapshot(snap):
@@ -381,7 +522,7 @@ def validate_financial_snapshot(snap):
 
 
 # =========================================================
-# اللقطات المالية
+# 11. اللقطات المالية
 # =========================================================
 
 def get_financial_snapshot():
@@ -507,7 +648,7 @@ def get_financial_snapshot():
 
 
 # =========================================================
-# لقطة المخزون
+# 12. لقطة المخزون
 # =========================================================
 
 def get_inventory_snapshot():
@@ -547,7 +688,8 @@ def get_inventory_snapshot():
 
         if selling > 0 and purchase > 0:
             p["profit_margin"] = round(
-                (selling - purchase) / selling * 100, 1
+                (selling - purchase) / selling * 100,
+                1
             )
         else:
             p["profit_margin"] = 0
@@ -584,7 +726,7 @@ def get_inventory_snapshot():
 
 
 # =========================================================
-# لقطة الأعمال والعملاء والموردين
+# 13. لقطة الأعمال والعملاء والموردين
 # =========================================================
 
 def get_business_snapshot():
@@ -652,7 +794,7 @@ def get_business_snapshot():
 
 
 # =========================================================
-# لقطة الموارد البشرية
+# 14. لقطة الموارد البشرية
 # =========================================================
 
 def get_hr_snapshot():
@@ -688,7 +830,7 @@ def get_hr_snapshot():
 
 
 # =========================================================
-# لقطة الاتجاهات
+# 15. لقطة الاتجاهات
 # =========================================================
 
 def get_trend_snapshot():
@@ -716,7 +858,9 @@ def get_trend_snapshot():
     finally:
         conn.close()
 
-    snap = [dict(t) for t in trends]
+    snap = [
+        dict(t) for t in trends
+    ]
 
     _cache_set(cache_key, snap)
 
@@ -724,7 +868,7 @@ def get_trend_snapshot():
 
 
 # =========================================================
-# مراكز التكلفة
+# 16. مراكز التكلفة
 # =========================================================
 
 def get_cost_center_snapshot():
@@ -737,12 +881,16 @@ def get_cost_center_snapshot():
 
     from services import cost_center_service as ccs
 
-    centers = ccs.get_all_cost_centers(active_only=True)
+    centers = ccs.get_all_cost_centers(
+        active_only=True
+    )
 
     summary = []
 
     for c in centers:
-        balance = ccs.get_cost_center_balance(c["id"])
+        balance = ccs.get_cost_center_balance(
+            c["id"]
+        )
 
         summary.append({
             "code": c["code"],
@@ -754,6 +902,10 @@ def get_cost_center_snapshot():
 
     return summary
 
+
+# =========================================================
+# 17. بناء سياق الذكاء الاصطناعي
+# =========================================================
 
 def build_ai_context(include_cost_centers=True):
     ctx = {}
@@ -790,7 +942,7 @@ def build_ai_context(include_cost_centers=True):
 
 
 # =========================================================
-# الدوال العامة المستخدمة في الواجهة
+# 18. الدوال العامة المستخدمة في الواجهة
 # =========================================================
 
 def get_comprehensive_data():
@@ -821,7 +973,10 @@ def get_employee_info(name):
                 (emp["id"],)
             ).fetchone()
 
-            return dict(emp), dict(sal) if sal else None
+            return (
+                dict(emp),
+                dict(sal) if sal else None
+            )
 
         return None, None
 
@@ -876,18 +1031,22 @@ def get_trend_analysis():
 
 
 # =========================================================
-# تحليل مراكز التكلفة
+# 19. تحليل مراكز التكلفة
 # =========================================================
 
 def analyze_cost_center_performance(center_id):
     from services import cost_center_service as ccs
 
-    center = ccs.get_cost_center_by_id(center_id)
+    center = ccs.get_cost_center_by_id(
+        center_id
+    )
 
     if not center:
         return "مركز التكلفة غير موجود"
 
-    balance = ccs.get_cost_center_balance(center_id)
+    balance = ccs.get_cost_center_balance(
+        center_id
+    )
 
     income_stmt = ccs.get_cost_center_income_statement(
         center_id,
@@ -929,7 +1088,10 @@ def compare_cost_centers():
     if not summary:
         return "لا توجد بيانات"
 
-    data_text = json.dumps(summary, ensure_ascii=False)
+    data_text = json.dumps(
+        summary,
+        ensure_ascii=False
+    )
 
     system_prompt = """
 أنت مدير مالي خبير.
@@ -952,7 +1114,9 @@ def compare_cost_centers():
 def predict_cost_center_expenses(center_id, months=3):
     from services import cost_center_service as ccs
 
-    center = ccs.get_cost_center_by_id(center_id)
+    center = ccs.get_cost_center_by_id(
+        center_id
+    )
 
     if not center:
         return "المركز غير موجود"
@@ -994,7 +1158,10 @@ def predict_cost_center_expenses(center_id, months=3):
 
     return query_local_ai(
         system_prompt,
-        json.dumps(history, ensure_ascii=False),
+        json.dumps(
+            history,
+            ensure_ascii=False
+        ),
         max_tokens=1500,
         temperature=0.3
     )
@@ -1034,7 +1201,7 @@ def get_cost_center_budget_analysis(center_id, fiscal_year):
 
 
 # =========================================================
-# محرك القيود الآلي
+# 20. محرك القيود الآلي
 # =========================================================
 
 def extract_entry_data(text, model=None):
@@ -1071,7 +1238,9 @@ def extract_entry_data(text, model=None):
         if start == -1 or end <= start:
             return None
 
-        return json.loads(response[start:end])
+        return json.loads(
+            response[start:end]
+        )
 
     except (ValueError, TypeError, json.JSONDecodeError):
         return None
@@ -1097,7 +1266,10 @@ def build_balanced_entry(extracted_data):
 
     entry_lines = list(lines)
 
-    diff = round(total_debit - total_credit, 2)
+    diff = round(
+        total_debit - total_credit,
+        2
+    )
 
     if diff > 0:
         entry_lines.append({
@@ -1123,7 +1295,9 @@ def build_balanced_entry(extracted_data):
         "lines": entry_lines,
         "total_debit": total_debit,
         "total_credit": total_credit,
-        "is_balanced": abs(total_debit - total_credit) < 0.01,
+        "is_balanced": abs(
+            total_debit - total_credit
+        ) < 0.01,
         "has_auto_correction": any(
             l.get("auto_correction")
             for l in entry_lines
@@ -1199,83 +1373,160 @@ def get_confidence_level(conf):
 
 
 def generate_entry_safe(text, model=None):
-    ext = extract_entry_data(text, model)
+    ext = extract_entry_data(
+        text,
+        model
+    )
 
     if not ext:
-        return None, "❌ فشل الاستخراج.", 0, "غير موثوق", "#EF4444"
+        return (
+            None,
+            "❌ فشل الاستخراج.",
+            0,
+            "غير موثوق",
+            "#EF4444"
+        )
 
     ent = build_balanced_entry(ext)
 
     if not isinstance(ent, dict):
-        return None, "❌ فشل بناء القيد.", 0, "غير موثوق", "#EF4444"
+        return (
+            None,
+            "❌ فشل بناء القيد.",
+            0,
+            "غير موثوق",
+            "#EF4444"
+        )
 
-    conf = calculate_confidence(ext, ent)
+    conf = calculate_confidence(
+        ext,
+        ent
+    )
 
     lbl, clr = get_confidence_level(conf)
 
-    disp = format_entry_display(ent) + f"\n📊 الثقة: {conf}% ({lbl})"
+    disp = (
+        format_entry_display(ent)
+        + f"\n📊 الثقة: {conf}% ({lbl})"
+    )
 
     return ent, disp, conf, lbl, clr
 
 
 # =========================================================
-# محرك القيود بالقوالب
+# 21. محرك القيود بالقوالب
 # =========================================================
 
 ENTRY_TEMPLATES = {
     "بيع نقداً": {
         "description": "بيع بضاعة نقداً",
         "lines": [
-            {"account": "النقدية", "amount": "{amount}", "side": "debit"},
-            {"account": "المبيعات", "amount": "{amount}", "side": "credit"}
+            {
+                "account": "النقدية",
+                "amount": "{amount}",
+                "side": "debit"
+            },
+            {
+                "account": "المبيعات",
+                "amount": "{amount}",
+                "side": "credit"
+            }
         ]
     },
 
     "بيع بالآجل": {
         "description": "بيع بضاعة بالآجل",
         "lines": [
-            {"account": "العملاء", "amount": "{amount}", "side": "debit"},
-            {"account": "المبيعات", "amount": "{amount}", "side": "credit"}
+            {
+                "account": "العملاء",
+                "amount": "{amount}",
+                "side": "debit"
+            },
+            {
+                "account": "المبيعات",
+                "amount": "{amount}",
+                "side": "credit"
+            }
         ]
     },
 
     "شراء نقداً": {
         "description": "شراء بضاعة نقداً",
         "lines": [
-            {"account": "المخزون", "amount": "{amount}", "side": "debit"},
-            {"account": "النقدية", "amount": "{amount}", "side": "credit"}
+            {
+                "account": "المخزون",
+                "amount": "{amount}",
+                "side": "debit"
+            },
+            {
+                "account": "النقدية",
+                "amount": "{amount}",
+                "side": "credit"
+            }
         ]
     },
 
     "شراء بالآجل": {
         "description": "شراء بضاعة بالآجل",
         "lines": [
-            {"account": "المخزون", "amount": "{amount}", "side": "debit"},
-            {"account": "الموردين", "amount": "{amount}", "side": "credit"}
+            {
+                "account": "المخزون",
+                "amount": "{amount}",
+                "side": "debit"
+            },
+            {
+                "account": "الموردين",
+                "amount": "{amount}",
+                "side": "credit"
+            }
         ]
     },
 
     "قبض من عميل": {
         "description": "استلام دفعة من عميل",
         "lines": [
-            {"account": "النقدية", "amount": "{amount}", "side": "debit"},
-            {"account": "العملاء", "amount": "{amount}", "side": "credit"}
+            {
+                "account": "النقدية",
+                "amount": "{amount}",
+                "side": "debit"
+            },
+            {
+                "account": "العملاء",
+                "amount": "{amount}",
+                "side": "credit"
+            }
         ]
     },
 
     "دفع لمورد": {
         "description": "سداد دفعة لمورد",
         "lines": [
-            {"account": "الموردين", "amount": "{amount}", "side": "debit"},
-            {"account": "النقدية", "amount": "{amount}", "side": "credit"}
+            {
+                "account": "الموردين",
+                "amount": "{amount}",
+                "side": "debit"
+            },
+            {
+                "account": "النقدية",
+                "amount": "{amount}",
+                "side": "credit"
+            }
         ]
     },
 
     "سداد مصروف": {
         "description": "سداد مصروف نقداً",
         "lines": [
-            {"account": "{expense_name}", "amount": "{amount}", "side": "debit"},
-            {"account": "النقدية", "amount": "{amount}", "side": "credit"}
+            {
+                "account": "{expense_name}",
+                "amount": "{amount}",
+                "side": "debit"
+            },
+            {
+                "account": "النقدية",
+                "amount": "{amount}",
+                "side": "credit"
+            }
         ]
     }
 }
@@ -1291,10 +1542,18 @@ def generate_template_entry(
     adjustment_side=None,
     inventory_side=None
 ):
-    template = ENTRY_TEMPLATES.get(operation_type)
+    template = ENTRY_TEMPLATES.get(
+        operation_type
+    )
 
     if not template:
-        return None, "❌ العملية غير مدعومة", 0, "غير موثوق", "#EF4444"
+        return (
+            None,
+            "❌ العملية غير مدعومة",
+            0,
+            "غير موثوق",
+            "#EF4444"
+        )
 
     lines = []
 
@@ -1307,34 +1566,68 @@ def generate_template_entry(
 
         lines.append({
             "account": account,
-            "amount": round(float(amount), 2),
+            "amount": round(
+                float(amount),
+                2
+            ),
             "side": l["side"]
         })
 
-    ent = build_balanced_entry({"lines": lines})
+    ent = build_balanced_entry({
+        "lines": lines
+    })
 
     if not isinstance(ent, dict):
-        return None, "❌ فشل إنشاء القيد", 0, "غير موثوق", "#EF4444"
+        return (
+            None,
+            "❌ فشل إنشاء القيد",
+            0,
+            "غير موثوق",
+            "#EF4444"
+        )
 
-    disp = format_entry_display(ent) + "\n📊 الثقة: 100% (قالب)"
+    disp = (
+        format_entry_display(ent)
+        + "\n📊 الثقة: 100% (قالب)"
+    )
 
-    return ent, disp, 100, "موثوق", "#10B981"
+    return (
+        ent,
+        disp,
+        100,
+        "موثوق",
+        "#10B981"
+    )
 
 
 def get_available_operations():
-    return list(ENTRY_TEMPLATES.keys())
+    return list(
+        ENTRY_TEMPLATES.keys()
+    )
 
 
 def get_operation_description(op):
-    return ENTRY_TEMPLATES.get(op, {}).get("description", "")
+    return ENTRY_TEMPLATES.get(
+        op,
+        {}
+    ).get(
+        "description",
+        ""
+    )
 
 
 def is_mixed_operation(op):
-    return op in ["بيع مختلط", "شراء مختلط"]
+    return op in [
+        "بيع مختلط",
+        "شراء مختلط"
+    ]
 
 
 def is_vat_operation(op):
-    return op in ["بيع شامل الضريبة", "شراء شامل الضريبة"]
+    return op in [
+        "بيع شامل الضريبة",
+        "شراء شامل الضريبة"
+    ]
 
 
 def is_salary_operation(op):
