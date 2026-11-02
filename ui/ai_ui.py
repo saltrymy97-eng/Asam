@@ -953,7 +953,7 @@ def _render_chat_tab(model: str) -> None:
         if role not in ("user", "assistant"):
             continue
 
-        avatar = "👤" if role == "user" else "✦"
+        avatar = "" if role == "user" else ""
 
         with st.chat_message(role, avatar=avatar):
             st.markdown(content)
@@ -986,7 +986,7 @@ def _render_chat_tab(model: str) -> None:
         CHAT_CATEGORY,
     )
 
-    with st.chat_message("user", avatar="👤"):
+    with st.chat_message("user", avatar=""):
         st.markdown(active_query)
 
     try:
@@ -1017,7 +1017,7 @@ def _render_chat_tab(model: str) -> None:
     except Exception as exc:
         answer = f"حدث خطأ أثناء تجهيز بيانات السؤال: {exc}"
 
-    with st.chat_message("assistant", avatar="✦"):
+    with st.chat_message("assistant", avatar=""):
         st.markdown(answer)
 
     st.session_state.ai_messages.append({"role": "assistant", "content": answer})
