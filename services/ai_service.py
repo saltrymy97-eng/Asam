@@ -18,12 +18,8 @@ from threading import Lock
 # 1. تحديد المسارات الصحيحة للتطبيق
 # =========================================================
 
-if getattr(sys, "frozen", False):
     # عند التشغيل من EXE يكون مجلد قاعدة البيانات بجوار ملف EXE.
     _APP_BASE = os.path.dirname(os.path.abspath(sys.executable))
-else:
-    # ai_service.py داخل services؛ نصعد إلى جذر المشروع.
-    _APP_BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 BASE_DIR = _APP_BASE
 
