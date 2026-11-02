@@ -307,7 +307,7 @@ try:
         check_permission,
         get_allowed_modules,
     )
-
+    from ui.auth_ui import show as auth_show
     # --------------------------------------------------------
     # الرئيسية
     # --------------------------------------------------------
