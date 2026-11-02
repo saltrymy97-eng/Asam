@@ -946,6 +946,7 @@ def _render_chat_tab(model: str) -> None:
 
     voice_text = audio_input_widget(key="assistant_audio")
 
+    # ✅ تم إصلاح هذا الجزء: حذف avatar تماماً
     for message in st.session_state.ai_messages:
         role = message.get("role", "assistant")
         content = message.get("content", "")
@@ -953,9 +954,7 @@ def _render_chat_tab(model: str) -> None:
         if role not in ("user", "assistant"):
             continue
 
-        avatar = "" if role == "user" else ""
-
-        with st.chat_message(role, avatar=avatar):
+        with st.chat_message(role):
             st.markdown(content)
 
     question = st.chat_input(
@@ -986,7 +985,8 @@ def _render_chat_tab(model: str) -> None:
         CHAT_CATEGORY,
     )
 
-    with st.chat_message("user", avatar=""):
+    # ✅ تم إصلاح هذا الجزء: حذف avatar تماماً
+    with st.chat_message("user"):
         st.markdown(active_query)
 
     try:
@@ -1017,7 +1017,8 @@ def _render_chat_tab(model: str) -> None:
     except Exception as exc:
         answer = f"حدث خطأ أثناء تجهيز بيانات السؤال: {exc}"
 
-    with st.chat_message("assistant", avatar=""):
+    # ✅ تم إصلاح هذا الجزء: حذف avatar تماماً
+    with st.chat_message("assistant"):
         st.markdown(answer)
 
     st.session_state.ai_messages.append({"role": "assistant", "content": answer})
