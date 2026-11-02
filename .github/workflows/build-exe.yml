@@ -29,8 +29,8 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          # ✅ إضافة مكتبة الذكاء الاصطناعي المحلي بشكل صريح
-          pip install llama-cpp-python
+          # ✅ إضافة مكتبة الذكاء الاصطناعي المحلي (نسخة CPU المتوافقة مع جميع الأجهزة)
+          pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
           pip install pyinstaller
       
       - name: Build EXE (Edge Native Mode)
