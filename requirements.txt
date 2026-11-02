@@ -12,3 +12,4 @@ scalar-fastapi
 psycopg2-binary
 cryptography
 pyinstaller
+llama-cpp-python
