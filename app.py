@@ -301,8 +301,6 @@ try:
     # المصادقة والصلاحيات
     # --------------------------------------------------------
 
-    from ui.auth_ui import show as auth_show
-
     from services.auth_service import logout_session
 
     from services.roles_service import (
@@ -1554,7 +1552,7 @@ else:
             )
 
         elif page == "المساعد الذكي":
-
+            
             show_if_permitted(
                 "المساعد الذكي",
                 ai_show,
