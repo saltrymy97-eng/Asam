@@ -135,6 +135,9 @@ def _ensure_database_ready():
 
         _db_schema_ready = True
         print(f"AI service database: {DB_PATH}")
+        
+        # ✅ إصلاح: إنشاء جدول المحادثات تلقائياً بعد تهيئة قاعدة البيانات
+        create_ai_tables()
 
 
 # =========================================================
