@@ -29,6 +29,8 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
+          # ✅ إضافة مكتبة الذكاء الاصطناعي المحلي بشكل صريح
+          pip install llama-cpp-python
           pip install pyinstaller
       
       - name: Build EXE (Edge Native Mode)
