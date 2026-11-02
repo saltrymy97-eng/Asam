@@ -18,7 +18,7 @@ from threading import Lock
 # 1. تحديد المسارات الصحيحة للتطبيق
 # =========================================================
 
-    # عند التشغيل من EXE يكون مجلد قاعدة البيانات بجوار ملف EXE.
+# عند التشغيل من EXE يكون مجلد قاعدة البيانات بجوار ملف EXE.
 _APP_BASE = os.path.dirname(os.path.abspath(sys.executable))
 
 BASE_DIR = _APP_BASE
