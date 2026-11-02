@@ -19,91 +19,130 @@ from threading import Lock
 # =========================================================
 
 if getattr(sys, "frozen", False):
-    # عند التشغيل من EXE:
-    # sys.executable يشير إلى ملف التشغيل نفسه.
-    # مثال: C:\salim\HokamaERP.exe
-
-    _APP_BASE = os.path.dirname(
-        os.path.abspath(sys.executable)
-    )
-
+    # عند التشغيل من EXE يكون مجلد قاعدة البيانات بجوار ملف EXE.
+    _APP_BASE = os.path.dirname(os.path.abspath(sys.executable))
 else:
-    # عند التشغيل من الكود المصدري:
-    # ai_service.py موجود داخل services.
-    # نصعد مستويين للوصول إلى مجلد المشروع.
+    # ai_service.py داخل services؛ نصعد إلى جذر المشروع.
+    _APP_BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    _APP_BASE = os.path.dirname(
-        os.path.dirname(
-            os.path.abspath(__file__)
-        )
-    )
-
-
-# الإبقاء على BASE_DIR للتوافق مع بقية أجزاء المشروع.
 BASE_DIR = _APP_BASE
 
-
-# المسار الموحد لقاعدة البيانات.
-# يجب أن يطابق المسار الذي يستخدمه database.py.
-
-DB_PATH = os.path.join(
-    BASE_DIR,
-    "data",
-    "erp.db"
-)
-
-
-# مسار نموذج الذكاء الاصطناعي المحلي.
+# مسار احتياطي مبدئي. عند أول اتصال سيُستبدل بمسار database.py المركزي.
+DB_PATH = os.path.join(BASE_DIR, "data", "erp.db")
 
 MODEL_PATH = os.environ.get(
     "ERP_AI_MODEL_PATH",
-    os.path.join(
-        BASE_DIR,
-        "models",
-        "ai-model.gguf"
-    )
+    os.path.join(BASE_DIR, "models", "ai-model.gguf")
 )
 
 
 # =========================================================
-# 2. إعدادات محرك الذكاء الاصطناعي
+# 2. إعدادات محرك llama.cpp
 # =========================================================
 
-LLAMA_CONTEXT_SIZE = int(
-    os.environ.get(
-        "ERP_AI_CONTEXT",
-        "2048"
-    )
-)
-
+LLAMA_CONTEXT_SIZE = int(os.environ.get("ERP_AI_CONTEXT", "2048"))
 LLAMA_THREADS = int(
     os.environ.get(
         "ERP_AI_THREADS",
         str(max(1, (os.cpu_count() or 2) - 1))
     )
 )
-
-LLAMA_GPU_LAYERS = int(
-    os.environ.get(
-        "ERP_AI_GPU_LAYERS",
-        "0"
-    )
-)
-
-LLAMA_BATCH_SIZE = int(
-    os.environ.get(
-        "ERP_AI_BATCH_SIZE",
-        "128"
-    )
-)
-
+LLAMA_GPU_LAYERS = int(os.environ.get("ERP_AI_GPU_LAYERS", "0"))
+LLAMA_BATCH_SIZE = int(os.environ.get("ERP_AI_BATCH_SIZE", "128"))
 
 _llm = None
 _llm_lock = Lock()
 
+# تهيئة قاعدة البيانات مرة واحدة عند أول استخدام، مع حماية تعدد الجلسات.
+_db_schema_ready = False
+_db_schema_lock = Lock()
+
 
 # =========================================================
-# 3. موجه الذكاء الاصطناعي المالي
+# 3. تهيئة قاعدة البيانات المركزية للنظام
+# =========================================================
+
+def _ensure_database_ready():
+    """استخدام قاعدة البيانات المركزية نفسها والتحقق من مخططها."""
+    global DB_PATH, _db_schema_ready
+
+    if _db_schema_ready:
+        return
+
+    with _db_schema_lock:
+        if _db_schema_ready:
+            return
+
+        try:
+            import database as core_database
+        except Exception as exc:
+            raise RuntimeError(
+                "تعذر استيراد database.py لتهيئة قاعدة بيانات النظام: "
+                + str(exc)
+            ) from exc
+
+        # database.py هو المرجع الوحيد لمسار قاعدة البيانات.
+        central_path = os.path.abspath(core_database.DB_PATH)
+        DB_PATH = central_path
+
+        # تضمن هذه الدالة إنشاء الجداول والترحيلات المعرفة في database.py.
+        core_database.init_db()
+
+        # فحص الجداول والأعمدة الأساسية التي تعتمد عليها هذه الخدمة.
+        check_conn = sqlite3.connect(DB_PATH, timeout=30)
+        try:
+            check_conn.execute("PRAGMA busy_timeout = 30000")
+
+            tables = {
+                row[0]
+                for row in check_conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+
+            required_tables = {
+                "journal_lines",
+                "journal_entries",
+                "accounts",
+                "invoices",
+                "customers",
+                "suppliers",
+                "products",
+                "employees",
+                "employee_salaries",
+            }
+
+            missing_tables = sorted(required_tables - tables)
+            if missing_tables:
+                raise RuntimeError(
+                    "الجداول التالية غير موجودة في قاعدة البيانات المركزية "
+                    f"({DB_PATH}): {', '.join(missing_tables)}"
+                )
+
+            journal_columns = {
+                row[1]
+                for row in check_conn.execute(
+                    "PRAGMA table_info(journal_lines)"
+                ).fetchall()
+            }
+            required_journal_columns = {
+                "id", "entry_id", "account_name", "debit", "credit"
+            }
+            missing_columns = sorted(required_journal_columns - journal_columns)
+            if missing_columns:
+                raise RuntimeError(
+                    "جدول journal_lines موجود، لكن تنقصه الأعمدة: "
+                    + ", ".join(missing_columns)
+                )
+        finally:
+            check_conn.close()
+
+        _db_schema_ready = True
+        print(f"AI service database: {DB_PATH}")
+
+
+# =========================================================
+# 4. موجه الذكاء الاصطناعي المالي
 # =========================================================
 
 MASTER_FINANCIAL_PROMPT = """أنت المساعد الذكي لنظام (حوكمة ERP)،
@@ -122,95 +161,53 @@ MASTER_FINANCIAL_PROMPT = """أنت المساعد الذكي لنظام (حوك
 
 
 # =========================================================
-# 4. التخزين المؤقت
+# 5. التخزين المؤقت
 # =========================================================
 
 _cache = {}
-
 CACHE_TTL_SECONDS = 300
 
 
 def _cache_get(key):
     entry = _cache.get(key)
-
     if entry:
         data, ts = entry
-
-        if (
-            datetime.now() - ts
-        ).total_seconds() < CACHE_TTL_SECONDS:
-
+        if (datetime.now() - ts).total_seconds() < CACHE_TTL_SECONDS:
             return data
-
         del _cache[key]
-
     return None
 
 
 def _cache_set(key, data):
-    _cache[key] = (
-        data,
-        datetime.now()
-    )
+    _cache[key] = (data, datetime.now())
 
 
 # =========================================================
-# 5. الاتصال بقاعدة البيانات
+# 6. الاتصال بقاعدة البيانات
 # =========================================================
 
 def get_conn():
-    """
-    فتح اتصال بقاعدة البيانات الموجودة بجوار التطبيق.
-
-    المصدر:
-        project/data/erp.db
-
-    EXE:
-        folder_of_exe/data/erp.db
-
-    لا يستخدم هذا الملف مسار _internal.
-    """
+    """فتح اتصال مستقل على قاعدة البيانات المركزية بعد تهيئتها."""
+    _ensure_database_ready()
 
     db_directory = os.path.dirname(DB_PATH)
+    os.makedirs(db_directory, exist_ok=True)
 
-    os.makedirs(
-        db_directory,
-        exist_ok=True
-    )
-
-    conn = sqlite3.connect(
-        DB_PATH,
-        timeout=30
-    )
-
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
-
-    # تفعيل المفاتيح الخارجية.
     conn.execute("PRAGMA foreign_keys = ON")
-
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
 
 
 # =========================================================
-# 6. إنشاء جداول الذكاء الاصطناعي
+# 7. إنشاء جداول الذكاء الاصطناعي
 # =========================================================
 
 def create_ai_tables():
+    """إنشاء جدول سجل محادثات المساعد فقط؛ الجداول الأساسية في database.py."""
     conn = get_conn()
-
     try:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS accounts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                code TEXT UNIQUE NOT NULL,
-                name TEXT NOT NULL,
-                parent_id INTEGER,
-                level INTEGER DEFAULT 1,
-                is_debit TEXT DEFAULT 'debit',
-                FOREIGN KEY (parent_id) REFERENCES accounts(id)
-            )
-        """)
-
         conn.execute("""
             CREATE TABLE IF NOT EXISTS ai_chat_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -222,29 +219,23 @@ def create_ai_tables():
                 timestamp TEXT NOT NULL
             )
         """)
-
         conn.commit()
-
     finally:
         conn.close()
 
 
 # =========================================================
-# 7. محرك llama.cpp المحلي
+# 8. محرك llama.cpp المحلي
 # =========================================================
 
 def _get_local_model():
-    """
-    تحميل النموذج مرة واحدة فقط.
-    """
-
+    """تحميل النموذج مرة واحدة فقط."""
     global _llm
 
     if _llm is not None:
         return _llm
 
     with _llm_lock:
-
         if _llm is not None:
             return _llm
 
@@ -257,7 +248,6 @@ def _get_local_model():
 
         try:
             from llama_cpp import Llama
-
         except ImportError as exc:
             raise RuntimeError(
                 "مكتبة llama-cpp-python غير مثبتة.\n"
@@ -272,7 +262,6 @@ def _get_local_model():
             n_batch=LLAMA_BATCH_SIZE,
             verbose=False
         )
-
         return _llm
 
 
@@ -283,66 +272,36 @@ def query_local_ai(
     max_tokens=4096,
     temperature=0.3
 ):
-    """
-    تنفيذ الطلب محلياً باستخدام llama.cpp.
-    لا يتم إرسال البيانات إلى الإنترنت.
-    """
-
+    """تنفيذ الطلب محلياً باستخدام llama.cpp دون إرسال البيانات إلى الإنترنت."""
     try:
         llm = _get_local_model()
-
         response = llm.create_chat_completion(
             messages=[
                 {
                     "role": "system",
-                    "content": str(
-                        system_prompt or MASTER_FINANCIAL_PROMPT
-                    )
+                    "content": str(system_prompt or MASTER_FINANCIAL_PROMPT)
                 },
                 {
                     "role": "user",
                     "content": str(user_query or "")
                 }
             ],
-            temperature=max(
-                0.0,
-                min(float(temperature), 2.0)
-            ),
-            max_tokens=max(
-                1,
-                min(int(max_tokens), 2048)
-            )
+            temperature=max(0.0, min(float(temperature), 2.0)),
+            max_tokens=max(1, min(int(max_tokens), 2048))
         )
 
-        choices = response.get(
-            "choices",
-            []
-        )
-
+        choices = response.get("choices", [])
         if not choices:
             return "⚠️ لم يُرجع النموذج المحلي إجابة."
 
-        content = choices[0].get(
-            "message",
-            {}
-        ).get(
-            "content",
-            ""
-        )
-
+        content = choices[0].get("message", {}).get("content", "")
         return content.strip() or "⚠️ الإجابة فارغة."
 
-    except FileNotFoundError as e:
-        return f"⚠️ {e}"
+    except FileNotFoundError as exc:
+        return f"⚠️ {exc}"
+    except Exception as exc:
+        return "❌ تعذر تشغيل الذكاء الاصطناعي المحلي: " + str(exc)
 
-    except Exception as e:
-        return (
-            "❌ تعذر تشغيل الذكاء الاصطناعي المحلي: "
-            + str(e)
-        )
-
-
-# اسم قديم للتوافق مع الواجهة والدوال السابقة
 
 def query_groq(
     system_prompt,
@@ -351,6 +310,7 @@ def query_groq(
     max_tokens=4096,
     temperature=0.3
 ):
+    """اسم قديم للتوافق مع الواجهة والدوال السابقة."""
     return query_local_ai(
         system_prompt,
         user_query,
@@ -361,18 +321,11 @@ def query_groq(
 
 
 # =========================================================
-# 8. سجل المحادثات
+# 9. سجل المحادثات
 # =========================================================
 
-def save_chat_history(
-    session_id,
-    role,
-    content,
-    model="",
-    tab_name=""
-):
+def save_chat_history(session_id, role, content, model="", tab_name=""):
     conn = get_conn()
-
     try:
         conn.execute(
             """
@@ -386,21 +339,16 @@ def save_chat_history(
                 content,
                 model or "llama.cpp-local",
                 tab_name,
-                datetime.now().strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                )
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             )
         )
-
         conn.commit()
-
     finally:
         conn.close()
 
 
 def get_chat_history(session_id=None, limit=20):
     conn = get_conn()
-
     try:
         if session_id:
             rows = conn.execute(
@@ -411,7 +359,6 @@ def get_chat_history(session_id=None, limit=20):
                 """,
                 (session_id, limit)
             ).fetchall()
-
         else:
             rows = conn.execute(
                 """
@@ -420,18 +367,13 @@ def get_chat_history(session_id=None, limit=20):
                 """,
                 (limit,)
             ).fetchall()
-
-        return [
-            dict(r) for r in rows
-        ]
-
+        return [dict(row) for row in rows]
     finally:
         conn.close()
 
 
 def get_chat_sessions():
     conn = get_conn()
-
     try:
         rows = conn.execute("""
             SELECT session_id,
@@ -442,36 +384,24 @@ def get_chat_sessions():
             ORDER BY first_message DESC
             LIMIT 10
         """).fetchall()
-
-        return [
-            dict(r) for r in rows
-        ]
-
+        return [dict(row) for row in rows]
     finally:
         conn.close()
 
 
 # =========================================================
-# 9. ذاكرة المحادثة
+# 10. ذاكرة المحادثة
 # =========================================================
 
 def compress_chat_memory(session_id, model=None):
-    history = get_chat_history(
-        session_id,
-        limit=10
-    )
-
+    history = get_chat_history(session_id, limit=10)
     if not history:
         return ""
 
-    history_sorted = sorted(
-        history,
-        key=lambda x: x["timestamp"]
-    )
-
+    history_sorted = sorted(history, key=lambda item: item["timestamp"])
     dialogue = "\n".join([
-        f"{h['role']}: {h['content']}"
-        for h in history_sorted
+        f"{item['role']}: {item['content']}"
+        for item in history_sorted
     ])
 
     prompt = f"""
@@ -492,26 +422,21 @@ def compress_chat_memory(session_id, model=None):
 
     if result.startswith("❌"):
         return "ملخص غير متاح"
-
     return result
 
 
 # =========================================================
-# 10. التحقق من صحة البيانات
+# 11. التحقق من صحة البيانات
 # =========================================================
 
 def validate_financial_snapshot(snap):
     warnings = []
 
     if snap["revenue"] < 0:
-        warnings.append(
-            "الإيرادات سالبة – تحقق من ترحيل حسابات الإيرادات."
-        )
+        warnings.append("الإيرادات سالبة – تحقق من ترحيل حسابات الإيرادات.")
 
     if snap["assets"] <= 0:
-        warnings.append(
-            "الأصول صفر أو سالبة – قد تكون القيود غير مكتملة."
-        )
+        warnings.append("الأصول صفر أو سالبة – قد تكون القيود غير مكتملة.")
 
     if snap["profit_margin"] > 80:
         warnings.append(
@@ -522,19 +447,16 @@ def validate_financial_snapshot(snap):
 
 
 # =========================================================
-# 11. اللقطات المالية
+# 12. اللقطات المالية
 # =========================================================
 
 def get_financial_snapshot():
     cache_key = "financial_snapshot"
-
     cached = _cache_get(cache_key)
-
     if cached is not None:
         return cached
 
     conn = get_conn()
-
     try:
         revenue = conn.execute("""
             SELECT COALESCE(SUM(credit)-SUM(debit),0)
@@ -566,64 +488,45 @@ def get_financial_snapshot():
             WHERE account_name LIKE '3%'
         """).fetchone()[0]
 
-        top_cust = [
-            dict(r) for r in conn.execute("""
-                SELECT c.name, SUM(i.total) AS total
-                FROM invoices i
-                JOIN customers c ON i.customer_id = c.id
-                WHERE i.type='sale'
-                AND i.status='completed'
-                GROUP BY c.id
-                ORDER BY total DESC
-                LIMIT 3
-            """).fetchall()
-        ]
+        top_cust = [dict(row) for row in conn.execute("""
+            SELECT c.name, SUM(i.total) AS total
+            FROM invoices i
+            JOIN customers c ON i.customer_id = c.id
+            WHERE i.type='sale'
+              AND i.status='completed'
+            GROUP BY c.id
+            ORDER BY total DESC
+            LIMIT 3
+        """).fetchall()]
 
-        top_supp = [
-            dict(r) for r in conn.execute("""
-                SELECT s.name, SUM(i.total) AS total
-                FROM invoices i
-                JOIN suppliers s ON i.supplier_id = s.id
-                WHERE i.type='purchase'
-                AND i.status='completed'
-                GROUP BY s.id
-                ORDER BY total DESC
-                LIMIT 3
-            """).fetchall()
-        ]
+        top_supp = [dict(row) for row in conn.execute("""
+            SELECT s.name, SUM(i.total) AS total
+            FROM invoices i
+            JOIN suppliers s ON i.supplier_id = s.id
+            WHERE i.type='purchase'
+              AND i.status='completed'
+            GROUP BY s.id
+            ORDER BY total DESC
+            LIMIT 3
+        """).fetchall()]
 
-        sales_trend = [
-            dict(r) for r in conn.execute("""
-                SELECT strftime('%Y-%m', invoice_date) AS month,
-                       SUM(total) AS total
-                FROM invoices
-                WHERE type='sale'
-                AND status='completed'
-                GROUP BY month
-                ORDER BY month DESC
-                LIMIT 6
-            """).fetchall()
-        ]
-
+        sales_trend = [dict(row) for row in conn.execute("""
+            SELECT strftime('%Y-%m', invoice_date) AS month,
+                   SUM(total) AS total
+            FROM invoices
+            WHERE type='sale'
+              AND status='completed'
+            GROUP BY month
+            ORDER BY month DESC
+            LIMIT 6
+        """).fetchall()]
     finally:
         conn.close()
 
     net_income = revenue - expenses
-
-    profit_margin = (
-        net_income / revenue * 100
-        if revenue > 0 else 0
-    )
-
-    debt_ratio = (
-        liabilities / assets * 100
-        if assets > 0 else 0
-    )
-
-    roa = (
-        net_income / assets * 100
-        if assets > 0 else 0
-    )
+    profit_margin = net_income / revenue * 100 if revenue > 0 else 0
+    debt_ratio = liabilities / assets * 100 if assets > 0 else 0
+    roa = net_income / assets * 100 if assets > 0 else 0
 
     snap = {
         "revenue": round(revenue, 2),
@@ -641,72 +544,58 @@ def get_financial_snapshot():
     }
 
     snap["warnings"] = validate_financial_snapshot(snap)
-
     _cache_set(cache_key, snap)
-
     return snap
 
 
 # =========================================================
-# 12. لقطة المخزون
+# 13. لقطة المخزون
 # =========================================================
 
 def get_inventory_snapshot():
     cache_key = "inventory_snapshot"
-
     cached = _cache_get(cache_key)
-
     if cached is not None:
         return cached
 
     conn = get_conn()
-
     try:
-        all_products = [
-            dict(r) for r in conn.execute("""
-                SELECT name, quantity, reorder_level,
-                       selling_price, purchase_price
-                FROM products
-                ORDER BY quantity ASC
-            """).fetchall()
-        ]
-
+        all_products = [dict(row) for row in conn.execute("""
+            SELECT name, quantity, reorder_level,
+                   selling_price, purchase_price
+            FROM products
+            ORDER BY quantity ASC
+        """).fetchall()]
     finally:
         conn.close()
 
     total_products = len(all_products)
-
     low_stock = [
-        p for p in all_products
-        if p["quantity"] < p["reorder_level"]
+        product for product in all_products
+        if product["quantity"] < product["reorder_level"]
     ]
 
-    for p in all_products:
-
-        selling = p["selling_price"] or 0
-        purchase = p["purchase_price"] or 0
+    for product in all_products:
+        selling = product["selling_price"] or 0
+        purchase = product["purchase_price"] or 0
 
         if selling > 0 and purchase > 0:
-            p["profit_margin"] = round(
-                (selling - purchase) / selling * 100,
-                1
+            product["profit_margin"] = round(
+                (selling - purchase) / selling * 100, 1
             )
         else:
-            p["profit_margin"] = 0
+            product["profit_margin"] = 0
 
-        if p["quantity"] <= 0:
-            p["recommendation"] = "نفد المخزون"
-
-        elif p["quantity"] < p["reorder_level"]:
-            p["recommendation"] = (
-                f"طلب {p['reorder_level'] - p['quantity']} وحدة"
+        if product["quantity"] <= 0:
+            product["recommendation"] = "نفد المخزون"
+        elif product["quantity"] < product["reorder_level"]:
+            product["recommendation"] = (
+                f"طلب {product['reorder_level'] - product['quantity']} وحدة"
             )
-
-        elif p["quantity"] < p["reorder_level"] * 2:
-            p["recommendation"] = "مراقبة"
-
+        elif product["quantity"] < product["reorder_level"] * 2:
+            product["recommendation"] = "مراقبة"
         else:
-            p["recommendation"] = "آمن"
+            product["recommendation"] = "آمن"
 
     snap = {
         "total_products": total_products,
@@ -714,70 +603,59 @@ def get_inventory_snapshot():
         "low_stock_items": low_stock[:10],
         "top_products": sorted(
             all_products,
-            key=lambda x: x["quantity"],
+            key=lambda item: item["quantity"],
             reverse=True
         )[:10],
         "all_products": all_products[:20]
     }
-
     _cache_set(cache_key, snap)
-
     return snap
 
 
 # =========================================================
-# 13. لقطة الأعمال والعملاء والموردين
+# 14. لقطة الأعمال والعملاء والموردين
 # =========================================================
 
 def get_business_snapshot():
     cache_key = "business_snapshot"
-
     cached = _cache_get(cache_key)
-
     if cached is not None:
         return cached
 
     conn = get_conn()
-
     try:
-        top_customers = [
-            dict(r) for r in conn.execute("""
-                SELECT c.name,
-                       COUNT(i.id) AS invoice_count,
-                       SUM(i.total) AS total
-                FROM invoices i
-                JOIN customers c ON i.customer_id = c.id
-                WHERE i.type='sale'
-                AND i.status='completed'
-                GROUP BY c.id
-                ORDER BY total DESC
-                LIMIT 5
-            """).fetchall()
-        ]
+        top_customers = [dict(row) for row in conn.execute("""
+            SELECT c.name,
+                   COUNT(i.id) AS invoice_count,
+                   SUM(i.total) AS total
+            FROM invoices i
+            JOIN customers c ON i.customer_id = c.id
+            WHERE i.type='sale'
+              AND i.status='completed'
+            GROUP BY c.id
+            ORDER BY total DESC
+            LIMIT 5
+        """).fetchall()]
 
-        top_suppliers = [
-            dict(r) for r in conn.execute("""
-                SELECT s.name,
-                       COUNT(i.id) AS invoice_count,
-                       SUM(i.total) AS total
-                FROM invoices i
-                JOIN suppliers s ON i.supplier_id = s.id
-                WHERE i.type='purchase'
-                AND i.status='completed'
-                GROUP BY s.id
-                ORDER BY total DESC
-                LIMIT 5
-            """).fetchall()
-        ]
+        top_suppliers = [dict(row) for row in conn.execute("""
+            SELECT s.name,
+                   COUNT(i.id) AS invoice_count,
+                   SUM(i.total) AS total
+            FROM invoices i
+            JOIN suppliers s ON i.supplier_id = s.id
+            WHERE i.type='purchase'
+              AND i.status='completed'
+            GROUP BY s.id
+            ORDER BY total DESC
+            LIMIT 5
+        """).fetchall()]
 
         total_customers = conn.execute(
             "SELECT COUNT(*) FROM customers"
         ).fetchone()[0]
-
         total_suppliers = conn.execute(
             "SELECT COUNT(*) FROM suppliers"
         ).fetchone()[0]
-
     finally:
         conn.close()
 
@@ -787,35 +665,28 @@ def get_business_snapshot():
         "top_customers": top_customers,
         "top_suppliers": top_suppliers
     }
-
     _cache_set(cache_key, snap)
-
     return snap
 
 
 # =========================================================
-# 14. لقطة الموارد البشرية
+# 15. لقطة الموارد البشرية
 # =========================================================
 
 def get_hr_snapshot():
     cache_key = "hr_snapshot"
-
     cached = _cache_get(cache_key)
-
     if cached is not None:
         return cached
 
     conn = get_conn()
-
     try:
         total_employees = conn.execute(
             "SELECT COUNT(*) FROM employees"
         ).fetchone()[0]
-
         total_salary = conn.execute(
             "SELECT COALESCE(SUM(basic_salary),0) FROM employee_salaries"
         ).fetchone()[0]
-
     finally:
         conn.close()
 
@@ -823,26 +694,21 @@ def get_hr_snapshot():
         "total_employees": total_employees,
         "total_monthly_salary": round(total_salary, 2)
     }
-
     _cache_set(cache_key, snap)
-
     return snap
 
 
 # =========================================================
-# 15. لقطة الاتجاهات
+# 16. لقطة الاتجاهات
 # =========================================================
 
 def get_trend_snapshot():
     cache_key = "trend_snapshot"
-
     cached = _cache_get(cache_key)
-
     if cached is not None:
         return cached
 
     conn = get_conn()
-
     try:
         trends = conn.execute("""
             SELECT strftime('%Y-%m', invoice_date) AS month,
@@ -854,84 +720,65 @@ def get_trend_snapshot():
             ORDER BY month DESC
             LIMIT 6
         """).fetchall()
-
     finally:
         conn.close()
 
-    snap = [
-        dict(t) for t in trends
-    ]
-
+    snap = [dict(row) for row in trends]
     _cache_set(cache_key, snap)
-
     return snap
 
 
 # =========================================================
-# 16. مراكز التكلفة
+# 17. مراكز التكلفة
 # =========================================================
 
 def get_cost_center_snapshot():
     cache_key = "cost_center_snapshot"
-
     cached = _cache_get(cache_key)
-
     if cached is not None:
         return cached
 
     from services import cost_center_service as ccs
 
-    centers = ccs.get_all_cost_centers(
-        active_only=True
-    )
-
+    centers = ccs.get_all_cost_centers(active_only=True)
     summary = []
-
-    for c in centers:
-        balance = ccs.get_cost_center_balance(
-            c["id"]
-        )
-
+    for center in centers:
+        balance = ccs.get_cost_center_balance(center["id"])
         summary.append({
-            "code": c["code"],
-            "name": c["name"],
+            "code": center["code"],
+            "name": center["name"],
             "net_balance": balance["net"]
         })
 
     _cache_set(cache_key, summary)
-
     return summary
 
 
 # =========================================================
-# 17. بناء سياق الذكاء الاصطناعي
+# 18. بناء سياق الذكاء الاصطناعي
 # =========================================================
 
 def build_ai_context(include_cost_centers=True):
     ctx = {}
 
     fin = get_financial_snapshot()
-
-    for k, v in fin.items():
-        ctx[k] = v
+    for key, value in fin.items():
+        ctx[key] = value
 
     inv = get_inventory_snapshot()
-
-    for k, v in inv.items():
-        if k not in ctx:
-            ctx[k] = v
+    for key, value in inv.items():
+        if key not in ctx:
+            ctx[key] = value
 
     biz = get_business_snapshot()
-
-    for k, v in biz.items():
-        if k not in ctx:
-            ctx[k] = v
+    for key, value in biz.items():
+        if key not in ctx:
+            ctx[key] = value
 
     hr = get_hr_snapshot()
-
-    for k, v in hr.items():
-        if k not in ctx:
-            ctx[k] = v
+    for key, value in hr.items():
+        if key not in ctx:
+            ctx[key] = value
 
     ctx["trends"] = get_trend_snapshot()
 
@@ -942,7 +789,7 @@ def build_ai_context(include_cost_centers=True):
 
 
 # =========================================================
-# 18. الدوال العامة المستخدمة في الواجهة
+# 19. الدوال العامة المستخدمة في الواجهة
 # =========================================================
 
 def get_comprehensive_data():
@@ -951,16 +798,11 @@ def get_comprehensive_data():
 
 def get_inventory_data():
     snap = get_inventory_snapshot()
-
-    return (
-        snap["low_stock_items"],
-        snap["all_products"][:20]
-    )
+    return snap["low_stock_items"], snap["all_products"][:20]
 
 
 def get_employee_info(name):
     conn = get_conn()
-
     try:
         emp = conn.execute(
             "SELECT * FROM employees WHERE name LIKE ?",
@@ -972,52 +814,38 @@ def get_employee_info(name):
                 "SELECT * FROM employee_salaries WHERE employee_id=?",
                 (emp["id"],)
             ).fetchone()
-
-            return (
-                dict(emp),
-                dict(sal) if sal else None
-            )
+            return dict(emp), dict(sal) if sal else None
 
         return None, None
-
     finally:
         conn.close()
 
 
 def get_recent_entries():
     conn = get_conn()
-
     try:
-        return [
-            dict(r) for r in conn.execute("""
-                SELECT * FROM journal_entries
-                ORDER BY id DESC
-                LIMIT 200
-            """).fetchall()
-        ]
-
+        return [dict(row) for row in conn.execute("""
+            SELECT * FROM journal_entries
+            ORDER BY id DESC
+            LIMIT 200
+        """).fetchall()]
     finally:
         conn.close()
 
 
 def get_all_accounts():
     conn = get_conn()
-
     try:
-        return [
-            dict(r) for r in conn.execute("""
-                SELECT code, name FROM accounts
-                ORDER BY code
-            """).fetchall()
-        ]
-
+        return [dict(row) for row in conn.execute("""
+            SELECT code, name FROM accounts
+            ORDER BY code
+        """).fetchall()]
     finally:
         conn.close()
 
 
 def get_financial_ratios():
     fin = get_financial_snapshot()
-
     return {
         "هامش الربح": f"{fin['profit_margin']:.1f}%",
         "نسبة المديونية": f"{fin['debt_ratio']:.1f}%",
@@ -1031,23 +859,17 @@ def get_trend_analysis():
 
 
 # =========================================================
-# 19. تحليل مراكز التكلفة
+# 20. تحليل مراكز التكلفة
 # =========================================================
 
 def analyze_cost_center_performance(center_id):
     from services import cost_center_service as ccs
 
-    center = ccs.get_cost_center_by_id(
-        center_id
-    )
-
+    center = ccs.get_cost_center_by_id(center_id)
     if not center:
         return "مركز التكلفة غير موجود"
 
-    balance = ccs.get_cost_center_balance(
-        center_id
-    )
-
+    balance = ccs.get_cost_center_balance(center_id)
     income_stmt = ccs.get_cost_center_income_statement(
         center_id,
         "2020-01-01",
@@ -1084,15 +906,10 @@ def analyze_cost_center_performance(center_id):
 
 def compare_cost_centers():
     summary = get_cost_center_snapshot()
-
     if not summary:
         return "لا توجد بيانات"
 
-    data_text = json.dumps(
-        summary,
-        ensure_ascii=False
-    )
-
+    data_text = json.dumps(summary, ensure_ascii=False)
     system_prompt = """
 أنت مدير مالي خبير.
 قدم مقارنة تحليلية لمراكز التكلفة تشمل:
@@ -1114,33 +931,26 @@ def compare_cost_centers():
 def predict_cost_center_expenses(center_id, months=3):
     from services import cost_center_service as ccs
 
-    center = ccs.get_cost_center_by_id(
-        center_id
-    )
-
+    center = ccs.get_cost_center_by_id(center_id)
     if not center:
         return "المركز غير موجود"
 
     conn = get_conn()
-
     try:
-        history = [
-            dict(m) for m in conn.execute("""
-                SELECT strftime('%Y-%m', je.date) AS month,
-                       SUM(cca.amount) AS total
-                FROM cost_center_allocations cca
-                JOIN journal_lines jl
-                    ON cca.journal_line_id = jl.id
-                JOIN journal_entries je
-                    ON jl.entry_id = je.id
-                WHERE cca.cost_center_id = ?
-                AND jl.debit > 0
-                GROUP BY month
-                ORDER BY month DESC
-                LIMIT 12
-            """, (center_id,)).fetchall()
-        ]
-
+        history = [dict(row) for row in conn.execute("""
+            SELECT strftime('%Y-%m', je.date) AS month,
+                   SUM(cca.amount) AS total
+            FROM cost_center_allocations cca
+            JOIN journal_lines jl
+                ON cca.journal_line_id = jl.id
+            JOIN journal_entries je
+                ON jl.entry_id = je.id
+            WHERE cca.cost_center_id = ?
+              AND jl.debit > 0
+            GROUP BY month
+            ORDER BY month DESC
+            LIMIT 12
+        """, (center_id,)).fetchall()]
     finally:
         conn.close()
 
@@ -1158,10 +968,7 @@ def predict_cost_center_expenses(center_id, months=3):
 
     return query_local_ai(
         system_prompt,
-        json.dumps(
-            history,
-            ensure_ascii=False
-        ),
+        json.dumps(history, ensure_ascii=False),
         max_tokens=1500,
         temperature=0.3
     )
@@ -1170,11 +977,7 @@ def predict_cost_center_expenses(center_id, months=3):
 def get_cost_center_budget_analysis(center_id, fiscal_year):
     from services import cost_center_service as ccs
 
-    variance_data = ccs.get_budget_variance(
-        center_id,
-        fiscal_year
-    )
-
+    variance_data = ccs.get_budget_variance(center_id, fiscal_year)
     if not variance_data:
         return "لا توجد موازنات مسجلة"
 
@@ -1191,17 +994,14 @@ def get_cost_center_budget_analysis(center_id, fiscal_year):
 
     return query_local_ai(
         system_prompt,
-        json.dumps(
-            variance_data["details"],
-            ensure_ascii=False
-        ),
+        json.dumps(variance_data["details"], ensure_ascii=False),
         max_tokens=1500,
         temperature=0.3
     )
 
 
 # =========================================================
-# 20. محرك القيود الآلي
+# 21. محرك القيود الآلي
 # =========================================================
 
 def extract_entry_data(text, model=None):
@@ -1234,14 +1034,9 @@ def extract_entry_data(text, model=None):
     try:
         start = response.find("{")
         end = response.rfind("}") + 1
-
         if start == -1 or end <= start:
             return None
-
-        return json.loads(
-            response[start:end]
-        )
-
+        return json.loads(response[start:end])
     except (ValueError, TypeError, json.JSONDecodeError):
         return None
 
@@ -1251,25 +1046,19 @@ def build_balanced_entry(extracted_data):
         return None, "فشل استخراج البيانات"
 
     lines = extracted_data["lines"]
-
     total_debit = sum(
-        float(l.get("amount", 0))
-        for l in lines
-        if l.get("side") == "debit"
+        float(line.get("amount", 0))
+        for line in lines
+        if line.get("side") == "debit"
     )
-
     total_credit = sum(
-        float(l.get("amount", 0))
-        for l in lines
-        if l.get("side") == "credit"
+        float(line.get("amount", 0))
+        for line in lines
+        if line.get("side") == "credit"
     )
 
     entry_lines = list(lines)
-
-    diff = round(
-        total_debit - total_credit,
-        2
-    )
+    diff = round(total_debit - total_credit, 2)
 
     if diff > 0:
         entry_lines.append({
@@ -1278,9 +1067,7 @@ def build_balanced_entry(extracted_data):
             "side": "credit",
             "auto_correction": True
         })
-
         total_credit += diff
-
     elif diff < 0:
         entry_lines.append({
             "account": "حساب تسوية",
@@ -1288,19 +1075,15 @@ def build_balanced_entry(extracted_data):
             "side": "debit",
             "auto_correction": True
         })
-
         total_debit += abs(diff)
 
     return {
         "lines": entry_lines,
         "total_debit": total_debit,
         "total_credit": total_credit,
-        "is_balanced": abs(
-            total_debit - total_credit
-        ) < 0.01,
+        "is_balanced": abs(total_debit - total_credit) < 0.01,
         "has_auto_correction": any(
-            l.get("auto_correction")
-            for l in entry_lines
+            line.get("auto_correction") for line in entry_lines
         )
     }
 
@@ -1309,21 +1092,20 @@ def format_entry_display(entry_data):
     if not entry_data:
         return "لا توجد بيانات"
 
-    res = "".join([
-        f"{'مدين' if l.get('side') == 'debit' else 'دائن'} | "
-        f"{l.get('account', '')} | "
-        f"{l.get('amount', 0):,.2f}"
-        f"{' (تسوية)' if l.get('auto_correction') else ''}\n"
-        for l in entry_data.get("lines", [])
+    result = "".join([
+        f"{'مدين' if line.get('side') == 'debit' else 'دائن'} | "
+        f"{line.get('account', '')} | "
+        f"{line.get('amount', 0):,.2f}"
+        f"{' (تسوية)' if line.get('auto_correction') else ''}\n"
+        for line in entry_data.get("lines", [])
     ])
 
-    res += (
+    result += (
         f"\n✅ متوازن: مدين "
         f"{entry_data['total_debit']:,.2f} "
         f"= دائن {entry_data['total_credit']:,.2f}"
     )
-
-    return res
+    return result
 
 
 def calculate_confidence(ext, bal):
@@ -1334,199 +1116,104 @@ def calculate_confidence(ext, bal):
         return 100
 
     corr = sum(
-        l.get("amount", 0)
-        for l in bal["lines"]
-        if l.get("auto_correction")
+        line.get("amount", 0)
+        for line in bal["lines"]
+        if line.get("auto_correction")
+    )
+    total = sum(
+        line.get("amount", 0)
+        for line in bal["lines"]
+        if not line.get("auto_correction")
     )
 
-    tot = sum(
-        l.get("amount", 0)
-        for l in bal["lines"]
-        if not l.get("auto_correction")
-    )
-
-    if tot == 0:
+    if total == 0:
         return 0
 
-    pct = (corr / tot) * 100
-
+    pct = (corr / total) * 100
     if pct < 2:
         return 90
-
     if pct < 5:
         return 70
-
     if pct < 10:
         return 50
-
     return 30
 
 
 def get_confidence_level(conf):
     if conf >= 90:
         return "موثوق", "#10B981"
-
     if conf >= 70:
         return "شبه موثوق", "#F59E0B"
-
     return "مشكوك فيه/غير موثوق", "#EF4444"
 
 
 def generate_entry_safe(text, model=None):
-    ext = extract_entry_data(
-        text,
-        model
-    )
-
+    ext = extract_entry_data(text, model)
     if not ext:
-        return (
-            None,
-            "❌ فشل الاستخراج.",
-            0,
-            "غير موثوق",
-            "#EF4444"
-        )
+        return None, "❌ فشل الاستخراج.", 0, "غير موثوق", "#EF4444"
 
     ent = build_balanced_entry(ext)
-
     if not isinstance(ent, dict):
-        return (
-            None,
-            "❌ فشل بناء القيد.",
-            0,
-            "غير موثوق",
-            "#EF4444"
-        )
+        return None, "❌ فشل بناء القيد.", 0, "غير موثوق", "#EF4444"
 
-    conf = calculate_confidence(
-        ext,
-        ent
-    )
-
+    conf = calculate_confidence(ext, ent)
     lbl, clr = get_confidence_level(conf)
-
-    disp = (
-        format_entry_display(ent)
-        + f"\n📊 الثقة: {conf}% ({lbl})"
-    )
-
+    disp = format_entry_display(ent) + f"\n📊 الثقة: {conf}% ({lbl})"
     return ent, disp, conf, lbl, clr
 
 
 # =========================================================
-# 21. محرك القيود بالقوالب
+# 22. محرك القيود بالقوالب
 # =========================================================
 
 ENTRY_TEMPLATES = {
     "بيع نقداً": {
         "description": "بيع بضاعة نقداً",
         "lines": [
-            {
-                "account": "النقدية",
-                "amount": "{amount}",
-                "side": "debit"
-            },
-            {
-                "account": "المبيعات",
-                "amount": "{amount}",
-                "side": "credit"
-            }
+            {"account": "النقدية", "amount": "{amount}", "side": "debit"},
+            {"account": "المبيعات", "amount": "{amount}", "side": "credit"}
         ]
     },
-
     "بيع بالآجل": {
         "description": "بيع بضاعة بالآجل",
         "lines": [
-            {
-                "account": "العملاء",
-                "amount": "{amount}",
-                "side": "debit"
-            },
-            {
-                "account": "المبيعات",
-                "amount": "{amount}",
-                "side": "credit"
-            }
+            {"account": "العملاء", "amount": "{amount}", "side": "debit"},
+            {"account": "المبيعات", "amount": "{amount}", "side": "credit"}
         ]
     },
-
     "شراء نقداً": {
         "description": "شراء بضاعة نقداً",
         "lines": [
-            {
-                "account": "المخزون",
-                "amount": "{amount}",
-                "side": "debit"
-            },
-            {
-                "account": "النقدية",
-                "amount": "{amount}",
-                "side": "credit"
-            }
+            {"account": "المخزون", "amount": "{amount}", "side": "debit"},
+            {"account": "النقدية", "amount": "{amount}", "side": "credit"}
         ]
     },
-
     "شراء بالآجل": {
         "description": "شراء بضاعة بالآجل",
         "lines": [
-            {
-                "account": "المخزون",
-                "amount": "{amount}",
-                "side": "debit"
-            },
-            {
-                "account": "الموردين",
-                "amount": "{amount}",
-                "side": "credit"
-            }
+            {"account": "المخزون", "amount": "{amount}", "side": "debit"},
+            {"account": "الموردين", "amount": "{amount}", "side": "credit"}
         ]
     },
-
     "قبض من عميل": {
         "description": "استلام دفعة من عميل",
         "lines": [
-            {
-                "account": "النقدية",
-                "amount": "{amount}",
-                "side": "debit"
-            },
-            {
-                "account": "العملاء",
-                "amount": "{amount}",
-                "side": "credit"
-            }
+            {"account": "النقدية", "amount": "{amount}", "side": "debit"},
+            {"account": "العملاء", "amount": "{amount}", "side": "credit"}
         ]
     },
-
     "دفع لمورد": {
         "description": "سداد دفعة لمورد",
         "lines": [
-            {
-                "account": "الموردين",
-                "amount": "{amount}",
-                "side": "debit"
-            },
-            {
-                "account": "النقدية",
-                "amount": "{amount}",
-                "side": "credit"
-            }
+            {"account": "الموردين", "amount": "{amount}", "side": "debit"},
+            {"account": "النقدية", "amount": "{amount}", "side": "credit"}
         ]
     },
-
     "سداد مصروف": {
         "description": "سداد مصروف نقداً",
         "lines": [
-            {
-                "account": "{expense_name}",
-                "amount": "{amount}",
-                "side": "debit"
-            },
-            {
-                "account": "النقدية",
-                "amount": "{amount}",
-                "side": "credit"
-            }
+            {"account": "{expense_name}", "amount": "{amount}", "side": "debit"},
+            {"account": "النقدية", "amount": "{amount}", "side": "credit"}
         ]
     }
 }
@@ -1542,92 +1229,45 @@ def generate_template_entry(
     adjustment_side=None,
     inventory_side=None
 ):
-    template = ENTRY_TEMPLATES.get(
-        operation_type
-    )
-
+    template = ENTRY_TEMPLATES.get(operation_type)
     if not template:
-        return (
-            None,
-            "❌ العملية غير مدعومة",
-            0,
-            "غير موثوق",
-            "#EF4444"
-        )
+        return None, "❌ العملية غير مدعومة", 0, "غير موثوق", "#EF4444"
 
     lines = []
-
-    for l in template["lines"]:
-
-        if l["account"] == "{expense_name}":
+    for line in template["lines"]:
+        if line["account"] == "{expense_name}":
             account = expense_name or "مصروف"
         else:
-            account = l["account"]
+            account = line["account"]
 
         lines.append({
             "account": account,
-            "amount": round(
-                float(amount),
-                2
-            ),
-            "side": l["side"]
+            "amount": round(float(amount), 2),
+            "side": line["side"]
         })
 
-    ent = build_balanced_entry({
-        "lines": lines
-    })
-
+    ent = build_balanced_entry({"lines": lines})
     if not isinstance(ent, dict):
-        return (
-            None,
-            "❌ فشل إنشاء القيد",
-            0,
-            "غير موثوق",
-            "#EF4444"
-        )
+        return None, "❌ فشل إنشاء القيد", 0, "غير موثوق", "#EF4444"
 
-    disp = (
-        format_entry_display(ent)
-        + "\n📊 الثقة: 100% (قالب)"
-    )
-
-    return (
-        ent,
-        disp,
-        100,
-        "موثوق",
-        "#10B981"
-    )
+    disp = format_entry_display(ent) + "\n📊 الثقة: 100% (قالب)"
+    return ent, disp, 100, "موثوق", "#10B981"
 
 
 def get_available_operations():
-    return list(
-        ENTRY_TEMPLATES.keys()
-    )
+    return list(ENTRY_TEMPLATES.keys())
 
 
 def get_operation_description(op):
-    return ENTRY_TEMPLATES.get(
-        op,
-        {}
-    ).get(
-        "description",
-        ""
-    )
+    return ENTRY_TEMPLATES.get(op, {}).get("description", "")
 
 
 def is_mixed_operation(op):
-    return op in [
-        "بيع مختلط",
-        "شراء مختلط"
-    ]
+    return op in ["بيع مختلط", "شراء مختلط"]
 
 
 def is_vat_operation(op):
-    return op in [
-        "بيع شامل الضريبة",
-        "شراء شامل الضريبة"
-    ]
+    return op in ["بيع شامل الضريبة", "شراء شامل الضريبة"]
 
 
 def is_salary_operation(op):
