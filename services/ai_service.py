@@ -19,7 +19,7 @@ from threading import Lock
 # =========================================================
 
     # عند التشغيل من EXE يكون مجلد قاعدة البيانات بجوار ملف EXE.
-    _APP_BASE = os.path.dirname(os.path.abspath(sys.executable))
+_APP_BASE = os.path.dirname(os.path.abspath(sys.executable))
 
 BASE_DIR = _APP_BASE
 
