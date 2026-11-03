@@ -1,35 +1,24 @@
 # -*- coding: utf-8 -*-
+"""ui/ai_ui.py - Hokama ERP local AI workspace.
+
+AI-generated text is rendered with st.write()/st.text(), not st.markdown().
+The HTML/CSS blocks below are limited to short, static presentation elements.
 """
-ui/ai_ui.py
-=========================================================
-حوكمة ERP | AI Enterprise Hub
-واجهة المساعد المالي الذكي المحلي.
-
-المحرك:
-    llama.cpp
-
-ملاحظات:
-    - لا يوجد اعتماد على Groq SDK.
-    - لا يوجد مفتاح API سحابي.
-    - لا يتم إرسال الصوت إلى خدمة خارجية.
-    - لا يتم اعتماد القيود المحاسبية أو حفظها تلقائيًا.
-=========================================================
-"""
-
 from __future__ import annotations
 
 import inspect
 import json
-import re
-import tempfile
 import os
-from datetime import date, datetime
+import tempfile
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import streamlit as st
 
+from services import ai_service as _ai_service
 from services.ai_service import (
+    LOCAL_AI_MODEL,
     create_ai_tables,
     query_groq,
     save_chat_history,
@@ -44,6 +33,9 @@ from services.ai_service import (
     get_financial_ratios,
     get_trend_analysis,
     get_business_snapshot,
+    get_financial_snapshot,
+    get_inventory_snapshot,
+    get_hr_snapshot,
     analyze_cost_center_performance,
     compare_cost_centers,
     predict_cost_center_expenses,
@@ -56,627 +48,354 @@ from services.ai_service import (
     is_inventory_adjustment,
     is_salary_operation,
 )
-
 from services import cost_center_service as ccs
 
-# =========================================================
-# 1. إعدادات الواجهة
-# =========================================================
 
-LOCAL_MODEL_ID = "local-model"
-
-try:
-    from services import ai_service as _ai_service
-    LOCAL_MODEL_ID = getattr(_ai_service, "LOCAL_AI_MODEL", LOCAL_MODEL_ID)
-except Exception:
-    _ai_service = None
-
-LOCAL_MODEL_LABEL = "llama.cpp | تشغيل محلي"
-DEFAULT_MAX_TOKENS = 2048
+# ---------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------
+LOCAL_MODEL_ID = LOCAL_AI_MODEL
+LOCAL_MODEL_LABEL = "llama.cpp | نموذج محلي"
 CHAT_CATEGORY = "مساعد"
+DEFAULT_MAX_TOKENS = 256
+MAX_CONTEXT_CHARS = 4500
 
-SYSTEM_ROLE = """
-أنت المساعد المالي الذكي لنظام حوكمة ERP.
-تعمل كمستشار مالي ومحاسبي وإداري محترف.
-قواعد أساسية:
-1. أجب باللغة العربية المهنية والواضحة.
-2. اعتمد على البيانات التي يرسلها النظام إليك.
-3. لا تخترع أرقامًا أو أرصدة أو أسماء حسابات.
-4. ميّز بين البيانات الفعلية والتوقعات والتوصيات.
-5. إذا كانت البيانات غير كافية، وضح ذلك صراحة.
-6. عند تحليل الأرقام، اشرح طريقة الحساب والافتراضات.
-7. لا تدّعِ تنفيذ أي قيد أو عملية داخل قاعدة البيانات.
-8. لا تعتبر التوصيات بديلًا عن المراجعة المحاسبية.
-9. استخدم Markdown والجداول عند الحاجة.
-10. اجعل الإجابة منظمة بعناوين واضحة ونقاط مختصرة.
-"""
+SYSTEM_ROLE = """أنت المساعد المالي والإداري المحلي لنظام حوكمة ERP.
+أجب بالعربية المهنية الواضحة وبعبارات مباشرة.
+اعتمد على البيانات التي أرسلها النظام فقط، ولا تخترع أرقاماً أو أرصدة أو أسماء.
+افصل بين البيانات الفعلية والتقديرات والتوصيات.
+لا تدّعِ أنك نفذت قيداً أو عدّلت قاعدة البيانات.
+إن لم تكفِ البيانات، اذكر ذلك بوضوح واطلب المعلومة الناقصة.
+نموذجك صغير؛ اجعل الإجابة مركزة ومنظمة دون إطالة غير ضرورية."""
 
-# =========================================================
-# 2. لوحة الألوان
-# =========================================================
-
-BG_COLOR = "#080C14"
-BG_SECONDARY = "#0D1422"
-CARD_BG = "#111A2B"
-CARD_BG_LIGHT = "#172337"
-CARD_BORDER = "rgba(212, 175, 55, 0.19)"
-TEXT_PRIMARY = "#F8FAFC"
-TEXT_SECONDARY = "#A5B1C4"
-TEXT_MUTED = "#718096"
+# Theme colors
+BG = "#080C14"
+PANEL = "#111A2B"
+PANEL_ALT = "#172337"
 GOLD = "#D4AF37"
 GOLD_LIGHT = "#F0D98A"
-GOLD_DARK = "#A98520"
-GOLD_GLOW = "rgba(212, 175, 55, 0.22)"
-ACCENT_PURPLE = "#9B8AFB"
-ACCENT_GREEN = "#10B981"
-ACCENT_RED = "#F87171"
-ACCENT_BLUE = "#60A5FA"
-ACCENT_CYAN = "#42D5CC"
-BORDER_COLOR = "#253248"
-SHADOW = "0 12px 35px rgba(0, 0, 0, .28)"
-
-# =========================================================
-# 3. CSS - التصميم الفاخر
-# =========================================================
+TEXT = "#F8FAFC"
+MUTED = "#A5B1C4"
+GREEN = "#10B981"
+BLUE = "#60A5FA"
+RED = "#F87171"
 
 CUSTOM_CSS = f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500,1,0');
-
-/* أساسيات الصفحة */
-.stApp {{
-    background: radial-gradient(circle at 85% 0%, rgba(155, 138, 251, .075), transparent 28%),
-                radial-gradient(circle at 5% 20%, rgba(212, 175, 55, .055), transparent 30%),
-                linear-gradient(145deg, {BG_COLOR}, {BG_SECONDARY});
-    color: {TEXT_PRIMARY};
-}}
-html, body, [class*="css"] {{
-    font-family: "Segoe UI", "Tahoma", "Arial", sans-serif !important;
-}}
-.main .block-container {{
-    max-width: 1600px;
-    padding-top: 1.7rem;
-    padding-bottom: 3rem;
-}}
-[data-testid="stAppViewContainer"] {{ background: transparent; }}
-
-/* Material Icons */
-.material-icon {{
-    font-family: 'Material Symbols Rounded' !important;
-    font-weight: normal;
-    font-style: normal;
-    font-size: 20px;
-    line-height: 1;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    vertical-align: middle;
-    direction: ltr;
-    white-space: nowrap;
-    font-feature-settings: 'liga';
-    -webkit-font-feature-settings: 'liga';
-    font-variation-settings: 'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 24;
-}}
-
-/* الشريط الجانبي */
-section[data-testid="stSidebar"] {{
-    background: linear-gradient(180deg, #10192B 0%, #0A101D 100%);
-    border-left: 1px solid rgba(212,175,55,.14);
-}}
-section[data-testid="stSidebar"] > div {{ padding-top: 1.4rem; }}
-section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {{ direction: rtl; text-align: right; }}
-section[data-testid="stSidebar"] label, section[data-testid="stSidebar"] p {{ color: {TEXT_SECONDARY} !important; }}
-
-/* الهيدر الرئيسي */
-.ai-hero {{
-    position: relative;
-    overflow: hidden;
-    background: linear-gradient(115deg, #111A2B 0%, #1B2940 58%, #26354C 100%);
-    border: 1px solid {CARD_BORDER};
-    border-radius: 23px;
-    padding: 29px 32px;
-    margin-bottom: 23px;
-    box-shadow: {SHADOW};
-    direction: rtl;
-    text-align: right;
-}}
-.ai-hero::before {{
-    content: "";
-    position: absolute;
-    width: 280px;
-    height: 280px;
-    left: -85px;
-    top: -145px;
-    border-radius: 50%;
-    border: 1px solid rgba(212,175,55,.22);
-    background: rgba(212,175,55,.035);
-}}
-.ai-hero::after {{
-    content: "";
-    position: absolute;
-    width: 180px;
-    height: 180px;
-    left: 70px;
-    bottom: -130px;
-    border-radius: 50%;
-    background: rgba(155,138,251,.08);
-}}
-.ai-hero-badge {{
-    display: inline-block;
-    background: rgba(212,175,55,.10);
-    color: {GOLD_LIGHT};
-    border: 1px solid rgba(212,175,55,.25);
-    border-radius: 9px;
-    padding: 7px 13px;
-    font-size: 12px;
-    font-weight: 800;
-    letter-spacing: 1px;
-    margin-bottom: 13px;
-}}
-.ai-hero-title {{
-    font-size: 31px;
-    font-weight: 900;
-    color: {TEXT_PRIMARY};
-    margin: 0 0 9px 0;
-    line-height: 1.5;
-}}
-.ai-hero-subtitle {{
-    color: {TEXT_SECONDARY};
-    font-size: 14px;
-    line-height: 2;
-    max-width: 850px;
-}}
-.ai-hero-status {{
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 17px;
-    padding: 7px 12px;
-    color: #B9F3DB;
-    background: rgba(16,185,129,.09);
-    border: 1px solid rgba(16,185,129,.2);
-    border-radius: 30px;
-    font-size: 11px;
-    font-weight: 700;
-}}
-.ai-status-dot {{
-    width: 8px;
-    height: 8px;
-    display: inline-block;
-    border-radius: 50%;
-    background: {ACCENT_GREEN};
-    box-shadow: 0 0 10px rgba(16,185,129,.7);
-}}
-
-/* بطاقات المؤشرات */
-.ai-metric {{
-    background: linear-gradient(145deg, {CARD_BG_LIGHT}, {CARD_BG});
-    border: 1px solid {CARD_BORDER};
-    border-radius: 17px;
-    padding: 19px 20px;
-    min-height: 115px;
-    box-shadow: 0 8px 25px rgba(0,0,0,.16);
-    direction: rtl;
-    text-align: right;
-}}
-.ai-metric-label {{
-    font-size: 12px;
-    color: {TEXT_SECONDARY};
-    margin-bottom: 13px;
-}}
-.ai-metric-value {{
-    font-size: 24px;
-    font-weight: 900;
-    color: {GOLD_LIGHT};
-    direction: ltr;
-    text-align: right;
-}}
-.ai-metric-note {{
-    margin-top: 7px;
-    color: {TEXT_MUTED};
-    font-size: 11px;
-}}
-
-/* البطاقات العامة */
-.ai-card {{
-    background: linear-gradient(145deg, rgba(23,35,55,.97), rgba(14,22,36,.98));
-    border: 1px solid {CARD_BORDER};
-    border-radius: 17px;
-    padding: 18px 20px;
-    margin: 12px 0;
-    box-shadow: 0 8px 25px rgba(0,0,0,.17);
-    direction: rtl;
-    text-align: right;
-}}
-.ai-card-title {{
-    color: {GOLD_LIGHT};
-    font-size: 15px;
-    font-weight: 800;
-    margin-bottom: 8px;
-}}
-.ai-card-caption {{
-    color: {TEXT_SECONDARY};
-    font-size: 12px;
-    line-height: 1.9;
-}}
-.ai-section-title {{
-    color: {TEXT_PRIMARY};
-    font-size: 20px;
-    font-weight: 800;
-    direction: rtl;
-    text-align: right;
-    margin: 12px 0 5px;
-}}
-.ai-section-subtitle {{
-    color: {TEXT_MUTED};
-    font-size: 12px;
-    line-height: 1.9;
-    direction: rtl;
-    text-align: right;
-    margin-bottom: 15px;
-}}
-.ai-divider {{
-    height: 1px;
-    border: 0;
-    background: linear-gradient(90deg, transparent, rgba(212,175,55,.3), transparent);
-    margin: 18px 0;
-}}
-
-/* رسائل الحالة */
-.ai-info {{
-    background: rgba(96,165,250,.08);
-    border: 1px solid rgba(96,165,250,.2);
-    border-right: 4px solid {ACCENT_BLUE};
-    border-radius: 12px;
-    padding: 13px 16px;
-    color: #C7DDFA;
-    font-size: 13px;
-    line-height: 1.9;
-    direction: rtl;
-    text-align: right;
-    margin: 10px 0;
-}}
-.ai-success {{
-    background: rgba(16,185,129,.08);
-    border: 1px solid rgba(16,185,129,.2);
-    border-right: 4px solid {ACCENT_GREEN};
-    border-radius: 12px;
-    padding: 13px 16px;
-    color: #B9F3DB;
-    font-size: 13px;
-    line-height: 1.9;
-    direction: rtl;
-    text-align: right;
-    margin: 10px 0;
-}}
-.ai-warning {{
-    background: rgba(212,175,55,.075);
-    border: 1px solid rgba(212,175,55,.22);
-    border-right: 4px solid {GOLD};
-    border-radius: 12px;
-    padding: 13px 16px;
-    color: #F0DEA7;
-    font-size: 13px;
-    line-height: 1.9;
-    direction: rtl;
-    text-align: right;
-    margin: 10px 0;
-}}
-
-/* الأزرار */
-.stButton > button {{
-    border-radius: 11px !important;
-    border: 1px solid rgba(212,175,55,.32) !important;
-    background: linear-gradient(135deg, rgba(212,175,55,.14), rgba(212,175,55,.045)) !important;
-    color: {GOLD_LIGHT} !important;
-    font-weight: 700 !important;
-    min-height: 42px;
-    transition: all .22s ease-in-out !important;
-}}
-.stButton > button:hover {{
-    background: linear-gradient(135deg, rgba(212,175,55,.27), rgba(212,175,55,.10)) !important;
-    border-color: rgba(212,175,55,.65) !important;
-    box-shadow: 0 0 17px {GOLD_GLOW} !important;
-    transform: translateY(-1px);
-}}
-.stButton > button:focus {{
-    box-shadow: 0 0 0 2px rgba(212,175,55,.18) !important;
-}}
-.stButton > button[kind="primary"] {{
-    background: linear-gradient(110deg, #B58B29, #D4AF37) !important;
-    border: 0 !important;
-    color: #101522 !important;
-    font-weight: 900 !important;
-}}
-.stButton > button[kind="primary"]:hover {{
-    background: linear-gradient(110deg, #D4AF37, #F0D98A) !important;
-    color: #080C14 !important;
-}}
-
-/* التبويبات */
-div[data-baseweb="tab-list"] {{
-    background: transparent !important;
-    gap: 7px !important;
-    border-bottom: 1px solid rgba(212,175,55,.15);
-    padding-bottom: 6px;
-}}
-button[data-baseweb="tab"] {{
-    background: rgba(23,35,55,.82) !important;
-    color: {TEXT_SECONDARY} !important;
-    border: 1px solid rgba(255,255,255,.045) !important;
-    border-radius: 10px 10px 5px 5px !important;
-    padding: 10px 14px !important;
-    font-size: 12px !important;
-    font-weight: 700 !important;
-}}
-button[data-baseweb="tab"][aria-selected="true"] {{
-    color: {GOLD_LIGHT} !important;
-    background: rgba(212,175,55,.09) !important;
-    border-color: rgba(212,175,55,.28) !important;
-    border-bottom: 2px solid {GOLD} !important;
-}}
-
-/* الحقول */
-.stTextInput input,
-.stNumberInput input,
-.stTextArea textarea,
-.stDateInput input {{
-    background: #111A2B !important;
-    color: {TEXT_PRIMARY} !important;
-    border: 1px solid #2A3952 !important;
-    border-radius: 10px !important;
-}}
-.stSelectbox div[data-baseweb="select"],
-.stMultiSelect div[data-baseweb="select"] {{
-    background: #111A2B !important;
-    border-color: #2A3952 !important;
-    border-radius: 10px !important;
-}}
-.stTextInput label,
-.stNumberInput label,
-.stTextArea label,
-.stSelectbox label,
-.stDateInput label {{
-    color: {TEXT_SECONDARY} !important;
-    font-size: 13px !important;
-    direction: rtl;
-}}
-[data-testid="stChatInput"] {{
-    border: 1px solid rgba(212,175,55,.3) !important;
-    border-radius: 15px !important;
-    background: #111A2B !important;
-}}
-[data-testid="stChatInput"] textarea {{ color: {TEXT_PRIMARY} !important; }}
-
-/* المحادثة */
-[data-testid="stChatMessage"] {{
-    background: rgba(17,26,43,.82) !important;
-    border: 1px solid rgba(212,175,55,.12);
-    border-radius: 15px !important;
-    padding: 13px 16px !important;
-    margin-bottom: 11px !important;
-}}
-[data-testid="stChatMessage"] p,
-[data-testid="stChatMessage"] li {{
-    color: {TEXT_PRIMARY};
-    line-height: 1.9;
-}}
-.ai-chat-empty {{
-    background: linear-gradient(145deg, rgba(23,35,55,.9), rgba(14,22,36,.95));
-    border: 1px solid {CARD_BORDER};
-    border-radius: 18px;
-    padding: 28px 20px;
-    text-align: center;
-    direction: rtl;
-    margin: 16px 0;
-}}
-.ai-chat-empty-icon {{ color: {GOLD}; font-size: 34px; }}
-.ai-chat-empty-title {{ color: {TEXT_PRIMARY}; font-weight: 900; font-size: 19px; margin-top: 9px; }}
-.ai-chat-empty-text {{ color: {TEXT_SECONDARY}; font-size: 13px; line-height: 2; margin-top: 9px; }}
-
-/* الجداول */
-[data-testid="stDataFrame"] {{
-    border: 1px solid rgba(212,175,55,.15);
-    border-radius: 12px;
-    overflow: hidden;
-}}
-[data-testid="stTable"] {{
-    border: 1px solid rgba(212,175,55,.15);
-    border-radius: 12px;
-    overflow: hidden;
-}}
-hr {{ border-color: rgba(212,175,55,.15) !important; }}
-.stCaption {{ color: {TEXT_MUTED} !important; }}
-[data-testid="stExpander"] {{
-    background: rgba(17,26,43,.65);
-    border: 1px solid rgba(212,175,55,.13);
-    border-radius: 12px;
-}}
-.stProgress > div > div {{ background: {GOLD} !important; }}
-footer {{ visibility: hidden; }}
-#MainMenu {{ visibility: hidden; }}
-
-/* دعم RTL */
-.main .block-container {{ direction: rtl; text-align: right; }}
-section[data-testid="stSidebar"] {{ direction: rtl; text-align: right; }}
-.stMarkdown, .stCaption {{ text-align: right; }}
-
-@media(max-width: 900px) {{
-    .ai-hero {{ padding: 22px 19px; }}
-    .ai-hero-title {{ font-size: 23px; }}
-    .main .block-container {{ padding-left: 1rem; padding-right: 1rem; }}
-}}
+.stApp {{ background: radial-gradient(circle at 85% 0%, rgba(155,138,251,.07), transparent 28%), linear-gradient(145deg,{BG},#0D1422); color:{TEXT}; }}
+html, body, [class*="css"] {{ font-family: "Segoe UI", Tahoma, Arial, sans-serif !important; }}
+.main .block-container {{ max-width: 1500px; padding-top: 1.3rem; padding-bottom: 2.5rem; direction: rtl; text-align: right; }}
+section[data-testid="stSidebar"] {{ background: linear-gradient(180deg,#10192B,#0A101D); border-left:1px solid rgba(212,175,55,.16); direction:rtl; }}
+.ai-hero {{ background:linear-gradient(115deg,#111A2B,#1B2940 58%,#26354C); border:1px solid rgba(212,175,55,.22); border-radius:20px; padding:25px 28px; margin-bottom:18px; direction:rtl; text-align:right; overflow-wrap:break-word; white-space:pre-wrap; }}
+.ai-hero-title {{ font-size:27px; font-weight:900; color:{TEXT}; margin:5px 0; }}
+.ai-hero-sub {{ font-size:13px; color:{MUTED}; line-height:1.9; }}
+.ai-tag {{ display:inline-block; padding:5px 10px; border-radius:9px; color:{GOLD_LIGHT}; background:rgba(212,175,55,.10); border:1px solid rgba(212,175,55,.25); font-size:11px; font-weight:800; }}
+.ai-metric {{ background:linear-gradient(145deg,{PANEL_ALT},{PANEL}); border:1px solid rgba(212,175,55,.18); border-radius:14px; padding:15px; min-height:96px; direction:rtl; text-align:right; overflow-wrap:break-word; }}
+.ai-metric-label {{ color:{MUTED}; font-size:12px; margin-bottom:9px; }}
+.ai-metric-value {{ color:{GOLD_LIGHT}; font-size:22px; font-weight:900; direction:ltr; text-align:right; }}
+.ai-card {{ background:linear-gradient(145deg,rgba(23,35,55,.96),rgba(14,22,36,.98)); border:1px solid rgba(212,175,55,.18); border-radius:14px; padding:15px 17px; margin:9px 0; direction:rtl; text-align:right; overflow-wrap:break-word; white-space:pre-wrap; }}
+.ai-title {{ color:{GOLD_LIGHT}; font-weight:800; font-size:15px; margin-bottom:5px; }}
+.ai-caption {{ color:{MUTED}; font-size:12px; line-height:1.9; }}
+.ai-info {{ border-right:4px solid {BLUE}; background:rgba(96,165,250,.08); border-radius:10px; padding:11px 14px; color:#D4E5FA; direction:rtl; text-align:right; overflow-wrap:break-word; white-space:pre-wrap; }}
+.ai-warning {{ border-right:4px solid {GOLD}; background:rgba(212,175,55,.08); border-radius:10px; padding:11px 14px; color:#F0DEA7; direction:rtl; text-align:right; overflow-wrap:break-word; white-space:pre-wrap; }}
+.stButton > button {{ border-radius:10px !important; border:1px solid rgba(212,175,55,.34) !important; background:linear-gradient(135deg,rgba(212,175,55,.15),rgba(212,175,55,.04)) !important; color:{GOLD_LIGHT} !important; font-weight:700 !important; min-height:40px; }}
+.stButton > button[kind="primary"] {{ background:linear-gradient(110deg,#B58B29,{GOLD}) !important; color:#101522 !important; border:0 !important; font-weight:900 !important; }}
+.stTextInput input, .stNumberInput input, .stTextArea textarea {{ background:{PANEL} !important; color:{TEXT} !important; border:1px solid #2A3952 !important; border-radius:9px !important; }}
+[data-testid="stChatInput"] {{ border:1px solid rgba(212,175,55,.3) !important; border-radius:13px !important; background:{PANEL} !important; }}
+[data-testid="stChatMessage"] {{ background:rgba(17,26,43,.82) !important; border:1px solid rgba(212,175,55,.13); border-radius:13px !important; padding:10px 14px !important; margin-bottom:9px !important; overflow-wrap:break-word; white-space:pre-wrap; }}
+[data-testid="stChatMessage"] p {{ line-height:1.9; overflow-wrap:break-word; }}
+div[data-baseweb="tab-list"] {{ gap:6px; border-bottom:1px solid rgba(212,175,55,.16); }}
+button[data-baseweb="tab"] {{ border-radius:9px 9px 4px 4px !important; background:rgba(23,35,55,.8) !important; color:{MUTED} !important; }}
+button[data-baseweb="tab"][aria-selected="true"] {{ color:{GOLD_LIGHT} !important; border-bottom:2px solid {GOLD} !important; }}
+[data-testid="stDataFrame"], [data-testid="stTable"] {{ border:1px solid rgba(212,175,55,.15); border-radius:10px; overflow:hidden; }}
+[data-testid="stExpander"] {{ background:rgba(17,26,43,.6); border:1px solid rgba(212,175,55,.13); border-radius:10px; }}
+.stCaption {{ color:#8794A8 !important; }}
+footer, #MainMenu {{ visibility:hidden; }}
+@media(max-width:900px) {{ .ai-hero {{ padding:18px; }} .ai-hero-title {{ font-size:22px; }} .main .block-container {{ padding-left:.8rem; padding-right:.8rem; }} }}
 </style>
 """
 
-# =========================================================
-# 4. أدوات عامة
-# =========================================================
 
+# ---------------------------------------------------------------------
+# Generic helpers
+# ---------------------------------------------------------------------
 def _safe_text(value: Any) -> str:
-    if value is None: return ""
-    if isinstance(value, str): return value
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
     try:
         return json.dumps(value, ensure_ascii=False, indent=2, default=str)
     except Exception:
         return str(value)
 
+
 def _safe_html(value: Any) -> str:
     text = str(value or "")
-    return (text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            .replace('"', "&quot;").replace("'", "&#x27;"))
+    return (text.replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;").replace('"', "&quot;")
+            .replace("'", "&#x27;"))
 
-def _safe_color(value: Any, default: str = GOLD) -> str:
-    value = str(value or "").strip()
-    if re.fullmatch(r"#[0-9a-fA-F]{3,8}", value): return value
-    return default
 
 def _money(value: Any) -> str:
-    try: return f"{float(value or 0):,.2f}"
-    except (TypeError, ValueError): return "—"
+    try:
+        return f"{float(value or 0):,.2f}"
+    except (TypeError, ValueError):
+        return "—"
 
-def _callable(name: str):
-    return getattr(_ai_service, name, None) if _ai_service else None
 
-def _is_empty(value: Any) -> bool:
-    if value is None: return True
-    if isinstance(value, (list, tuple, dict, str)): return len(value) == 0
-    return False
+def _compact_json(data: Any, max_chars: int = MAX_CONTEXT_CHARS) -> str:
+    text = _safe_text(data)
+    if len(text) > max_chars:
+        text = text[:max_chars] + "\n[تم اختصار البيانات لتناسب النموذج المحلي]"
+    return text
+
 
 def _to_dataframe(data: Any) -> Optional[pd.DataFrame]:
-    if data is None: return None
+    if data is None:
+        return None
     try:
-        if isinstance(data, pd.DataFrame): return data
+        if isinstance(data, pd.DataFrame):
+            return data
         if isinstance(data, (list, tuple)):
-            if len(data) == 0: return pd.DataFrame()
             return pd.DataFrame(data)
-        if isinstance(data, dict): return pd.DataFrame([data])
-    except Exception: return None
+        if isinstance(data, dict):
+            return pd.DataFrame([data])
+    except Exception:
+        return None
     return None
 
+
 def _display_data(data: Any, empty_message: str = "لا توجد بيانات متاحة للعرض.") -> None:
-    if _is_empty(data):
+    if data is None:
         st.info(empty_message)
         return
     if isinstance(data, pd.DataFrame):
-        st.dataframe(data, use_container_width=True, hide_index=True)
+        st.dataframe(data, width="stretch", hide_index=True)
         return
     if isinstance(data, (list, tuple)):
+        if not data:
+            st.info(empty_message)
+            return
         df = _to_dataframe(data)
-        if df is not None:
-            if not df.empty: st.dataframe(df, use_container_width=True, hide_index=True)
-            else: st.info(empty_message)
-        else: st.write(data)
+        if df is not None and not df.empty:
+            st.dataframe(df, width="stretch", hide_index=True)
+        else:
+            st.info(empty_message)
         return
     if isinstance(data, dict):
-        df = _to_dataframe(data)
-        if df is not None and len(data) > 0: st.json(data, expanded=False)
-        else: st.write(data)
+        if not data:
+            st.info(empty_message)
+            return
+        st.json(data, expanded=False)
         return
-    st.markdown(_safe_text(data))
+    # Long/plain text and model output are never sent through st.markdown().
+    st.write(str(data))
+
 
 def _service_call(function, *args, default=None, **kwargs):
-    try: return function(*args, **kwargs)
+    try:
+        return function(*args, **kwargs)
     except Exception as exc:
         st.error(f"تعذّر تنفيذ العملية: {exc}")
         return default
 
+
 def _apply_design() -> None:
+    # This markdown call contains CSS only, not user/model text.
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
-# =========================================================
-# 5. مكونات التصميم
-# =========================================================
-
-def _render_hero() -> None:
-    st.markdown(f"""
-<div class="ai-hero">
-<div class="ai-hero-badge"><span class="material-icon">auto_awesome</span> AI ENTERPRISE HUB</div>
-<div class="ai-hero-title">المساعد المالي الذكي</div>
-<div class="ai-hero-subtitle">منصة تحليل ومساعدة مالية متكاملة داخل نظام حوكمة ERP. استكشف مؤشرات الأداء، حلّل الحسابات والمخزون، أنشئ مسودات القيود، وادرس مراكز التكلفة.</div>
-<div class="ai-hero-status"><span class="ai-status-dot"></span> يعمل محليًا عبر llama.cpp</div>
-</div>
-""", unsafe_allow_html=True)
 
 def _section_title(title: str, subtitle: str = "") -> None:
-    st.markdown(f"""
-<div class="ai-section-title">{_safe_html(title)}</div>
-<div class="ai-section-subtitle">{_safe_html(subtitle)}</div>
-""", unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="ai-title">{_safe_html(title)}</div>'
+        f'<div class="ai-caption">{_safe_html(subtitle)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_hero() -> None:
+    status = _service_call(_ai_service.get_model_status, default={}) or {}
+    model_name = os.path.basename(status.get("model_path", "TinyLlama model"))
+    loaded = status.get("loaded", False)
+    state = "تم تحميل النموذج" if loaded else "سيتم تحميل النموذج عند أول سؤال"
+    st.markdown(
+        '<div class="ai-hero">'
+        '<span class="ai-tag">HOKAMA ERP · LOCAL AI</span>'
+        '<div class="ai-hero-title">المساعد المالي الذكي</div>'
+        '<div class="ai-hero-sub">تحليل مالي وتشغيلي محلي، مع إبقاء بيانات المنشأة داخل الجهاز. '
+        'المخرجات استشارية وتحتاج إلى مراجعة بشرية قبل اتخاذ القرارات أو اعتماد القيود.</div>'
+        f'<div class="ai-caption">النموذج: {_safe_html(model_name)} · {_safe_html(state)}</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    warning = status.get("quantization_warning")
+    family_warning = status.get("model_family_warning")
+    if warning:
+        st.warning(
+            "تنبيه جودة النموذج: " + warning + ". تحسين الكود لا يعوض فقدان الجودة الناتج عن الضغط الشديد."
+        )
+    if family_warning:
+        st.warning("تنبيه نوع النموذج: " + family_warning)
+    if not status.get("exists", False):
+        st.error("لم يتم العثور على ملف النموذج. المسار المتوقع: " + str(status.get("model_path", "")))
+
 
 def _render_metric(label: str, value: Any, note: str = "") -> None:
-    st.markdown(f"""
-<div class="ai-metric">
-<div class="ai-metric-label">{_safe_html(label)}</div>
-<div class="ai-metric-value">{_safe_html(value)}</div>
-<div class="ai-metric-note">{_safe_html(note)}</div>
-</div>
-""", unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="ai-metric"><div class="ai-metric-label">{_safe_html(label)}</div>'
+        f'<div class="ai-metric-value">{_safe_html(value)}</div>'
+        f'<div class="ai-caption">{_safe_html(note)}</div></div>',
+        unsafe_allow_html=True,
+    )
+
 
 def _render_info(message: str, kind: str = "info") -> None:
-    classes = {"info": "ai-info", "success": "ai-success", "warning": "ai-warning"}
-    css_class = classes.get(kind, "ai-info")
-    st.markdown(f"""
-<div class="{css_class}">{_safe_html(message)}</div>
-""", unsafe_allow_html=True)
+    cls = "ai-warning" if kind == "warning" else "ai-info"
+    st.markdown(f'<div class="{cls}">{_safe_html(message)}</div>', unsafe_allow_html=True)
+
 
 def render_ai_response(content: Any) -> None:
-    st.markdown(f"""
-<div class="ai-card">
-<div class="ai-card-title"><span class="material-icon">analytics</span> تحليل المساعد الذكي</div>
-</div>
-""", unsafe_allow_html=True)
-    if isinstance(content, dict): content = _safe_text(content)
+    st.markdown('<div class="ai-title">نتيجة تحليل المساعد</div>', unsafe_allow_html=True)
     if content is None:
         st.info("لم يتم إنشاء نتيجة.")
         return
+    # Important: render the complete AI response as plain Streamlit output.
     with st.container(border=True):
-        st.markdown(str(content))
+        st.write(_safe_text(content))
 
-# =========================================================
-# 6. الاتصال بمحرك الذكاء الاصطناعي المحلي
-# =========================================================
 
-def query_local_ai(prompt: str, active_query: str, model: str = LOCAL_MODEL_ID, max_tokens: int = DEFAULT_MAX_TOKENS) -> str:
+# ---------------------------------------------------------------------
+# Inference wrapper / context assembly
+# ---------------------------------------------------------------------
+def query_local_ai(prompt: str, active_query: str = "", model: str = LOCAL_MODEL_ID,
+                   max_tokens: int = DEFAULT_MAX_TOKENS, history=None) -> str:
+    """Backward-compatible wrapper around ai_service.query_groq()."""
     try:
         if not callable(query_groq):
-            return "دالة الاتصال بالذكاء الاصطناعي غير متاحة. تحقق من services/ai_service.py."
-        result = query_groq(prompt, active_query, model=LOCAL_MODEL_ID, max_tokens=max_tokens)
-        if result is None: return "لم يُرجع النموذج نتيجة."
-        if isinstance(result, str): return result.strip()
+            return "دالة الاتصال بمحرك الذكاء الاصطناعي غير متاحة."
+        result = query_groq(
+            prompt or SYSTEM_ROLE,
+            active_query or prompt,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=0.2,
+            history=history,
+        )
+        if result is None:
+            return "لم يُرجع النموذج نتيجة."
+        if isinstance(result, str):
+            return result.strip()
         if isinstance(result, dict):
             for key in ("answer", "response", "content", "message", "text"):
-                if result.get(key) is not None: return str(result[key]).strip()
+                if result.get(key) is not None:
+                    return str(result[key]).strip()
         return _safe_text(result)
-    except FileNotFoundError:
-        return "لم يتم العثور على ملفات تشغيل llama.cpp أو ملف النموذج. تحقق من المسارات داخل services/ai_service.py."
-    except ConnectionError as exc:
-        return f"تعذّر الاتصال بمحرك llama.cpp المحلي: {exc}"
-    except TimeoutError:
-        return "انتهت مهلة انتظار النموذج. جرّب تقليل طول السؤال أو استخدام نموذج أصغر."
     except Exception as exc:
-        return f"حدث خطأ أثناء الاتصال بمحرك الذكاء الاصطناعي: {exc}"
+        return f"حدث خطأ أثناء الاتصال بمحرك الذكاء الاصطناعي المحلي: {exc}"
+
 
 def _make_prompt(data: Any, task: str, instructions: str) -> str:
-    data_text = _safe_text(data)
-    return f"""
-{SYSTEM_ROLE}
-## البيانات الحالية من نظام حوكمة ERP
-{data_text}
-## المهمة
-{task}
-## المطلوب
-{instructions}
-يجب أن تعتمد على البيانات المتاحة فقط.
-لا تفترض أرقامًا أو معلومات غير موجودة.
-استخدم Markdown، والعناوين، والجداول عندما يكون ذلك مناسبًا.
-"""
+    return (
+        "بيانات نظام حوكمة ERP (قد تكون مختصرة):\n" + _compact_json(data)
+        + "\n\nالمهمة: " + str(task)
+        + "\n\nالمطلوب: " + str(instructions)
+        + "\n\nاعتمد على البيانات أعلاه فقط، وصرّح بأي نقص."
+    )
 
-# =========================================================
-# 7. إدارة المحادثات
-# =========================================================
 
+def _callable_service(name: str):
+    return getattr(_ai_service, name, None)
+
+
+def audio_to_text(audio_file) -> str:
+    """Use an optional local transcription function if the service provides one."""
+    if audio_file is None:
+        return ""
+    function = None
+    for name in ("audio_to_text_local", "transcribe_audio_local", "transcribe_audio"):
+        candidate = _callable_service(name)
+        if callable(candidate):
+            function = candidate
+            break
+    if function is None:
+        return "التفريغ الصوتي غير مهيأ. يلزم ربط whisper.cpp محلياً داخل ai_service.py."
+    suffix = os.path.splitext(str(getattr(audio_file, "name", "recording.wav")))[1] or ".wav"
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
+            temp_path = handle.name
+            handle.write(audio_file.getbuffer())
+        parameters = inspect.signature(function).parameters
+        result = function(temp_path) if parameters else function()
+        if isinstance(result, dict):
+            return str(result.get("text") or result.get("transcription") or result.get("content") or "")
+        return str(result or "")
+    except Exception as exc:
+        return f"تعذر تفريغ الصوت محلياً: {exc}"
+    finally:
+        if temp_path:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+
+
+def audio_input_widget(key: str = "assistant_audio") -> str:
+    """Optional microphone widget; remains inactive until a local STT backend exists."""
+    available = any(callable(_callable_service(name)) for name in
+                    ("audio_to_text_local", "transcribe_audio_local", "transcribe_audio"))
+    if not available or not hasattr(st, "audio_input"):
+        st.caption("الإدخال الصوتي غير مفعّل حالياً؛ يمكن استخدام المحادثة النصية.")
+        return ""
+    audio = st.audio_input("تسجيل صوتي", key=key, label_visibility="collapsed")
+    if audio is None:
+        return ""
+    with st.spinner("جاري التفريغ الصوتي محلياً..."):
+        return audio_to_text(audio)
+
+
+def _get_chat_context(question: str) -> str:
+    """Fetch only a compact, relevant snapshot instead of the entire ERP DB."""
+    q = (question or "").lower()
+    parts: Dict[str, Any] = {}
+    inventory_words = ("مخزون", "مخزن", "مخازن", "منتج", "منتجات", "كمية", "نفد", "الأصناف")
+    finance_words = ("مالي", "مالية", "إيراد", "إيرادات", "مصروف", "مصروفات", "ربح", "ربحية", "أصول", "التزامات", "ميزانية", "مديونية", "حساب")
+    business_words = ("عميل", "عملاء", "مورد", "موردين", "مبيعات", "مشتريات", "فاتورة")
+    hr_words = ("موظف", "موظفين", "موارد بشرية", "رواتب", "راتب")
+
+    try:
+        if any(word in q for word in inventory_words):
+            low, products = get_inventory_data()
+            parts["الأصناف منخفضة المخزون"] = low[:8]
+            parts["عينة المنتجات"] = products[:8]
+        elif any(word in q for word in business_words):
+            parts["ملخص العملاء والموردين"] = get_business_snapshot()
+            parts["اتجاه المبيعات"] = get_trend_analysis()[:4]
+        elif any(word in q for word in hr_words):
+            parts["ملخص الموارد البشرية"] = get_hr_snapshot()
+        elif any(word in q for word in finance_words):
+            parts["المؤشرات المالية"] = get_financial_snapshot()
+        else:
+            financial = get_financial_snapshot()
+            inventory = get_inventory_snapshot()
+            business = get_business_snapshot()
+            parts = {
+                "ملخص مالي": {k: financial.get(k) for k in
+                              ("revenue", "expenses", "net_income", "assets", "liabilities", "profit_margin", "debt_ratio")},
+                "ملخص المخزون": {k: inventory.get(k) for k in
+                                 ("total_products", "low_stock_count")},
+                "ملخص الأعمال": {k: business.get(k) for k in
+                                 ("total_customers", "total_suppliers")},
+            }
+    except Exception as exc:
+        parts["تعذر استخراج السياق"] = str(exc)
+    return _compact_json(parts, 3000)
+
+
+# ---------------------------------------------------------------------
+# Chat history/session management
+# ---------------------------------------------------------------------
 def _ensure_session() -> None:
     if "active_session" not in st.session_state:
         st.session_state.active_session = f"s_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
@@ -685,912 +404,404 @@ def _ensure_session() -> None:
     if "ai_history_loaded" not in st.session_state:
         st.session_state.ai_history_loaded = False
 
+
 def _new_chat() -> None:
     st.session_state.active_session = f"s_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
     st.session_state.ai_messages = []
     st.session_state.ai_history_loaded = True
 
-def _normalize_history_item(item: Any) -> Optional[Dict[str, str]]:
-    role = None
-    content = None
-    if isinstance(item, dict):
-        role = item.get("role") or item.get("sender") or item.get("message_role") or "assistant"
-        content = item.get("content") or item.get("message") or item.get("text") or item.get("response") or ""
-    elif isinstance(item, (tuple, list)):
-        if len(item) >= 2:
-            role = item[-2]
-            content = item[-1]
-    if content is None: return None
-    role = str(role or "assistant").lower().strip()
-    if role not in ("user", "assistant", "system"): role = "assistant"
-    return {"role": role, "content": str(content)}
 
 def _load_chat_history(session_id: str) -> List[Dict[str, str]]:
     try:
-        raw_history = get_chat_history(session_id)
-    except TypeError:
-        try: raw_history = get_chat_history(session_id=session_id)
-        except Exception: return []
-    except Exception: return []
-    messages = []
-    if isinstance(raw_history, dict):
-        raw_history = raw_history.get("messages", raw_history.get("data", []))
-    if not isinstance(raw_history, (list, tuple)): return []
-    for item in raw_history:
-        normalized = _normalize_history_item(item)
-        if normalized: messages.append(normalized)
-    return messages
-
-def _load_current_history() -> None:
-    if st.session_state.ai_history_loaded: return
-    session_id = st.session_state.active_session
-    st.session_state.ai_messages = _load_chat_history(session_id)
-    st.session_state.ai_history_loaded = True
-
-def _save_history(session_id: str, role: str, content: str, model: str = LOCAL_MODEL_ID, category: str = CHAT_CATEGORY) -> None:
-    try:
-        save_chat_history(session_id, role, content, model, category)
-    except TypeError:
-        try: save_chat_history(session_id, role, content)
-        except Exception as exc: st.warning(f"تعذّر حفظ المحادثة: {exc}")
-    except Exception as exc:
-        st.warning(f"تعذّر حفظ المحادثة: {exc}")
-
-def _get_sessions() -> List[Any]:
-    try:
-        sessions = get_chat_sessions()
-        if isinstance(sessions, list): return sessions
-        if isinstance(sessions, tuple): return list(sessions)
-        return []
+        raw = get_chat_history(session_id=session_id, limit=40)
     except Exception:
         return []
-
-def _session_details(item: Any, index: int) -> Tuple[str, str]:
-    if isinstance(item, dict):
-        session_id = item.get("session_id") or item.get("chat_id") or item.get("id")
-        title = item.get("title") or item.get("name") or item.get("first_message") or f"محادثة {index + 1}"
-        return str(session_id or ""), str(title)
-    if isinstance(item, (tuple, list)):
-        session_id = item[0] if len(item) > 0 else ""
-        title = item[1] if len(item) > 1 else f"محادثة {index + 1}"
-        return str(session_id or ""), str(title)
-    return "", f"محادثة {index + 1}"
-
-# =========================================================
-# 8. الشريط الجانبي
-# =========================================================
-
-def _render_sidebar() -> None:
-    with st.sidebar:
-        st.markdown(f"""
-<div style="direction:rtl;text-align:right;padding:8px 4px 19px;">
-<div style="color:{TEXT_PRIMARY};font-size:26px;font-weight:900;">حوكمة <span style="color:{GOLD}">AI</span></div>
-<div style="color:{TEXT_MUTED};font-size:11px;margin-top:5px;">ENTERPRISE INTELLIGENCE</div>
-</div>
-""", unsafe_allow_html=True)
-        st.markdown("---")
-        st.markdown(f"""
-<div style="color:{GOLD_LIGHT};font-size:14px;font-weight:800;text-align:right;direction:rtl;margin-bottom:10px;">
-<span class="material-icon">settings</span> إعدادات المحرك
-</div>
-""", unsafe_allow_html=True)
-        st.selectbox("المحرك المستخدم", options=[LOCAL_MODEL_LABEL], index=0, disabled=True, key="local_ai_engine")
-        st.caption(f"معرف النموذج المحلي: {LOCAL_MODEL_ID}")
-        st.markdown("---")
-        if st.button("محادثة جديدة", key="new_ai_chat", use_container_width=True, type="primary", icon=":material/add:"):
-            _new_chat()
-            st.rerun()
-        st.markdown(f"""
-<div style="color:{TEXT_PRIMARY};font-weight:800;font-size:13px;text-align:right;direction:rtl;margin:18px 0 10px;">
-<span class="material-icon">chat</span> المحادثات السابقة
-</div>
-""", unsafe_allow_html=True)
-        sessions = _get_sessions()
-        if not sessions:
-            st.caption("لا توجد محادثات سابقة.")
-        else:
-            session_map = {}
-            for index, item in enumerate(sessions[:25]):
-                session_id, title = _session_details(item, index)
-                if not session_id: continue
-                short_title = title[:34]
-                session_map[f"{short_title} · {session_id[-6:]}"] = session_id
-            if session_map:
-                labels = list(session_map.keys())
-                selected_label = st.selectbox("اختر محادثة", options=labels, index=None, placeholder="حدد محادثة سابقة...", label_visibility="collapsed", key="ai_old_session_selector")
-                if selected_label:
-                    selected_session = session_map[selected_label]
-                    if selected_session != st.session_state.active_session:
-                        st.session_state.active_session = selected_session
-                        st.session_state.ai_history_loaded = False
-                        st.session_state.ai_messages = []
-                        st.rerun()
-        st.markdown("---")
-        st.markdown(f"""
-<div style="direction:rtl;text-align:right;line-height:2;font-size:11px;color:{TEXT_MUTED};">
-<b style="color:{GOLD_LIGHT}">حالة التشغيل</b><br>
-<span style="color:{ACCENT_GREEN}">●</span> محرك محلي<br>
-لا يوجد اتصال بـ Groq من هذه الواجهة.<br>
-لا يلزم مفتاح API سحابي.
-</div>
-""", unsafe_allow_html=True)
-
-# =========================================================
-# 9. معالجة الصوت محليًا
-# =========================================================
-
-def audio_to_text(audio_file) -> str:
-    if audio_file is None:
-        return ""
-
-    local_functions = (
-        "audio_to_text_local",
-        "transcribe_audio_local",
-        "transcribe_audio",
-    )
-
-    local_function = None
-
-    for function_name in local_functions:
-        candidate = _callable(function_name)
-        if callable(candidate):
-            local_function = candidate
-            break
-
-    if local_function is None:
-        return (
-            "التفريغ الصوتي المحلي غير مهيأ في الخدمة حاليًا. "
-            "أضف محرك whisper.cpp محليًا وربط دالته في ai_service.py."
-        )
-
-    try:
-        suffix = ".wav"
-
-        if hasattr(audio_file, "name"):
-            extension = os.path.splitext(str(audio_file.name))[1]
-            if extension:
-                suffix = extension
-
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
-            temp_path = temp_file.name
-            temp_file.write(audio_file.getbuffer())
-
-        try:
-            signature = inspect.signature(local_function)
-            params = list(signature.parameters.keys())
-            if params:
-                result = local_function(temp_path)
-            else:
-                result = local_function()
-        finally:
-            try:
-                os.remove(temp_path)
-            except OSError:
-                pass
-
-        if isinstance(result, dict):
-            return str(
-                result.get("text")
-                or result.get("transcription")
-                or result.get("content")
-                or ""
-            )
-
-        return str(result or "")
-
-    except Exception as exc:
-        return f"تعذّر تفريغ الصوت محليًا: {exc}"
-
-
-def audio_input_widget(key: str = "assistant_audio") -> str:
-    """عنصر صوت يستخدم محركًا محليًا عند توفره."""
-    local_audio_available = any(
-        callable(_callable(name))
-        for name in (
-            "audio_to_text_local",
-            "transcribe_audio_local",
-            "transcribe_audio",
-        )
-    )
-
-    if not hasattr(st, "audio_input"):
-        st.caption("إدخال الصوت غير مدعوم في إصدار Streamlit الحالي.")
-        return ""
-
-    if not local_audio_available:
-        st.caption(
-            "الميكروفون غير مفعّل حتى يتم ربط whisper.cpp محليًا."
-        )
-        return ""
-
-    audio_value = st.audio_input(
-        "تسجيل صوتي",
-        key=key,
-        label_visibility="collapsed",
-    )
-
-    if audio_value is None:
-        return ""
-
-    with st.spinner("جاري التفريغ الصوتي محليًا..."):
-        result = audio_to_text(audio_value)
-
-    if result.startswith("تعذّر"):
-        st.error(result)
-        return ""
-
+    result = []
+    for item in raw or []:
+        role = str(item.get("role", "assistant")).lower()
+        content = str(item.get("content", ""))
+        if role in ("user", "assistant") and content:
+            result.append({"role": role, "content": content})
     return result
 
 
-# =========================================================
-# 10. تبويب المساعد الذكي
-# =========================================================
+def _load_current_history() -> None:
+    if not st.session_state.ai_history_loaded:
+        st.session_state.ai_messages = _load_chat_history(st.session_state.active_session)
+        st.session_state.ai_history_loaded = True
 
+
+def _save_history(session_id: str, role: str, content: str) -> None:
+    try:
+        save_chat_history(session_id, role, content, LOCAL_MODEL_ID, CHAT_CATEGORY)
+    except Exception as exc:
+        st.warning(f"تعذّر حفظ المحادثة: {exc}")
+
+
+def _get_sessions() -> List[Any]:
+    try:
+        return get_chat_sessions() or []
+    except Exception:
+        return []
+
+
+def _render_sidebar() -> None:
+    with st.sidebar:
+        st.markdown(
+            f'<div style="direction:rtl;text-align:right;padding:8px 3px 15px;">'
+            f'<div style="color:{TEXT};font-size:24px;font-weight:900;">حوكمة '
+            f'<span style="color:{GOLD}">AI</span></div>'
+            f'<div style="color:#718096;font-size:10px;">LOCAL ENTERPRISE INTELLIGENCE</div></div>',
+            unsafe_allow_html=True,
+        )
+        status = _service_call(_ai_service.get_model_status, default={}) or {}
+        st.caption("النموذج: " + os.path.basename(status.get("model_path", "غير محدد")))
+        st.caption("الحالة: محمّل" if status.get("loaded") else "الحالة: تحميل عند أول استخدام")
+        if st.button("محادثة جديدة", key="new_ai_chat", width="stretch", type="primary"):
+            _new_chat()
+            st.rerun()
+        st.markdown("---")
+        st.markdown("**المحادثات السابقة**")
+        sessions = _get_sessions()
+        session_map: Dict[str, str] = {}
+        for index, item in enumerate(sessions[:25]):
+            if isinstance(item, dict):
+                sid = str(item.get("session_id") or "")
+                label = str(item.get("first_message") or f"محادثة {index + 1}")
+            else:
+                continue
+            if sid:
+                session_map[f"{label[:28]} · {sid[-6:]}"] = sid
+        if session_map:
+            selected = st.selectbox(
+                "اختر محادثة محفوظة", list(session_map.keys()), index=None,
+                placeholder="حدد محادثة...", label_visibility="collapsed",
+                key="ai_old_session_selector",
+            )
+            if selected:
+                sid = session_map[selected]
+                if sid != st.session_state.active_session:
+                    st.session_state.active_session = sid
+                    st.session_state.ai_history_loaded = False
+                    st.session_state.ai_messages = []
+                    st.rerun()
+        else:
+            st.caption("لا توجد محادثات سابقة.")
+        st.markdown("---")
+        st.caption("تشغيل محلي عبر llama.cpp · لا يحتاج مفتاح API")
+
+
+# ---------------------------------------------------------------------
+# Chat tab
+# ---------------------------------------------------------------------
 def _render_chat_tab(model: str) -> None:
-
-    _section_title(
-        "المساعد الذكي",
-        "اسأل باللغة الطبيعية عن حساباتك وبياناتك المالية والتشغيلية.",
-    )
-
+    _section_title("المساعد الذكي", "اسأل عن المؤشرات والبيانات التشغيلية بلغة طبيعية.")
     _load_current_history()
-
-    st.markdown("""
-<div class="ai-card">
-<div class="ai-card-title"><span class="material-icon">lightbulb</span> كيف يمكنني مساعدتك؟</div>
-<div class="ai-card-caption">
-تحليل الأداء المالي، تفسير النسب، متابعة المصروفات، فهم المخزون، مراجعة القيود، ودراسة المؤشرات التشغيلية.
-</div>
-</div>
-""", unsafe_allow_html=True)
-
+    st.markdown(
+        '<div class="ai-card"><div class="ai-title">كيف يمكنني مساعدتك؟</div>'
+        '<div class="ai-caption">التحليل المالي، المخزون، المبيعات، العملاء، الموردون، '
+        'الموارد البشرية، ومراجعة المؤشرات المتاحة.</div></div>',
+        unsafe_allow_html=True,
+    )
     voice_text = audio_input_widget(key="assistant_audio")
-
-    # ✅ تم إصلاح هذا الجزء: حذف avatar تماماً
     for message in st.session_state.ai_messages:
         role = message.get("role", "assistant")
-        content = message.get("content", "")
-
         if role not in ("user", "assistant"):
             continue
-
         with st.chat_message(role):
-            st.markdown(content)
+            st.write(message.get("content", ""))
 
-    question = st.chat_input(
-        "اكتب سؤالك المالي أو التشغيلي هنا...",
-        key="ai-chat-input",
-    )
-
-    active_query = ""
-
-    if voice_text:
-        active_query = voice_text.strip()
-    elif question:
-        active_query = question.strip()
-
+    question = st.chat_input("اكتب سؤالك المالي أو التشغيلي هنا...", key="ai-chat-input")
+    active_query = (voice_text or question or "").strip()
     if not active_query:
         return
-
-    if not st.session_state.ai_messages:
-        st.session_state.ai_messages = []
-
     st.session_state.ai_messages.append({"role": "user", "content": active_query})
-
-    _save_history(
-        st.session_state.active_session,
-        "user",
-        active_query,
-        model,
-        CHAT_CATEGORY,
-    )
-
-    # ✅ تم إصلاح هذا الجزء: حذف avatar تماماً
-    with st.chat_message("user"):
-        st.markdown(active_query)
+    _save_history(st.session_state.active_session, "user", active_query)
 
     try:
-        with st.spinner("جاري تحليل البيانات محليًا..."):
-
-            data = get_comprehensive_data()
-
-            prompt = _make_prompt(
-                data=data,
-                task=active_query,
-                instructions="""
-قدم إجابة وافية ودقيقة ومنظمة مهنيًا.
-1. ابدأ بخلاصة مباشرة.
-2. اعرض الأرقام ذات الصلة إن كانت متاحة.
-3. اشرح التأثير المالي والتشغيلي.
-4. وضح أي نقص أو غموض في البيانات.
-5. قدم توصيات عملية قابلة للمراجعة.
-""",
+        with st.spinner("يجري تجهيز البيانات والإجابة محلياً..."):
+            context = _get_chat_context(active_query)
+            user_payload = (
+                "السياق المتاح من قاعدة بيانات النظام:\n" + context
+                + "\n\nسؤال المستخدم:\n" + active_query
+                + "\n\nأجب بإيجاز ودقة، واذكر إن كانت البيانات غير كافية."
             )
-
-            answer = query_local_ai(
-                prompt,
-                active_query,
-                model=model,
-                max_tokens=2048,
-            )
-
+            history = st.session_state.ai_messages[-5:-1]
+            answer = query_local_ai(SYSTEM_ROLE, user_payload, model, 240, history=history)
     except Exception as exc:
-        answer = f"حدث خطأ أثناء تجهيز بيانات السؤال: {exc}"
-
-    # ✅ تم إصلاح هذا الجزء: حذف avatar تماماً
-    with st.chat_message("assistant"):
-        st.markdown(answer)
+        answer = f"حدث خطأ أثناء تجهيز الإجابة: {exc}"
 
     st.session_state.ai_messages.append({"role": "assistant", "content": answer})
-
-    _save_history(
-        st.session_state.active_session,
-        "assistant",
-        answer,
-        model,
-        CHAT_CATEGORY,
-    )
-
+    _save_history(st.session_state.active_session, "assistant", answer)
     st.rerun()
 
 
-# =========================================================
-# 11. تبويب التحليل المالي
-# =========================================================
-
+# ---------------------------------------------------------------------
+# Financial analysis
+# ---------------------------------------------------------------------
 def _render_financial_analysis_tab(model: str) -> None:
-
-    _section_title(
-        "التحليل المالي والنسب",
-        "تحليل الأداء المالي، تقييم النسب والمؤشرات، ودراسة نقاط القوة والمخاطر.",
-    )
-
-    st.markdown("""
-<div class="ai-card">
-<div class="ai-card-title"><span class="material-icon">bar_chart</span> التحليل المالي الشامل</div>
-<div class="ai-card-caption">
-يستخدم التحليل الإيرادات والمصروفات وصافي الدخل والنسب المالية المتاحة في قاعدة البيانات.
-</div>
-</div>
-""", unsafe_allow_html=True)
-
-    if st.button(
-        "بدء التحليل المالي الشامل",
-        type="primary",
-        use_container_width=True,
-        key="run_financial_analysis",
-        icon=":material/rocket_launch:",
-    ):
-
-        with st.spinner("جاري استخراج المؤشرات وتحليلها..."):
-
-            data = get_comprehensive_data()
-            ratios = get_financial_ratios()
-
-            revenue = data.get("revenue", 0) if isinstance(data, dict) else 0
-            expenses = data.get("expenses", 0) if isinstance(data, dict) else 0
-            net_income = data.get("net_income", 0) if isinstance(data, dict) else 0
-
-            st.markdown("### المؤشرات الأساسية")
-
-            c1, c2, c3 = st.columns(3)
-
-            with c1:
-                _render_metric("الإيرادات", _money(revenue), "وفق البيانات المتاحة")
-
-            with c2:
-                _render_metric("المصروفات", _money(expenses), "وفق البيانات المتاحة")
-
-            with c3:
-                _render_metric("صافي الدخل", _money(net_income), "وفق البيانات المتاحة")
-
-            st.markdown("---")
-
-            prompt = f"""
-أنت محلل مالي أول ومستشار استراتيجي.
-
-الأرقام الأساسية:
-الإيرادات: {_money(revenue)}
-المصروفات: {_money(expenses)}
-صافي الدخل: {_money(net_income)}
-
-النسب والمؤشرات:
-{_safe_text(ratios)}
-
-المطلوب إعداد تقرير احترافي يتضمن:
-1. الملخص التنفيذي.
-2. تحليل الإيرادات والمصروفات وصافي الدخل.
-3. تحليل النسب المالية وشرح معنى كل نسبة متاحة.
-4. نقاط القوة والضعف المالية.
-5. المخاطر المالية المحتملة.
-6. توصيات عملية لتحسين الربحية والسيولة.
-
-لا تصدر حكمًا على نسبة غير متاحة.
-لا تخترع قيمًا أو معايير مقارنة غير موجودة.
-"""
-
-            answer = query_local_ai(
-                prompt,
-                "قدم التحليل المالي الشامل",
-                model,
-                2048,
-            )
-
-        render_ai_response(answer)
-
-
-# =========================================================
-# 12. تبويب المخزون
-# =========================================================
-
-def _render_inventory_tab(model: str) -> None:
-
-    _section_title(
-        "تحليل المخزون واكتشاف العجز",
-        "مراجعة الأصناف، تحديد المنتجات الحرجة، واكتشاف مؤشرات النقص أو التكدس.",
-    )
-
-    if st.button(
-        "تحميل وتحليل المخزون",
-        type="primary",
-        use_container_width=True,
-        key="inventory_analysis",
-        icon=":material/inventory_2:",
-    ):
-
-        with st.spinner("جاري تحميل بيانات المخزون..."):
-            result = get_inventory_data()
-
-        if isinstance(result, tuple) and len(result) >= 2:
-            low, all_products = result[0], result[1]
-        else:
-            low, all_products = [], result
-
-        low = low or []
-        all_products = all_products or []
-
-        st.markdown("### حالة المخزون")
-
-        c1, c2 = st.columns(2)
-
-        with c1:
-            _render_metric("عدد الأصناف المتاحة في البيانات", len(all_products), "إجمالي المنتجات المسترجعة")
-
-        with c2:
-            _render_metric("الأصناف تحت الحد الأدنى", len(low), "تحتاج إلى مراجعة")
-
-        if low:
-            _render_info(f"يوجد {len(low)} صنفًا تحت الحد الأدنى للطلب.", "warning")
-            st.markdown("#### الأصناف الحرجة")
-            _display_data(low)
-        else:
-            _render_info("لم يتم إرجاع أصناف تحت الحد الأدنى من المخزون.", "success")
-
-        if all_products:
-            st.markdown("#### بيانات المخزون")
-            _display_data(all_products)
-
-            df = _to_dataframe(all_products)
-
-            if df is not None:
-                inventory_text = df.to_string(index=False)
-            else:
-                inventory_text = _safe_text(all_products)
-
-            prompt = f"""
-أنت خبير في إدارة المخزون وسلاسل الإمداد.
-
-بيانات المخزون:
-{inventory_text}
-
-الأصناف التي ظهرت تحت الحد الأدنى:
-{_safe_text(low)}
-
-قدم تحليلًا يتضمن:
-1. التقييم العام لحالة المخزون.
-2. المنتجات التي قد تتعرض للنفاد.
-3. الأصناف المحتمل تكدسها إذا كانت البيانات تسمح بذلك.
-4. المخاطر المالية والتشغيلية.
-5. توصيات تحسين معدل دوران المخزون.
-6. قائمة بالإجراءات التي تتطلب مراجعة الإدارة.
-
-لا تستنتج معدل دوران أو قيمة مخزون غير متاحة.
-"""
-
-            with st.spinner("جاري تحليل المخزون..."):
-                answer = query_local_ai(
-                    prompt,
-                    "حلل المخزون وقدم تقريرًا إداريًا",
-                    model,
-                    2048,
-                )
-
-            render_ai_response(answer)
-
-        else:
-            st.info("لا توجد بيانات مخزون كافية للتحليل.")
-
-
-# =========================================================
-# 13. تبويب الموارد البشرية
-# =========================================================
-
-def _render_hr_tab(model: str) -> None:
-
-    _section_title(
-        "استعلامات الموارد البشرية",
-        "استرجاع بيانات الموظف وتوليد إجابات إدارية بناءً على البيانات المتاحة.",
-    )
-
-    with st.container(border=True):
-        c1, c2 = st.columns(2)
-
-        with c1:
-            employee_name = st.text_input(
-                "اسم الموظف",
-                placeholder="اكتب اسم الموظف...",
-                key="ai_employee_name",
-            )
-
-        with c2:
-            question = st.text_input(
-                "السؤال",
-                placeholder="مثال: ما بيانات وظيفتي؟",
-                key="ai_employee_question",
-            )
-
-        submitted = st.button(
-            "استعلام عن الموظف",
-            type="primary",
-            use_container_width=True,
-            key="employee_query",
-            icon=":material/search:",
+    _section_title("التحليل المالي والنسب", "مؤشرات مالية مستخرجة من قاعدة بيانات النظام.")
+    if not st.button("بدء التحليل المالي", type="primary", width="stretch", key="run_financial_analysis"):
+        return
+    with st.spinner("جاري استخراج المؤشرات وتحليلها..."):
+        data = get_financial_snapshot()
+        ratios = get_financial_ratios()
+        cols = st.columns(3)
+        metrics = [("الإيرادات", data.get("revenue")), ("المصروفات", data.get("expenses")), ("صافي الدخل", data.get("net_income"))]
+        for col, (label, value) in zip(cols, metrics):
+            with col:
+                _render_metric(label, _money(value))
+        prompt = _make_prompt(
+            {"المؤشرات": data, "النسب": ratios},
+            "إعداد تحليل مالي مختصر",
+            "اكتب خلاصة تنفيذية، واشرح النسب المتاحة، وحدد المخاطر والتوصيات. لا تضف معايير مقارنة من عندك.",
         )
-
-    if not submitted:
-        return
-
-    if not employee_name.strip() or not question.strip():
-        st.warning("يرجى إدخال اسم الموظف والسؤال.")
-        return
-
-    with st.spinner("جاري البحث عن بيانات الموظف..."):
-        result = get_employee_info(employee_name.strip())
-
-    if not isinstance(result, tuple) or len(result) < 2:
-        st.error("لم يتم استرجاع بيانات الموظف بالشكل المتوقع.")
-        return
-
-    employee, salary = result[0], result[1]
-
-    if not employee:
-        st.error("الموظف غير موجود في قاعدة البيانات.")
-        return
-
-    employee = employee or {}
-    salary = salary or {}
-
-    if not isinstance(employee, dict): employee = {}
-    if not isinstance(salary, dict): salary = {}
-
-    employee_info = f"""
-اسم الموظف: {employee.get('name', employee_name)}
-المسمى الوظيفي: {employee.get('position', 'غير متاح')}
-الراتب الأساسي: {salary.get('basic_salary', 0)}
-"""
-
-    prompt = f"""
-أنت مدير موارد بشرية محترف.
-
-بيانات الموظف:
-{employee_info}
-
-سؤال الموظف:
-{question}
-
-أجب بأسلوب مهني وواضح.
-اعتمد على المعلومات المتاحة فقط.
-لا تفترض تقييم أداء أو استحقاقات أو معلومات غير موجودة.
-إذا لم تكن البيانات كافية، اذكر ذلك.
-"""
-
-    with st.spinner("جاري صياغة الإجابة..."):
-        answer = query_local_ai(
-            prompt,
-            question,
-            model,
-            1200,
-        )
-
-    st.markdown("### نتيجة الاستعلام")
+        answer = query_local_ai(SYSTEM_ROLE, prompt, model, 300)
     render_ai_response(answer)
 
 
-# =========================================================
-# 14. تبويب القيود المحاسبية
-# =========================================================
-
-def _render_entries_tab() -> None:
-
-    _section_title(
-        "محرك القيود المحاسبية الذكي",
-        "توليد مسودة قيد محاسبي باستخدام قوالب الخدمة وقواعد التوجيه المحاسبي.",
-    )
-
-    _render_info(
-        "المخرجات مسودة للمراجعة فقط. لا يتم اعتماد القيد أو ترحيله إلى الأستاذ العام تلقائيًا من هذه الواجهة.",
-        "warning",
-    )
-
-    operations = get_available_operations()
-
-    if not operations:
-        st.warning("لا توجد أنواع عمليات متاحة في الخدمة.")
+# ---------------------------------------------------------------------
+# Inventory
+# ---------------------------------------------------------------------
+def _render_inventory_tab(model: str) -> None:
+    _section_title("تحليل المخزون", "تحديد الأصناف تحت حد إعادة الطلب ومراجعة كميات المخزون.")
+    if not st.button("تحميل وتحليل المخزون", type="primary", width="stretch", key="inventory_analysis"):
         return
-
-    selected_op = st.selectbox(
-        "اختر نوع العملية المالية",
-        options=operations,
-        key="ai_entry_operation",
-    )
-
-    operation_description = get_operation_description(selected_op)
-
-    st.markdown(f"""
-<div class="ai-info">
-<b>وصف العملية</b><br>
-{_safe_html(operation_description)}
-</div>
-""", unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    total_amount = 0.0
-    cash_amount = None
-    credit_amount = None
-    vat_rate = None
-    expense_name = None
-    adjustment_side = None
-    inventory_side = None
-
-    if is_mixed_operation(selected_op):
-        st.markdown("#### تفاصيل العملية المختلطة")
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            total_amount = st.number_input("إجمالي المبلغ", min_value=0.0, step=100.0, key="mixed_total")
-        with c2:
-            cash_amount = st.number_input("المبلغ النقدي", min_value=0.0, step=100.0, key="mixed_cash")
-        with c3:
-            credit_amount = st.number_input("المبلغ الآجل", min_value=0.0, step=100.0, key="mixed_credit")
-            
-    elif is_vat_operation(selected_op):
-        st.markdown("#### تفاصيل العملية مع الضريبة")
-        c1, c2 = st.columns(2)
-        with c1:
-            total_amount = st.number_input("المبلغ شامل الضريبة", min_value=0.0, step=100.0, key="vat_total")
-        with c2:
-            vat_rate = st.number_input("نسبة الضريبة (%)", min_value=0.0, value=15.0, step=1.0, key="vat_rate")
-            
-    elif is_inventory_adjustment(selected_op):
-        st.markdown("#### تفاصيل التسوية المخزنية")
-        c1, c2 = st.columns(2)
-        with c1:
-            total_amount = st.number_input("قيمة التسوية", min_value=0.0, step=100.0, key="adj_amount")
-        with c2:
-            adjustment_side = st.selectbox("نوع التسوية", ["زيادة (جرد)", "نقص (عجز)"], key="adj_side")
-            
-    elif is_salary_operation(selected_op):
-        st.markdown("#### تفاصيل الرواتب")
-        c1, c2 = st.columns(2)
-        with c1:
-            total_amount = st.number_input("إجمالي الرواتب", min_value=0.0, step=100.0, key="salary_total")
-        with c2:
-            expense_name = st.text_input("اسم حساب الرواتب", value="مصروف الرواتب", key="salary_expense")
-            
+    with st.spinner("جاري تحميل بيانات المخزون..."):
+        low, products = get_inventory_data()
+    low, products = low or [], products or []
+    cols = st.columns(2)
+    with cols[0]:
+        _render_metric("الأصناف في العينة", len(products))
+    with cols[1]:
+        _render_metric("أصناف تحت حد الطلب", len(low))
+    if low:
+        _render_info(f"يوجد {len(low)} صنفاً تحت حد إعادة الطلب.", "warning")
+        st.write("الأصناف الحرجة")
+        _display_data(low)
     else:
-        st.markdown("#### تفاصيل العملية")
-        total_amount = st.number_input("المبلغ", min_value=0.0, step=100.0, key="simple_amount")
-        if selected_op == "سداد مصروف":
-            expense_name = st.text_input("اسم حساب المصروف", value="مصروفات عمومية", key="simple_expense")
+        st.success("لم تُرجع البيانات أصنافاً تحت حد إعادة الطلب.")
+    if products:
+        st.write("بيانات المنتجات")
+        _display_data(products)
+        prompt = _make_prompt(
+            {"الأصناف منخفضة المخزون": low, "المنتجات": products},
+            "تحليل المخزون",
+            "حدد الأصناف التي تحتاج متابعة، ومخاطر نفاد المخزون، وتوصيات إعادة الطلب. لا تخترع معدل دوران أو قيمة مخزون.",
+        )
+        with st.spinner("جاري تحليل النتائج..."):
+            answer = query_local_ai(SYSTEM_ROLE, prompt, model, 280)
+        render_ai_response(answer)
+    else:
+        st.info("لا توجد بيانات منتجات كافية للتحليل.")
+
+
+# ---------------------------------------------------------------------
+# Human resources query
+# ---------------------------------------------------------------------
+def _render_hr_tab(model: str) -> None:
+    _section_title("استعلامات الموارد البشرية", "بحث محدد في سجل موظف موجود بقاعدة البيانات.")
+    col1, col2 = st.columns(2)
+    with col1:
+        employee_name = st.text_input("اسم الموظف", placeholder="اكتب اسم الموظف...", key="ai_employee_name")
+    with col2:
+        question = st.text_input("السؤال", placeholder="مثال: ما الراتب الأساسي المسجل؟", key="ai_employee_question")
+    submitted = st.button("استعلام عن الموظف", type="primary", width="stretch", key="employee_query")
+    if not submitted:
+        return
+    if not employee_name.strip() or not question.strip():
+        st.warning("يرجى إدخال اسم الموظف والسؤال.")
+        return
+    with st.spinner("جاري البحث..."):
+        employee, salary = get_employee_info(employee_name.strip())
+    if not employee:
+        st.error("لم يتم العثور على الموظف.")
+        return
+    employee_info = {
+        "الاسم": employee.get("name", employee_name),
+        "المسمى الوظيفي": employee.get("position", "غير متاح"),
+        "الراتب الأساسي": (salary or {}).get("basic_salary", "غير متاح"),
+    }
+    prompt = _make_prompt(employee_info, question, "أجب على السؤال بالاعتماد على الحقول المتاحة فقط. لا تفترض استحقاقات أو تقييمات.")
+    with st.spinner("جاري صياغة الإجابة..."):
+        answer = query_local_ai(SYSTEM_ROLE, prompt, model, 180)
+    render_ai_response(answer)
+
+
+# ---------------------------------------------------------------------
+# Entry templates
+# ---------------------------------------------------------------------
+def _render_entries_tab() -> None:
+    _section_title("مسودات القيود المحاسبية", "توليد قيد من قالب ثابت؛ لا يتم ترحيل أو اعتماد أي قيد تلقائياً.")
+    _render_info("راجع الحسابات والمبالغ والضريبة وسياسة المنشأة قبل الاعتماد. هذه الشاشة لا ترحّل القيد.", "warning")
+    operations = get_available_operations()
+    if not operations:
+        st.warning("لا توجد قوالب عمليات متاحة.")
+        return
+    operation = st.selectbox("نوع العملية", operations, key="ai_entry_operation")
+    st.caption(get_operation_description(operation))
+    amount = st.number_input("المبلغ", min_value=0.0, step=100.0, key="ai_entry_amount")
+    expense_name = None
+    if operation == "سداد مصروف":
+        expense_name = st.text_input("اسم حساب المصروف", value="مصروفات عمومية", key="ai_entry_expense")
+    if st.button("توليد مسودة القيد", type="primary", width="stretch", key="generate_entry_btn"):
+        entry, display, confidence, label, color = generate_template_entry(
+            operation_type=operation, amount=amount, expense_name=expense_name
+        )
+        if entry:
+            st.write("مسودة القيد")
+            with st.container(border=True):
+                st.text(display)
+                st.caption(f"التقييم: {label} ({confidence}%) — ليس تصديقاً محاسبياً")
+        else:
+            st.error(display)
+
+
+# ---------------------------------------------------------------------
+# Fraud/anomaly screening
+# ---------------------------------------------------------------------
+def _render_fraud_tab(model: str) -> None:
+    _section_title("مؤشرات العمليات غير المعتادة", "فحص استرشادي لآخر القيود، وليس حكماً بوجود احتيال.")
+    if not st.button("بدء الفحص الاسترشادي", type="primary", width="stretch", key="ai_fraud_scan"):
+        return
+    entries = get_recent_entries()
+    if not entries:
+        st.info("لا توجد قيود حديثة للفحص.")
+        return
+    st.caption(f"عدد القيود المسترجعة: {len(entries)}")
+    prompt = _make_prompt(
+        entries[:80], "فحص مؤشرات غير معتادة في القيود",
+        "أشر إلى الأنماط التي تستحق المراجعة فقط. اذكر رقم القيد والسبب إذا كانت الحقول موجودة. لا تصف أي عملية بأنها احتيال مؤكد.",
+    )
+    with st.spinner("جاري الفحص..."):
+        answer = query_local_ai(SYSTEM_ROLE, prompt, model, 300)
+    render_ai_response(answer)
+
+
+# ---------------------------------------------------------------------
+# Forecasting
+# ---------------------------------------------------------------------
+def _render_forecast_tab(model: str) -> None:
+    _section_title("التوجهات والتوقعات", "قراءة تاريخية واتجاهات استرشادية وليست توقعاً مضموناً.")
+    if not st.button("توليد ملخص التوجهات", type="primary", width="stretch", key="ai_forecast"):
+        return
+    trends = get_trend_analysis()
+    business = get_business_snapshot()
+    prompt = _make_prompt(
+        {"الاتجاهات": trends, "ملخص الأعمال": business},
+        "تحليل اتجاهات المبيعات والمشتريات",
+        "صف الاتجاه المرصود، واذكر محدودية البيانات، وقدّم توصيات. لا تخترع قيمة مستقبلية أو تدفقاً نقدياً غير محسوب.",
+    )
+    with st.spinner("جاري التحليل..."):
+        answer = query_local_ai(SYSTEM_ROLE, prompt, model, 280)
+    render_ai_response(answer)
+
+
+# ---------------------------------------------------------------------
+# Comprehensive report
+# ---------------------------------------------------------------------
+def _render_comprehensive_tab(model: str) -> None:
+    _section_title("التقرير الشامل", "ملخص إداري ومالي مبني على اللقطات المتاحة من قاعدة البيانات.")
+    if not st.button("إنشاء التقرير الشامل", type="primary", width="stretch", key="ai_comprehensive_report"):
+        return
+    with st.spinner("جاري تجميع البيانات..."):
+        data = get_comprehensive_data()
+    prompt = _make_prompt(
+        data, "إعداد تقرير إداري ومالي موجز",
+        "اكتب ملخصاً تنفيذياً، والمؤشرات الرئيسية، والمخاطر التي يمكن استنتاجها، وخمس توصيات قابلة للمراجعة. ميّز بين الحقائق والتوصيات.",
+    )
+    with st.spinner("جاري إنشاء التقرير..."):
+        answer = query_local_ai(SYSTEM_ROLE, prompt, model, 350)
+    render_ai_response(answer)
+
+
+# ---------------------------------------------------------------------
+# Cost centres
+# ---------------------------------------------------------------------
+def _render_cost_center_tab() -> None:
+    _section_title("مراكز التكلفة", "تحليل أداء مركز محدد، أو مقارنة المراكز، أو مراجعة الانحرافات.")
+    try:
+        centers = ccs.get_all_cost_centers(active_only=True)
+    except Exception as exc:
+        st.error(f"تعذر تحميل مراكز التكلفة: {exc}")
+        return
+    if not centers:
+        st.info("لا توجد مراكز تكلفة نشطة.")
+        return
+    options = {c["id"]: f"{c.get('code', '')} - {c.get('name', '')}" for c in centers}
+    selected_id = st.selectbox(
+        "اختر مركز التكلفة", list(options.keys()),
+        format_func=lambda value: options[value], key="ai_cost_center_select",
+    )
+    col1, col2 = st.columns(2)
+    with col1:
+        run_analysis = st.button("تحليل أداء المركز", type="primary", width="stretch", key="ai_cost_center_analysis")
+    with col2:
+        run_compare = st.button("مقارنة المراكز", width="stretch", key="ai_cost_center_compare")
+    if run_analysis:
+        with st.spinner("جاري تحليل المركز..."):
+            result = analyze_cost_center_performance(selected_id)
+        render_ai_response(result)
+    if run_compare:
+        with st.spinner("جاري مقارنة المراكز..."):
+            result = compare_cost_centers()
+        render_ai_response(result)
 
     st.markdown("---")
+    st.write("تحليل الموازنة والتوقعات")
+    col3, col4 = st.columns(2)
+    with col3:
+        fiscal_year = st.number_input(
+            "السنة المالية", min_value=2000, max_value=2100,
+            value=datetime.now().year, step=1, key="ai_cc_fiscal_year",
+        )
+        budget_click = st.button("تحليل انحراف الموازنة", width="stretch", key="ai_cc_budget")
+    with col4:
+        months = st.selectbox("أفق التوقع", [1, 2, 3, 6], index=2, key="ai_cc_months")
+        forecast_click = st.button("توقع المصروفات", width="stretch", key="ai_cc_forecast")
+    if budget_click:
+        with st.spinner("جاري تحليل الموازنة..."):
+            result = get_cost_center_budget_analysis(selected_id, int(fiscal_year))
+        render_ai_response(result)
+    if forecast_click:
+        with st.spinner("جاري إعداد التوقع الاسترشادي..."):
+            result = predict_cost_center_expenses(selected_id, int(months))
+        render_ai_response(result)
 
-    if st.button("توليد القيد", type="primary", use_container_width=True, key="generate_entry_btn", icon=":material/receipt_long:"):
-        with st.spinner("جاري توليد القيد..."):
-            entry_data, display_text, confidence, conf_label, conf_color = generate_template_entry(
-                operation_type=selected_op,
-                amount=total_amount,
-                cash_amount=cash_amount,
-                credit_amount=credit_amount,
-                expense_name=expense_name,
-                vat_rate=vat_rate,
-                adjustment_side=adjustment_side,
-                inventory_side=inventory_side
-            )
 
-            if entry_data:
-                st.markdown("### مسودة القيد")
-                st.markdown(f"""
-<div class="ai-card">
-<div class="ai-card-title">نتيجة التوليد</div>
-<div class="ai-card-caption" style="white-space: pre-wrap; font-family: monospace; direction: ltr; text-align: left;">
-{_safe_html(display_text)}
-</div>
-<div style="margin-top: 15px;">
-<span style="background: {conf_color}22; color: {conf_color}; padding: 5px 10px; border-radius: 6px; font-weight: bold; font-size: 12px;">
-مستوى الثقة: {confidence}% ({conf_label})
-</span>
-</div>
-</div>
-""", unsafe_allow_html=True)
-            else:
-                st.error(display_text)
-
-# =========================================================
-# 15. الدالة الرئيسية للواجهة
-# =========================================================
-
+# ---------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------
 def show() -> None:
     _ensure_session()
     _apply_design()
-
-    # ✅ 1. استدعاء الشريط الجانبي مرة واحدة فقط (خارج التبويبات)
+    # Ensure the local history table exists; this does not load the GGUF model.
+    try:
+        create_ai_tables()
+    except Exception as exc:
+        st.error(f"تعذر تهيئة سجل محادثات المساعد: {exc}")
     _render_sidebar()
-
-    # ✅ 2. تصميم الهيدر الرئيسي
     _render_hero()
 
-    # ✅ 3. التبويبات الرئيسية (9 تبويبات)
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
-        ":material/psychology: مساعد",
-        ":material/bar_chart: محلل",
-        ":material/inventory_2: مخزون",
-        ":material/badge: موظفين",
-        ":material/edit_note: قيود",
-        ":material/gavel: احتيال",          # تبويب كشف الاحتيال
-        ":material/online_prediction: تنبؤات", # تبويب التنبؤات المستقبلية
-        ":material/assessment: تقرير شامل",   # تبويب التقرير الشامل
-        ":material/request_quote: مراكز تكلفة", # تبويب مراكز التكلفة
+    tabs = st.tabs([
+        "مساعد", "تحليل مالي", "مخزون", "موظفون", "مسودات قيود",
+        "فحص استرشادي", "التوجهات", "تقرير شامل", "مراكز التكلفة",
     ])
-
-    # 1. المساعد الذكي
-    with tab1:
+    with tabs[0]:
         _render_chat_tab(LOCAL_MODEL_ID)
-
-    # 2. المحلل المالي
-    with tab2:
+    with tabs[1]:
         _render_financial_analysis_tab(LOCAL_MODEL_ID)
-
-    # 3. المخزون
-    with tab3:
+    with tabs[2]:
         _render_inventory_tab(LOCAL_MODEL_ID)
-
-    # 4. الموظفون
-    with tab4:
+    with tabs[3]:
         _render_hr_tab(LOCAL_MODEL_ID)
-
-    # 5. توليد القيود
-    with tab5:
+    with tabs[4]:
         _render_entries_tab()
-
-    # 6. كشف الاحتيال (يتطلب بناء واجهة بسيطة)
-    with tab6:
-        _section_title(
-            "كشف العمليات غير الطبيعية (الاحتيال)",
-            "تحليل القيود والفواتير لاكتشاف أي شذوذ أو تلاعب محتمل.",
-        )
-        if st.button("بدء فحص الاحتيال", type="primary", use_container_width=True, icon=":material/search:"):
-            with st.spinner("جاري فحص العمليات..."):
-                entries = get_recent_entries() # دالة تجلب آخر القيود
-                prompt = _make_prompt(
-                    data=entries,
-                    task="كشف العمليات المشبوهة أو غير الطبيعية",
-                    instructions="""
-حلل القيود التالية وابحث عن:
-1. قيود بمبالغ غير طبيعية (كبيرة جداً أو متكررة).
-2. قيود تم تسجيلها في أوقات غير معتادة (إن توفر الوقت).
-3. عمليات لا تتوافق مع طبيعة النشاط.
-4. أي نمط يشير إلى خطأ بشري أو تلاعب.
-قدم تقريراً مفصلاً بالعمليات المشتبه بها.
-"""
-                )
-                answer = query_local_ai(prompt, "فحص الاحتيال", LOCAL_MODEL_ID)
-            render_ai_response(answer)
-
-    # 7. التنبؤات المستقبلية (يتطلب بناء واجهة بسيطة)
-    with tab7:
-        _section_title(
-            "التنبؤات المستقبلية",
-            "توقع الإيرادات والتدفقات النقدية بناءً على البيانات التاريخية.",
-        )
-        if st.button("توليد التوقعات", type="primary", use_container_width=True, icon=":material/auto_graph:"):
-            with st.spinner("جاري تحليل البيانات وتوليد التوقعات..."):
-                trends = get_trend_analysis()
-                business = get_business_snapshot()
-                prompt = _make_prompt(
-                    data={"trends": trends, "business": business},
-                    task="توقع الإيرادات والتدفقات النقدية",
-                    instructions="""
-بناءً على بيانات الاتجاهات والأعمال السابقة:
-1. توقع حجم المبيعات للفترة القادمة.
-2. توقع التدفقات النقدية المتوقعة.
-3. حدد المخاطر المالية المحتملة.
-4. اذكر أن هذه التوقعات تقديرية وتعتمد على البيانات التاريخية.
-"""
-                )
-                answer = query_local_ai(prompt, "توليد التوقعات", LOCAL_MODEL_ID)
-            render_ai_response(answer)
-
-    # 8. التقرير الشامل (يتطلب بناء واجهة بسيطة)
-    with tab8:
-        _section_title(
-            "التقرير الشامل للمنشأة",
-            "توليد تقرير إداري ومالي متكامل يغطي كافة الجوانب.",
-        )
-        if st.button("توليد التقرير الشامل", type="primary", use_container_width=True, icon=":material/description:"):
-            with st.spinner("جاري تجميع البيانات وإعداد التقرير..."):
-                comprehensive_data = get_comprehensive_data()
-                prompt = _make_prompt(
-                    data=comprehensive_data,
-                    task="إعداد تقرير إداري شامل",
-                    instructions="""
-قدم تقريراً شاملاً للمنشأة يتضمن:
-1. الملخص التنفيذي.
-2. تحليل الوضع المالي الحالي.
-3. حالة المخزون والمبيعات.
-4. أداء الموارد البشرية.
-5. التوصيات الاستراتيجية العامة.
-"""
-                )
-                answer = query_local_ai(prompt, "التقرير الشامل", LOCAL_MODEL_ID)
-            render_ai_response(answer)
-
-    # 9. مراكز التكلفة
-    with tab9:
-        _section_title(
-            "تحليل مراكز التكلفة",
-            "مقارنة الأداء المالي للمراكز، التنبؤ بالمصروفات، وتحليل الانحرافات.",
-        )
-        
-        centers = ccs.get_all_cost_centers(active_only=True)
-        if not centers:
-            st.info("لا توجد مراكز تكلفة مسجلة حالياً.")
-        else:
-            center_options = {c['id']: f"{c['code']} - {c['name']}" for c in centers}
-            selected_center_id = st.selectbox(
-                "اختر المركز للتحليل",
-                options=list(center_options.keys()),
-                format_func=lambda x: center_options[x],
-                key="ai_cost_center_select",
-            )
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                if st.button("تحليل أداء المركز", type="primary", use_container_width=True, icon=":material/analytics:"):
-                    with st.spinner("جاري تحليل أداء المركز..."):
-                        result = analyze_cost_center_performance(selected_center_id)
-                    render_ai_response(result)
-            
-            with col2:
-                if st.button("مقارنة جميع المراكز", type="primary", use_container_width=True, icon=":material/compare_arrows:"):
-                    with st.spinner("جاري مقارنة المراكز..."):
-                        result = compare_cost_centers()
-                    render_ai_response(result)
-            
-            st.markdown("---")
-            
-            col3, col4 = st.columns(2)
-            
-            with col3:
-                if st.button("توقع مصروفات المركز (3 أشهر)", use_container_width=True, icon=":material/trending_up:"):
-                    with st.spinner("جاري التنبؤ بالمصروفات..."):
-                        result = predict_cost_center_expenses(selected_center_id, months=3)
-                    render_ai_response(result)
-            
-            with col4:
-                fiscal_year = st.number_input("السنة المالية", min_value=2020, max_value=2030, value=2026, key="ai_budget_year")
-                if st.button("تحليل الموازنة والانحرافات", use_container_width=True, icon=":material/assessment:"):
-                    with st.spinner("جاري تحليل الموازنة..."):
-                        result = get_cost_center_budget_analysis(selected_center_id, fiscal_year)
-                    render_ai_response(result)
+    with tabs[5]:
+        _render_fraud_tab(LOCAL_MODEL_ID)
+    with tabs[6]:
+        _render_forecast_tab(LOCAL_MODEL_ID)
+    with tabs[7]:
+        _render_comprehensive_tab(LOCAL_MODEL_ID)
+    with tabs[8]:
+        _render_cost_center_tab()
