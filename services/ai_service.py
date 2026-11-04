@@ -32,8 +32,12 @@ GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
 GROQ_MODEL_ID = os.environ.get("ERP_AI_MODEL", "openai/gpt-oss-20b").strip() or "openai/gpt-oss-20b"
 # Backward-compatible name: older UI code imports LOCAL_AI_MODEL.
 LOCAL_AI_MODEL = GROQ_MODEL_ID
-DEFAULT_MAX_TOKENS = 1400
-MAX_COMPLETION_TOKENS = 8192  # App-side cap; Groq GPT-OSS 20B allows up to 65,536 output tokens.
+DEFAULT_MAX_TOKENS = 4096
+MAX_COMPLETION_TOKENS = 8192  # Conservative app cap; Groq GPT-OSS 20B supports up to 65,536.
+TOKEN_TRUNCATION_NOTICE = (
+    "تنبيه: قد تكون الإجابة غير مكتملة بسبب بلوغ حد التوليد. "
+    "أرسل «أكمل من حيث توقفت» لمتابعة ما تبقى."
+)
 MAX_PROMPT_CHARS = 15000
 REQUEST_TIMEOUT_SECONDS = 100
 CONNECT_TIMEOUT_SECONDS = 20
@@ -286,6 +290,21 @@ MASTER_FINANCIAL_PROMPT = """أنت المستشار المالي والإدار
 الجودة: ابدأ بخلاصة تنفيذية، ثم تحليل منظم، ثم توصيات عملية ذات أولوية. اذكر القيود بوضوح.
 التنسيق: استخدم عناوين قصيرة ونقاطاً واضحة وجداول نصية صغيرة عند فائدتها. لا تعرض سلسلة التفكير الداخلية؛ اعرض النتائج والمبررات المختصرة فقط."""
 
+SUPPORTED_CURRENCY_CODES = {"YER", "SAR", "USD", "EUR"}
+
+
+def _currency_prompt(currency_code: Optional[str] = None) -> str:
+    """Build a guarded currency instruction for service-level AI analyses."""
+    code = str(currency_code or "YER").upper()
+    if code not in SUPPORTED_CURRENCY_CODES:
+        code = "YER"
+    return (
+        MASTER_FINANCIAL_PROMPT
+        + "\nعملة بيانات النظام وعرض التحليل: " + code + ". "
+        + "فسّر المبالغ غير المعلّمة بهذه العملة، واحتفظ بأي عملة صريحة مختلفة كما وردت. "
+        + "لا تحوّل بين العملات ولا تخترع أسعار صرف. هذا الإعداد لا يغيّر القيم المخزنة في قاعدة البيانات."
+    )
+
 
 def unload_local_model() -> None:
     """Backward-compatible no-op; inference now runs remotely through Groq."""
@@ -409,16 +428,41 @@ def test_groq_connection(api_key: Optional[str] = None) -> Tuple[bool, str]:
         return False, str(exc)
 
 
+def _read_completion(response: Dict[str, Any]) -> Tuple[str, str, Dict[str, Any]]:
+    """Return visible text, finish reason and token usage from a Groq response."""
+    choices = response.get("choices") or []
+    if not choices or not isinstance(choices[0], dict):
+        return "", "", response.get("usage") or {}
+    choice = choices[0]
+    message = choice.get("message") or {}
+    content = message.get("content")
+    if isinstance(content, list):
+        content = "\n".join(
+            str(item.get("text", "")) for item in content if isinstance(item, dict)
+        )
+    finish_reason = str(choice.get("finish_reason") or "").lower()
+    return str(content or "").strip(), finish_reason, response.get("usage") or {}
+
+
+def _log_completion(started: float, usage: Dict[str, Any], model: str, attempt: str) -> None:
+    _logger.info(
+        "Groq %s completed in %.2fs | prompt=%s | completion=%s | model=%s",
+        attempt, time.perf_counter() - started, usage.get("prompt_tokens", "?"),
+        usage.get("completion_tokens", "?"), model,
+    )
+
+
 def query_groq(system_prompt: str, user_query: str, model: Optional[str] = None,
                max_tokens: int = DEFAULT_MAX_TOKENS, temperature: float = 0.35,
                history: Optional[Sequence[Dict[str, str]]] = None,
                reasoning_effort: str = "medium", api_key: Optional[str] = None,
                **kwargs) -> str:
-    """Generate a final Arabic answer from Groq; compatible with the previous UI signature."""
+    """Generate an Arabic Groq answer and make one bounded recovery attempt on truncation."""
     started = time.perf_counter()
     key = str(api_key or get_groq_api_key() or "").strip()
     if not key:
         return "مفتاح Groq غير مضاف. افتح إعدادات المساعد في الشريط الجانبي وأضف مفتاح API أولاً."
+
     messages = _normalize_messages(system_prompt, user_query, history)
     try:
         requested = int(max_tokens)
@@ -441,29 +485,64 @@ def query_groq(system_prompt: str, user_query: str, model: Optional[str] = None,
         "temperature": temp,
         "top_p": 0.9,
         "reasoning_effort": effort,
-        # Suppress chain-of-thought; users receive the answer and concise reasons only.
         "include_reasoning": False,
         "stream": False,
     }
+
     try:
         response = _post_groq(payload, key)
-        choices = response.get("choices") or []
-        if not choices:
+        content, finish_reason, usage = _read_completion(response)
+        if not (response.get("choices") or []):
             return "لم يرجع النموذج إجابة. حاول تقليل البيانات المرسلة أو إعادة صياغة السؤال."
-        message = choices[0].get("message") or {}
-        content = message.get("content")
-        if isinstance(content, list):
-            content = "\n".join(str(x.get("text", "")) for x in content if isinstance(x, dict))
-        content = str(content or "").strip()
+
+        if finish_reason == "length":
+            # GPT-OSS reasoning tokens share the completion budget with visible answer text.
+            # If the first call returned a partial answer, ask for only the missing continuation.
+            # If it returned no visible text, retry the original prompt with the app's full cap
+            # and medium reasoning effort to leave more room for the final answer.
+            recovery_payload = dict(payload)
+            recovery_payload["max_completion_tokens"] = MAX_COMPLETION_TOKENS
+            if content:
+                recovery_payload["messages"] = list(messages) + [
+                    {"role": "assistant", "content": content},
+                    {"role": "user", "content": (
+                        "أكمل الإجابة السابقة مباشرة من حيث توقفت. لا تكرر المقدمة أو النقاط التي أُنجزت، "
+                        "وأكمل الأقسام والنتيجة والتوصيات اللازمة فقط. اكتب الإجابة النهائية للمستخدم."
+                    )},
+                ]
+            else:
+                recovery_payload["messages"] = messages
+            if effort == "high":
+                recovery_payload["reasoning_effort"] = "medium"
+
+            try:
+                recovered = _post_groq(recovery_payload, key)
+                extra, recovery_finish, recovery_usage = _read_completion(recovered)
+                if extra:
+                    _log_completion(started, recovery_usage, payload["model"], "recovery")
+                    combined = (content + "\n\n" + extra).strip() if content else extra
+                    if recovery_finish == "length":
+                        combined += "\n\n" + TOKEN_TRUNCATION_NOTICE
+                    return combined
+                if content:
+                    _log_completion(started, usage, payload["model"], "partial")
+                    return content + "\n\n" + TOKEN_TRUNCATION_NOTICE
+                _logger.warning("Groq reached completion-token limit without visible text after recovery")
+                return (
+                    "وصل النموذج إلى حد التوليد أثناء المعالجة ولم يُنتج إجابة نصية حتى بعد إعادة المحاولة. "
+                    "جرّب تقليل حجم البيانات أو تقسيم التحليل إلى أسئلة أصغر."
+                )
+            except Exception as recovery_exc:
+                _logger.warning("Groq recovery attempt failed: %s", str(recovery_exc)[:250])
+                if content:
+                    return content + "\n\n" + TOKEN_TRUNCATION_NOTICE
+                return str(recovery_exc) if isinstance(recovery_exc, RuntimeError) else (
+                    "انتهى حد التوليد ولم يكتمل الرد. قلّل حجم البيانات ثم أعد المحاولة."
+                )
+
         if not content:
-            finish = (choices[0].get("finish_reason") or "").lower()
-            if finish == "length":
-                return "انتهى حد التوليد قبل اكتمال الإجابة. أعد المحاولة بحد توكن أعلى أو بسياق أقصر."
             return "لم ينتج النموذج نصاً نهائياً. أعد المحاولة مع طلب أكثر تحديداً."
-        usage = response.get("usage") or {}
-        _logger.info("Groq response completed in %.2fs | prompt=%s | completion=%s | model=%s",
-                     time.perf_counter() - started, usage.get("prompt_tokens", "?"),
-                     usage.get("completion_tokens", "?"), payload["model"])
+        _log_completion(started, usage, payload["model"], "response")
         return content
     except Exception as exc:
         _logger.warning("Groq inference failed: %s", str(exc)[:300])
@@ -762,7 +841,7 @@ def get_trend_analysis():
 # ---------------------------------------------------------------------
 # Cost-centre analysis
 # ---------------------------------------------------------------------
-def analyze_cost_center_performance(center_id):
+def analyze_cost_center_performance(center_id, currency_code="YER"):
     from services import cost_center_service as ccs
     center = ccs.get_cost_center_by_id(center_id)
     if not center:
@@ -772,17 +851,17 @@ def analyze_cost_center_performance(center_id):
     facts = {"المركز": center.get("name"), "إجمالي المدين": balance.get("total_debit"),
              "إجمالي الدائن": balance.get("total_credit"), "الصافي": balance.get("net"),
              "الإيرادات": income.get("income"), "المصروفات": income.get("expenses"), "صافي الربح": income.get("net_profit")}
-    return query_groq(MASTER_FINANCIAL_PROMPT, "حلل مركز التكلفة اعتماداً على البيانات التالية فقط، وقدم خلاصة ومؤشرات ومخاطر وتوصيات.\n" + json.dumps(facts, ensure_ascii=False), max_tokens=1600)
+    return query_groq(_currency_prompt(currency_code), "حلل مركز التكلفة اعتماداً على البيانات التالية فقط، وقدم خلاصة ومؤشرات ومخاطر وتوصيات.\n" + json.dumps(facts, ensure_ascii=False), max_tokens=1600)
 
 
-def compare_cost_centers():
+def compare_cost_centers(currency_code="YER"):
     summary = get_cost_center_snapshot()
     if not summary:
         return "لا توجد مراكز تكلفة أو بيانات كافية للمقارنة."
-    return query_groq(MASTER_FINANCIAL_PROMPT, "قارن مراكز التكلفة الواردة في البيانات، واذكر أساس المقارنة وأي نقص يمنع حكماً عادلاً.\n" + json.dumps(summary, ensure_ascii=False), max_tokens=1800)
+    return query_groq(_currency_prompt(currency_code), "قارن مراكز التكلفة الواردة في البيانات، واذكر أساس المقارنة وأي نقص يمنع حكماً عادلاً.\n" + json.dumps(summary, ensure_ascii=False), max_tokens=1800)
 
 
-def predict_cost_center_expenses(center_id, months=3):
+def predict_cost_center_expenses(center_id, months=3, currency_code="YER"):
     from services import cost_center_service as ccs
     center = ccs.get_cost_center_by_id(center_id)
     if not center:
@@ -798,15 +877,15 @@ def predict_cost_center_expenses(center_id, months=3):
     if not history:
         return "لا تتوفر بيانات تاريخية كافية لإعداد توقع لهذا المركز."
     task = {"مركز التكلفة": center.get("name"), "أفق التوقع بالأشهر": max(1, min(int(months), 12)), "التاريخ": history}
-    return query_groq(MASTER_FINANCIAL_PROMPT, "قدم قراءة للاتجاه التاريخي وتوقعاً استرشادياً مشروطاً، ولا تقدم أرقاماً مستقبلية مصطنعة.\n" + json.dumps(task, ensure_ascii=False), max_tokens=1500, reasoning_effort="high")
+    return query_groq(_currency_prompt(currency_code), "قدم قراءة للاتجاه التاريخي وتوقعاً استرشادياً مشروطاً، ولا تقدم أرقاماً مستقبلية مصطنعة.\n" + json.dumps(task, ensure_ascii=False), max_tokens=1500, reasoning_effort="high")
 
 
-def get_cost_center_budget_analysis(center_id, fiscal_year):
+def get_cost_center_budget_analysis(center_id, fiscal_year, currency_code="YER"):
     from services import cost_center_service as ccs
     variance = ccs.get_budget_variance(center_id, fiscal_year)
     if not variance:
         return "لا توجد موازنة مسجلة أو لا تتوفر بيانات انحراف لهذا المركز والسنة."
-    return query_groq(MASTER_FINANCIAL_PROMPT, "حلل انحرافات الموازنة للسنة المحددة. لا تفترض أسباب الانحراف غير المثبتة بالبيانات.\n" + json.dumps(variance, ensure_ascii=False, default=str), max_tokens=1500)
+    return query_groq(_currency_prompt(currency_code), "حلل انحرافات الموازنة للسنة المحددة. لا تفترض أسباب الانحراف غير المثبتة بالبيانات.\n" + json.dumps(variance, ensure_ascii=False, default=str), max_tokens=1500)
 
 # ---------------------------------------------------------------------
 # Journal entry extraction and safe templates (drafts only)
