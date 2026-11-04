@@ -58,8 +58,33 @@ from services import cost_center_service as ccs
 # ---------------------------------------------------------------------
 CHAT_MODEL_ID = LOCAL_AI_MODEL  # Backward-compatible service constant; now points to Groq model.
 CHAT_CATEGORY = "مساعد Groq"
-DEFAULT_CHAT_TOKENS = 1400
+DEFAULT_CHAT_TOKENS = 4096
 MAX_CONTEXT_CHARS = 12000
+
+# Currency selection is intentionally limited to the four currencies requested.
+SUPPORTED_CURRENCIES = {
+    "YER": "الريال اليمني (YER)",
+    "SAR": "الريال السعودي (SAR)",
+    "USD": "الدولار الأمريكي (USD)",
+    "EUR": "اليورو (EUR)",
+}
+
+
+def _selected_currency_code() -> str:
+    code = str(st.session_state.get("ai_currency_code", "YER") or "YER").upper()
+    return code if code in SUPPORTED_CURRENCIES else "YER"
+
+
+def _currency_instruction() -> str:
+    code = _selected_currency_code()
+    label = SUPPORTED_CURRENCIES[code]
+    return (
+        "\n\nإعداد العملة في Hokama ERP: العملة المختارة هي " + label + " (" + code + ").\n"
+        "تعامل مع المبالغ التي لا تحمل رمز عملة على أنها مسجلة بهذه العملة، واذكر رمز العملة بوضوح عند عرض الإجماليات. "
+        "إذا احتوت البيانات نفسها على رمز عملة مختلف وصريح، فلا تغيّره ولا تخلط العملات. "
+        "لا تنفذ تحويلاً بين العملات ولا تخترع سعر صرف؛ إذا طلب المستخدم التحويل فاطلب سعر الصرف المعتمد أو وضح أن التحويل غير متاح من هذه الوحدة. "
+        "هذا الاختيار يحدد وحدة تفسير وعرض الأرقام غير المعلّمة فقط، ولا يغيّر القيم المخزنة في قاعدة البيانات."
+    )
 
 SYSTEM_ROLE = """أنت المستشار المالي والإداري الذكي في نظام Hokama ERP.
 أجب باللغة العربية الفصحى المهنية، وبأسلوب واضح ومنظم وقابل للاستخدام الإداري.
@@ -140,7 +165,7 @@ def _safe_html(value: Any) -> str:
 
 def _money(value: Any) -> str:
     try:
-        return f"{float(value or 0):,.2f}"
+        return f"{float(value or 0):,.2f} {_selected_currency_code()}"
     except (TypeError, ValueError):
         return "—"
 
@@ -240,11 +265,26 @@ def _render_hero() -> None:
         '<div class="ai-hero-title">المستشار المالي والإداري الذكي</div>'
         '<div class="ai-hero-sub">تحليلات ومحادثات مدعومة بنموذج GPT-OSS 20B عبر Groq. '
         'تُرسل البيانات التي تختار تحليلها إلى الخدمة السحابية؛ لا تُرسل قاعدة البيانات كاملة تلقائياً.</div>'
-        f'<div class="ai-caption">المزود: Groq · النموذج: {_safe_html(status.get("model_name", CHAT_MODEL_ID))} · {_safe_html(state)}</div>'
+        f'<div class="ai-caption">المزود: Groq · النموذج: {_safe_html(status.get("model_name", CHAT_MODEL_ID))} · العملة: {_safe_html(_selected_currency_code())} · {_safe_html(state)}</div>'
         '</div>', unsafe_allow_html=True,
     )
     if not configured:
         st.warning("أضف مفتاح Groq من إعدادات المساعد في الشريط الجانبي قبل تشغيل التحليلات.")
+
+
+TOKEN_TRUNCATION_NOTICE = (
+    "تنبيه: قد تكون الإجابة غير مكتملة بسبب بلوغ حد التوليد. "
+    "أرسل «أكمل من حيث توقفت» لمتابعة ما تبقى."
+)
+
+
+def _split_token_notice(content: Any):
+    """Separate a possible truncation notice so it can be shown without being spoken."""
+    text = _safe_text(content)
+    if TOKEN_TRUNCATION_NOTICE in text:
+        body = text.replace("\n\n" + TOKEN_TRUNCATION_NOTICE, "").replace(TOKEN_TRUNCATION_NOTICE, "").strip()
+        return body, True
+    return text, False
 
 
 def render_ai_response(content: Any) -> None:
@@ -252,8 +292,11 @@ def render_ai_response(content: Any) -> None:
     if content is None:
         st.info("لم يتم إنشاء نتيجة.")
         return
+    answer_text, incomplete = _split_token_notice(content)
     with st.container(border=True):
-        st.write(_safe_text(content))
+        st.write(answer_text or "لم يتم إنشاء نص نهائي.")
+        if incomplete:
+            st.warning(TOKEN_TRUNCATION_NOTICE)
 
 
 def _require_cloud_key() -> bool:
@@ -278,8 +321,9 @@ def query_local_ai(prompt: str, active_query: str = "", model: str = CHAT_MODEL_
                    reasoning_effort: str = "medium") -> str:
     """Compatibility wrapper name; the provider is now Groq cloud."""
     try:
+        system_instructions = (prompt or SYSTEM_ROLE) + _currency_instruction()
         result = query_groq(
-            prompt or SYSTEM_ROLE,
+            system_instructions,
             active_query or prompt,
             model=model,
             max_tokens=max_tokens,
@@ -404,6 +448,14 @@ def _ensure_session() -> None:
         st.session_state.ai_cloud_data_consent = False
     if "ai_voice_pending_id" not in st.session_state:
         st.session_state.ai_voice_pending_id = ""
+    if not st.session_state.get("ai_token_settings_migrated", False):
+        try:
+            previous_limit = int(st.session_state.get("ai_chat_max_tokens", DEFAULT_CHAT_TOKENS))
+        except (TypeError, ValueError):
+            previous_limit = DEFAULT_CHAT_TOKENS
+        if previous_limit < DEFAULT_CHAT_TOKENS:
+            st.session_state["ai_chat_max_tokens"] = DEFAULT_CHAT_TOKENS
+        st.session_state["ai_token_settings_migrated"] = True
 
 
 def _new_chat() -> None:
@@ -492,6 +544,14 @@ def _render_sidebar() -> None:
         status = _service_call(_ai_service.get_model_status, default={}) or {}
         st.caption("النموذج: " + str(status.get("model_name", CHAT_MODEL_ID)))
         st.caption("الاتصال: " + ("جاهز للمصادقة" if status.get("configured") else "يتطلب مفتاح API"))
+        st.selectbox(
+            "عملة بيانات النظام ونتائج المساعد",
+            options=list(SUPPORTED_CURRENCIES.keys()),
+            format_func=lambda code: SUPPORTED_CURRENCIES[code],
+            key="ai_currency_code",
+            help="اختر العملة التي تمثل فعلياً المبالغ المسجلة في قاعدة بياناتك. هذا الاختيار لا يحوّل الأرصدة بين العملات.",
+        )
+        st.caption("تُفسَّر المبالغ غير المعلّمة بهذه العملة. لا يجري تحويل تلقائي بين العملات.")
         _render_api_settings()
         st.markdown("---")
         consent = st.checkbox(
@@ -507,9 +567,9 @@ def _render_sidebar() -> None:
             st.checkbox("نطق إجابة المساعد تلقائياً", value=True, key="ai_voice_autoplay",
                         help="يستخدم صوتاً عربياً مثبتاً على هذا الجهاز داخل المتصفح.")
             st.slider("سرعة النطق", min_value=0.7, max_value=1.3, value=1.0, step=0.1, key="ai_voice_rate")
-            st.slider("الحد الأقصى لطول إجابة المحادثة (Token)", min_value=512, max_value=8192,
-                      value=2560, step=256, key="ai_chat_max_tokens",
-                      help="رفع الحد يسمح بإجابات أطول وقد يزيد زمن التوليد واستهلاك الرصيد.")
+            st.slider("الحد الأقصى لطول إجابة المحادثة (Token)", min_value=1024, max_value=8192,
+                      value=DEFAULT_CHAT_TOKENS, step=256, key="ai_chat_max_tokens",
+                      help="القيمة الافتراضية 4096. عند اكتشاف أن الرد توقف بسبب الحد، يحاول النظام استكماله تلقائياً مرة واحدة حتى 8192 توكناً.")
         st.markdown("---")
         if st.button("محادثة جديدة", key="new_ai_chat", width="stretch", type="primary"):
             _new_chat()
@@ -600,13 +660,28 @@ input {{ width: 76px; accent-color: #d4af37; }}
 
   function speechText(value) {{
     return String(value)
-      .replace(/```[\\s\\S]*?```/g, ' كتلة برمجية ')
+      // Code blocks, markup and links are not useful in spoken answers.
+      .replace(/```[\\s\\S]*?```/g, ' ')
       .replace(/`([^`]+)`/g, '$1')
-      .replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^)]+)\\)/g, '$1')
-      .replace(/https?:\\/\\/\\S+/g, ' رابط ')
-      .replace(/^\\s*#{1,6}\\s*/gm, '')
-      .replace(/[>*_~|]/g, ' ')
-      .replace(/^\\s*[-+•]\\s+/gm, '')
+      .replace(/\\[([^\\]]+)\\]\\([^)]+\\)/g, '$1')
+      .replace(/https?:\\/\\/\\S+/gi, ' ')
+      .replace(/<[^>]*>/g, ' ')
+      // Remove Markdown headings, quote marks and list numbering.
+      .replace(/^\\s{{0,3}}#{{1,6}}\\s*/gm, '')
+      .replace(/^\\s{{0,3}}>+\\s*/gm, '')
+      .replace(/^\\s{{0,3}}(?:[-+*•‣▪◦]|\\d{{1,3}}[.)])\\s+/gm, '')
+      .replace(/^\\s*(?:[-–—_=*]\\s*){{3,}}$/gm, ' ')
+      // Convert a leading minus sign into a spoken word, then remove dash punctuation.
+      .replace(/(^|[\\s(])[-−](?=\\d)/g, '$1سالب ')
+      .replace(/(\\d)\\s*[-–—]\\s*(\\d)/g, '$1 إلى $2')
+      // Never pronounce hyphens, en/em dashes or Markdown table separators.
+      .replace(/[|*_~]/g, ' ')
+      .replace(/[–—−‐‑‒―-]+/g, ' ')
+      .replace(/[(){{}}\\[\\]<>]/g, ' ')
+      .replace(/[•‣▪◦◆◇★☆✓✔✦✧]/g, ' ')
+      .replace(/&nbsp;|&amp;|&lt;|&gt;/gi, ' ')
+      .replace(/\\s+([،؛:,.!?؟])/g, '$1')
+      .replace(/([،؛:,.!?؟]){{2,}}/g, '$1')
       .replace(/\\s+/g, ' ')
       .trim();
   }}
@@ -709,12 +784,15 @@ def _render_chat_tab(model: str) -> None:
         if role in ("user", "assistant"):
             with st.chat_message(role):
                 message_text = str(message.get("content", ""))
-                st.write(message_text)
+                display_text, incomplete = _split_token_notice(message_text)
+                st.write(display_text)
+                if incomplete:
+                    st.warning(TOKEN_TRUNCATION_NOTICE)
                 if role == "assistant":
                     digest = hashlib.sha256(message_text.encode("utf-8")).hexdigest()[:16]
                     should_autoplay = (index == last_index and bool(pending_voice_id) and digest == pending_voice_id)
                     _render_voice_player(
-                        message_text,
+                        display_text,
                         autoplay=should_autoplay,
                         rate=st.session_state.get("ai_voice_rate", 1.0),
                     )
@@ -737,7 +815,7 @@ def _render_chat_tab(model: str) -> None:
                 context_note = "لم يُرفق أي سياق من قاعدة بيانات ERP. أجب عن السؤال العام فقط، ولا تزعم معرفة أرقام المنشأة."
             payload = context_note + "\n\nسؤال المستخدم:\n" + active_query
             history = st.session_state.ai_messages[-9:-1]
-            chat_limit = int(st.session_state.get("ai_chat_max_tokens", 2560))
+            chat_limit = int(st.session_state.get("ai_chat_max_tokens", DEFAULT_CHAT_TOKENS))
             answer = query_local_ai(SYSTEM_ROLE, payload, model, chat_limit, history=history, reasoning_effort="medium")
     except Exception as exc:
         answer = "حدث خطأ أثناء تجهيز الإجابة: " + str(exc)
@@ -770,7 +848,7 @@ def _render_financial_analysis_tab(model: str) -> None:
             {"المؤشرات": data, "النسب": ratios}, "إعداد تحليل مالي تنفيذي",
             "اكتب خلاصة تنفيذية، ثم حلل النسب والمعاني الممكنة، وحدد المخاطر ونقاط القوة والتوصيات. لا تضف معيار مقارنة أو سبباً غير موجود. اذكر أن النسب تعتمد على تصنيف الحسابات في النظام.",
         )
-        answer = query_local_ai(SYSTEM_ROLE, prompt, model, 2200, reasoning_effort="high")
+        answer = query_local_ai(SYSTEM_ROLE, prompt, model, 4096, reasoning_effort="high")
     render_ai_response(answer)
 
 
@@ -805,7 +883,7 @@ def _render_inventory_tab(model: str) -> None:
             "حدد أولويات المتابعة ومخاطر النفاد استناداً إلى الكميات وحدود إعادة الطلب. لا تخترع مبيعات أو معدل دوران أو قيمة مخزون. اقترح بيانات إضافية لتحسين التخطيط.",
         )
         with st.spinner("جاري تحليل النتائج..."):
-            answer = query_local_ai(SYSTEM_ROLE, prompt, model, 1800, reasoning_effort="medium")
+            answer = query_local_ai(SYSTEM_ROLE, prompt, model, 3072, reasoning_effort="medium")
         render_ai_response(answer)
     else:
         st.info("لا توجد بيانات منتجات كافية للتحليل.")
@@ -844,7 +922,7 @@ def _render_hr_tab(model: str) -> None:
         employee_info["الراتب الأساسي"] = (salary or {}).get("basic_salary", "غير متاح")
     prompt = _make_prompt(employee_info, question, "أجب اعتماداً على الحقول المتاحة فقط. لا تفترض استحقاقات أو خصومات أو تقييمات أو معلومات شخصية غير مرفقة.")
     with st.spinner("جاري صياغة الإجابة..."):
-        answer = query_local_ai(SYSTEM_ROLE, prompt, model, 1000, reasoning_effort="low")
+        answer = query_local_ai(SYSTEM_ROLE, prompt, model, 2048, reasoning_effort="low")
     render_ai_response(answer)
 
 
@@ -896,7 +974,7 @@ def _render_fraud_tab(model: str) -> None:
         "أعد جدولاً موجزاً يتضمن رقم القيد إذا كان الحقل موجوداً، والمؤشر المرصود، وسبب الحاجة للمراجعة، وأولوية الفحص. لا تصف أي عملية بأنها احتيال مؤكد، ولا تستنتج نية أو فاعلاً.",
     )
     with st.spinner("يجري تحليل القيود بحثاً عن مؤشرات تستحق المراجعة..."):
-        answer = query_local_ai(SYSTEM_ROLE, prompt, model, 2200, reasoning_effort="high")
+        answer = query_local_ai(SYSTEM_ROLE, prompt, model, 4096, reasoning_effort="high")
     render_ai_response(answer)
 
 
@@ -919,7 +997,7 @@ def _render_forecast_tab(model: str) -> None:
         "صف الاتجاهات الظاهرة والفروقات بين الفترات، واذكر محدودية البيانات. قدم توصيات عملية. لا تخترع قيمة مستقبلية أو تدفقاً نقدياً أو سبباً للتغير.",
     )
     with st.spinner("جاري التحليل..."):
-        answer = query_local_ai(SYSTEM_ROLE, prompt, model, 1800, reasoning_effort="high")
+        answer = query_local_ai(SYSTEM_ROLE, prompt, model, 3072, reasoning_effort="high")
     render_ai_response(answer)
 
 
@@ -939,7 +1017,7 @@ def _render_comprehensive_tab(model: str) -> None:
         "اكتب تقريراً منظماً: (1) ملخص تنفيذي، (2) المؤشرات الرئيسية، (3) نقاط القوة، (4) المخاطر والفجوات، (5) خمس توصيات مرتبة بالأولوية، (6) البيانات الإضافية التي يحتاجها تحليل أدق. ميز الحقائق من التوصيات ولا تكرر الأرقام بلا داعٍ.",
     )
     with st.spinner("جاري إنشاء التقرير..."):
-        answer = query_local_ai(SYSTEM_ROLE, prompt, model, 3000, reasoning_effort="high")
+        answer = query_local_ai(SYSTEM_ROLE, prompt, model, 4096, reasoning_effort="high")
     render_ai_response(answer)
 
 
@@ -966,12 +1044,12 @@ def _render_cost_center_tab() -> None:
     if run_analysis:
         if _require_cloud_key() and _require_data_consent():
             with st.spinner("جاري تحليل المركز..."):
-                result = analyze_cost_center_performance(selected_id)
+                result = analyze_cost_center_performance(selected_id, currency_code=_selected_currency_code())
             render_ai_response(result)
     if run_compare:
         if _require_cloud_key() and _require_data_consent():
             with st.spinner("جاري مقارنة المراكز..."):
-                result = compare_cost_centers()
+                result = compare_cost_centers(currency_code=_selected_currency_code())
             render_ai_response(result)
     st.markdown("---")
     st.write("تحليل الموازنة والتوقعات")
@@ -984,11 +1062,11 @@ def _render_cost_center_tab() -> None:
         forecast_click = st.button("توقع المصروفات", width="stretch", key="ai_cc_forecast")
     if budget_click and _require_cloud_key() and _require_data_consent():
         with st.spinner("جاري تحليل الموازنة..."):
-            result = get_cost_center_budget_analysis(selected_id, int(fiscal_year))
+            result = get_cost_center_budget_analysis(selected_id, int(fiscal_year), currency_code=_selected_currency_code())
         render_ai_response(result)
     if forecast_click and _require_cloud_key() and _require_data_consent():
         with st.spinner("جاري إعداد التوقع الاسترشادي..."):
-            result = predict_cost_center_expenses(selected_id, int(months))
+            result = predict_cost_center_expenses(selected_id, int(months), currency_code=_selected_currency_code())
         render_ai_response(result)
 
 
