@@ -30,62 +30,115 @@ st.set_page_config(
 # 2. بروتوكول الجاهزية Readiness Protocol
 # ============================================================
 
+# يجب أن تتطابق هذه القيم مع app_desktop.py وstreamlit_runner.py.
+READINESS_PROTOCOL_ID = "1111"
 READINESS_PROTOCOL_VERSION = 1
+READINESS_FILENAME = "readiness.json"
 
 
-def get_startup_id():
-    raw_id = os.environ.get(
-        "HOKAMA_STARTUP_ID",
-        "",
-    ).strip()
-
-    if not raw_id:
-        return None
-
+def _readiness_log(message):
+    """Write readiness diagnostics to Streamlit stderr and startup.log."""
+    text = "[APP.PY READINESS] {}".format(message)
+    print(text, file=sys.stderr, flush=True)
     try:
-        return str(uuid.UUID(raw_id))
-    except (ValueError, AttributeError):
-        print(
-            "Invalid HOKAMA_STARTUP_ID.",
-            file=sys.stderr,
-        )
-        return None
+        root = Path(os.getenv("LOCALAPPDATA") or Path.home())
+        logs_dir = root / "HokamaERP" / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        with (logs_dir / "startup.log").open("a", encoding="utf-8") as log:
+            log.write(
+                datetime.now().astimezone().isoformat()
+                + " | " + text + "\n"
+            )
+    except Exception:
+        pass
 
 
-def get_readiness_dir():
-    base = Path(
-        os.getenv("LOCALAPPDATA") or Path.home()
-    )
-    path = base / "HokamaERP" / "run"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+def get_received_protocol_id():
+    """Return exactly what the runner placed in the child environment."""
+    return str(os.environ.get("HOKAMA_PROTOCOL_ID", "MISSING")).strip() or "MISSING"
+
+
+def get_received_protocol_version():
+    raw_version = str(
+        os.environ.get("HOKAMA_READINESS_PROTOCOL", "MISSING")
+    ).strip()
+    try:
+        return int(raw_version)
+    except (TypeError, ValueError):
+        return raw_version or "MISSING"
+
+
+def get_readiness_file():
+    base = Path(os.getenv("LOCALAPPDATA") or Path.home())
+    run_dir = base / "HokamaERP" / "run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir / READINESS_FILENAME
 
 
 def write_readiness_signal(status, error_msg=""):
-    startup_id = get_startup_id()
-    if not startup_id:
-        return False
+    """Atomically write the fixed readiness signal; preserve received values.
+
+    The actual received protocol ID is written even when incorrect. This is
+    intentional: app_desktop.py can then log expected vs. received values
+    instead of waiting until timeout with no evidence.
+    """
     if status not in ("ready", "error"):
+        _readiness_log("Rejected unsupported status={!r}".format(status))
         return False
+
+    received_id = get_received_protocol_id()
+    received_version = get_received_protocol_version()
+    target_file = get_readiness_file()
+
+    # Streamlit reruns app.py. Do not rewrite/log an identical ready signal
+    # on every rerun once this process has already announced readiness.
+    if status == "ready" and target_file.exists():
+        try:
+            with target_file.open("r", encoding="utf-8") as file:
+                previous = json.load(file)
+            if (
+                previous.get("protocol_id") == received_id
+                and previous.get("protocol_version") == received_version
+                and previous.get("status") == "ready"
+                and previous.get("pid") == os.getpid()
+            ):
+                return True
+        except Exception:
+            # A malformed/stale file is replaced atomically below.
+            pass
+
+    temp_file = target_file.with_name(
+        "{}.{}.{}.tmp".format(
+            target_file.stem,
+            os.getpid(),
+            uuid.uuid4().hex,
+        )
+    )
+
+    data = {
+        "protocol_id": received_id,
+        "protocol_version": received_version,
+        "status": status,
+        "source": "app.py",
+        "timestamp": datetime.now().astimezone().isoformat(),
+        "pid": os.getpid(),
+        "error": str(error_msg or ""),
+    }
 
     try:
-        ready_dir = get_readiness_dir()
-        target_file = ready_dir / f"{startup_id}.json"
-        temp_file = ready_dir / (
-            f"{startup_id}."
-            f"{os.getpid()}."
-            f"{threading.get_ident()}."
-            f"{uuid.uuid4().hex}.tmp"
+        _readiness_log(
+            "Writing signal | expected_id={!r} | received_id={!r} | "
+            "expected_version={!r} | received_version={!r} | "
+            "status={!r} | file={!r} | pid={}".format(
+                READINESS_PROTOCOL_ID,
+                received_id,
+                READINESS_PROTOCOL_VERSION,
+                received_version,
+                status,
+                str(target_file),
+                os.getpid(),
+            )
         )
-
-        data = {
-            "protocol_version": READINESS_PROTOCOL_VERSION,
-            "startup_id": startup_id,
-            "status": status,
-            "timestamp": datetime.now().astimezone().isoformat(),
-            "pid": os.getpid(),
-            "error": str(error_msg or ""),
-        }
 
         with temp_file.open("w", encoding="utf-8") as file:
             json.dump(data, file, ensure_ascii=False, indent=2)
@@ -93,20 +146,61 @@ def write_readiness_signal(status, error_msg=""):
             os.fsync(file.fileno())
 
         os.replace(temp_file, target_file)
-        print(f"Readiness signal written: {status}", file=sys.stderr)
+        _readiness_log(
+            "Signal written successfully | protocol_id={!r} | status={!r}".format(
+                received_id, status
+            )
+        )
         return True
 
     except Exception:
-        print(
-            "Failed to write readiness signal:\n" + traceback.format_exc(),
-            file=sys.stderr,
+        error_text = traceback.format_exc()
+        _readiness_log(
+            "FAILED to write readiness file {!r}:\n{}".format(
+                str(target_file), error_text
+            )
         )
         try:
-            if "temp_file" in locals() and temp_file.exists():
+            if temp_file.exists():
                 temp_file.unlink()
         except Exception:
             pass
         return False
+
+
+# Validate the environment at the beginning of the app run. If it is wrong,
+# write an error record containing the received value so the launcher can
+# diagnose the mismatch immediately (rather than only timing out).
+_received_protocol_id = get_received_protocol_id()
+_received_protocol_version = get_received_protocol_version()
+
+if (
+    _received_protocol_id != READINESS_PROTOCOL_ID
+    or _received_protocol_version != READINESS_PROTOCOL_VERSION
+):
+    _protocol_error = (
+        "عدم تطابق بروتوكول التشغيل. "
+        "المتوقع ID={!r}, VERSION={!r}; "
+        "المستلم ID={!r}, VERSION={!r}."
+    ).format(
+        READINESS_PROTOCOL_ID,
+        READINESS_PROTOCOL_VERSION,
+        _received_protocol_id,
+        _received_protocol_version,
+    )
+    _readiness_log(_protocol_error)
+    write_readiness_signal("error", _protocol_error)
+    st.error(_protocol_error)
+    st.stop()
+else:
+    # Log this confirmation only before the first readiness signal. Streamlit
+    # reruns the script after user interactions, so avoid flooding startup.log.
+    if not get_readiness_file().exists():
+        _readiness_log(
+            "Protocol received correctly | protocol_id={!r} | version={!r}".format(
+                _received_protocol_id, _received_protocol_version
+            )
+        )
 
 
 # ============================================================
@@ -124,10 +218,8 @@ def show_startup_error(title, error):
         """,
         unsafe_allow_html=True,
     )
-
     st.error(title)
     st.code(str(error), language="text")
-
     with st.expander("تفاصيل الخطأ الكاملة"):
         st.code(str(error), language="python")
 
@@ -416,7 +508,6 @@ def nav_button(label, page, key, icon, module=None):
         return
 
     is_active = st.session_state.current_page == page
-
     if st.button(
         label,
         key=key,
@@ -463,7 +554,6 @@ else:
     # ========================================================
 
     with st.sidebar:
-
         st.markdown(
             """
 <div class="brand-panel">
@@ -599,7 +689,6 @@ account_circle
                 """,
                 unsafe_allow_html=True,
             )
-
             seed_clicked = st.button(
                 "حقن بيانات تجريبية",
                 key="seed_data_btn",
@@ -625,7 +714,6 @@ account_circle
 
         st.divider()
         st.markdown('<div class="logout-area">', unsafe_allow_html=True)
-
         logout_clicked = st.button(
             "تسجيل الخروج",
             key="logout",
@@ -646,7 +734,6 @@ account_circle
             except Exception:
                 st.error("حدث خطأ أثناء تسجيل الخروج.")
                 st.code(traceback.format_exc(), language="python")
-
 
     # ========================================================
     # 15. تنفيذ الحقن التجريبي
@@ -681,18 +768,22 @@ account_circle
                     with cols[i % 3]:
                         st.metric(key, value)
             else:
-                st.error(f"فشل الحقن: {result.get('error', 'خطأ غير معروف')}")
+                st.error("فشل الحقن: {}".format(result.get("error", "خطأ غير معروف")))
 
         except Exception:
             st.error("حدث خطأ أثناء تنفيذ الحقن التجريبي.")
             st.code(traceback.format_exc(), language="python")
 
-        if st.button("تم — العودة للنظام", type="primary", key="close_seed", use_container_width=True):
+        if st.button(
+            "تم — العودة للنظام",
+            type="primary",
+            key="close_seed",
+            use_container_width=True,
+        ):
             st.session_state.run_seed = False
             st.rerun()
 
         st.stop()
-
 
     # ========================================================
     # 16. توجيه الصفحات
@@ -705,20 +796,19 @@ account_circle
             try:
                 show_func()
             except Exception:
-                st.error(f"حدث خطأ أثناء فتح وحدة: {module}")
+                st.error("حدث خطأ أثناء فتح وحدة: {}".format(module))
                 st.code(traceback.format_exc(), language="python")
         else:
             st.markdown(
-                f"""
+                """
 <div class="permission-denied">
 <div class="permission-icon"><span class="material-icon">lock</span></div>
 <h2>غير مصرح</h2>
-<p>ليس لديك صلاحية للوصول إلى وحدة "{safe_html(module)}".</p>
+<p>ليس لديك صلاحية للوصول إلى وحدة "{}".</p>
 </div>
-                """,
+                """.format(safe_html(module)),
                 unsafe_allow_html=True,
             )
-
 
     # ========================================================
     # 17. الصفحات
