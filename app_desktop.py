@@ -1,7 +1,6 @@
-
 # -*- coding: utf-8 -*-
 # Hokama ERP — Windows Desktop Launcher
-# Streamlit + Microsoft Edge App Mode
+# Streamlit + Google Chrome App Mode
 # Readiness Protocol v1
 
 # ============================================================
@@ -62,8 +61,8 @@ HEALTH_CHECK_INTERVAL = 0.5
 READY_CHECK_INTERVAL = 0.5
 
 MONITOR_INTERVAL = 2
-EDGE_CLOSE_GRACE = 15
-EDGE_DETECTION_TIMEOUT = 60
+CHROME_CLOSE_GRACE = 15
+CHROME_DETECTION_TIMEOUT = 60
 
 
 # ============================================================
@@ -80,7 +79,7 @@ def get_base_path():
 
 
 def get_data_dir():
-    """مجلد بيانات المشغّل وملف تعريف Edge."""
+    """مجلد بيانات المشغّل وملف تعريف Chrome."""
 
     root = Path(os.getenv("LOCALAPPDATA") or Path.home())
 
@@ -91,23 +90,18 @@ def get_data_dir():
 
 
 def get_logs_dir():
-
     path = get_data_dir() / "logs"
     path.mkdir(parents=True, exist_ok=True)
-
     return path
 
 
 def get_run_dir():
-
     path = get_data_dir() / "run"
     path.mkdir(parents=True, exist_ok=True)
-
     return path
 
 
 def get_readiness_file(startup_id):
-
     return get_run_dir() / f"{startup_id}.json"
 
 
@@ -116,12 +110,10 @@ def get_readiness_file(startup_id):
 # ============================================================
 
 def log_message(message):
-
     try:
         log_file = get_logs_dir() / "startup.log"
 
         with log_file.open("a", encoding="utf-8") as log:
-
             log.write(
                 time.strftime("%Y-%m-%d %H:%M:%S")
                 + " | "
@@ -134,13 +126,10 @@ def log_message(message):
 
 
 def read_streamlit_log_tail(max_chars=8000):
-
     path = get_logs_dir() / "streamlit.log"
 
     try:
-
         if path.exists():
-
             return path.read_text(
                 encoding="utf-8",
                 errors="replace",
@@ -153,9 +142,7 @@ def read_streamlit_log_tail(max_chars=8000):
 
 
 def show_error(title, message):
-
     if sys.platform == "win32":
-
         try:
             import ctypes
 
@@ -165,16 +152,12 @@ def show_error(title, message):
                 str(title),
                 0x10,
             )
-
             return
 
         except Exception:
             pass
 
-    print(
-        f"{title}: {message}",
-        file=sys.stderr,
-    )
+    print(f"{title}: {message}", file=sys.stderr)
 
 
 # ============================================================
@@ -185,17 +168,12 @@ def cleanup_readiness_file(startup_id):
     """حذف ملف المحاولة الحالية فقط."""
 
     try:
-
         path = get_readiness_file(startup_id)
-
         if path.exists():
             path.unlink()
 
     except Exception as exc:
-
-        log_message(
-            f"Readiness cleanup failed: {exc}"
-        )
+        log_message(f"Readiness cleanup failed: {exc}")
 
 
 def read_readiness_file(startup_id):
@@ -214,20 +192,16 @@ def read_readiness_file(startup_id):
         return None, None
 
     try:
-
         with path.open("r", encoding="utf-8") as file:
             data = json.load(file)
 
         if data.get("startup_id") != startup_id:
-
             log_message(
                 "Ignored readiness file: startup_id mismatch."
             )
-
             return None, None
 
         if data.get("protocol_version") != PROTOCOL_VERSION:
-
             return (
                 "error",
                 "إصدار بروتوكول الجاهزية غير متوافق بين المشغّل والتطبيق.",
@@ -236,30 +210,22 @@ def read_readiness_file(startup_id):
         status = data.get("status")
 
         if status == "ready":
-
             return "ready", None
 
         if status == "error":
-
             return (
                 "error",
-                data.get("error")
-                or "خطأ غير معروف أثناء تهيئة التطبيق.",
+                data.get("error") or "خطأ غير معروف أثناء تهيئة التطبيق.",
             )
 
         return None, None
 
     except json.JSONDecodeError:
-
         # قد يكون الملف في طور الاستبدال.
         return None, None
 
     except Exception as exc:
-
-        log_message(
-            f"Readiness read error: {exc}"
-        )
-
+        log_message(f"Readiness read error: {exc}")
         return None, None
 
 
@@ -274,13 +240,8 @@ def find_free_port():
     ستتعامل إعادة المحاولة مع ذلك.
     """
 
-    with socket.socket(
-        socket.AF_INET,
-        socket.SOCK_STREAM,
-    ) as sock:
-
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind((HOST, 0))
-
         return sock.getsockname()[1]
 
 
@@ -289,19 +250,12 @@ def find_free_port():
 # ============================================================
 
 def http_get(url, timeout=3):
-
     request = urllib.request.Request(
         url,
-        headers={
-            "User-Agent": "Mozilla/5.0 HokamaERP"
-        },
+        headers={"User-Agent": "Mozilla/5.0 HokamaERP"},
     )
 
-    with urllib.request.urlopen(
-        request,
-        timeout=timeout,
-    ) as response:
-
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.status, response.read()
 
 
@@ -309,7 +263,6 @@ def is_streamlit_healthy(host, port):
     """التحقق من استجابة Streamlit الفعلية."""
 
     try:
-
         status, health_body = http_get(
             f"http://{host}:{port}/_stcore/health",
             timeout=2,
@@ -345,32 +298,22 @@ def is_streamlit_healthy(host, port):
         )
 
     except Exception:
-
         return False
 
 
-def wait_for_http_health(
-    server,
-    host,
-    port,
-    timeout,
-):
-    """انتظار صحة خادم Streamlit قبل فتح Edge."""
+def wait_for_http_health(server, host, port, timeout):
+    """انتظار صحة خادم Streamlit قبل فتح Chrome."""
 
     deadline = time.monotonic() + timeout
 
     while time.monotonic() < deadline:
-
         if not server.is_alive():
-
             log_message(
                 "Streamlit process exited before HTTP readiness."
             )
-
             return False
 
         if is_streamlit_healthy(host, port):
-
             return True
 
         time.sleep(HEALTH_CHECK_INTERVAL)
@@ -390,51 +333,38 @@ def wait_for_readiness(
     timeout=APP_READINESS_TIMEOUT,
 ):
     """
-    هذه المرحلة تبدأ بعد فتح Edge؛ لأن app.py يحتاج
+    هذه المرحلة تبدأ بعد فتح Chrome؛ لأن app.py يحتاج
     إلى جلسة Streamlit حتى يبدأ التنفيذ.
     """
 
     deadline = time.monotonic() + timeout
-
     last_health_check = 0
 
     while time.monotonic() < deadline:
-
         if not server.is_alive():
-
             return (
                 False,
                 "توقفت عملية Streamlit قبل اكتمال تهيئة التطبيق.",
             )
 
-        status, error_message = read_readiness_file(
-            startup_id
-        )
+        status, error_message = read_readiness_file(startup_id)
 
         if status == "ready":
-
-            log_message(
-                "Application readiness confirmed."
-            )
-
+            log_message("Application readiness confirmed.")
             return True, None
 
         if status == "error":
-
             log_message(
                 f"Application startup error: {error_message}"
             )
-
             return False, error_message
 
         now = time.monotonic()
 
         if now - last_health_check >= 3:
-
             last_health_check = now
 
             if not is_streamlit_healthy(host, port):
-
                 log_message(
                     "Warning: Streamlit HTTP health check failed "
                     "while waiting for app readiness."
@@ -457,7 +387,6 @@ def run_streamlit(port, app_path, startup_id):
     """تشغيل Streamlit داخل عملية مستقلة."""
 
     try:
-
         # ----------------------------------------------------
         # تجهيز مسار التطبيق
         # ----------------------------------------------------
@@ -465,26 +394,16 @@ def run_streamlit(port, app_path, startup_id):
         app_path = Path(app_path).resolve()
 
         if not app_path.is_file():
-
             raise FileNotFoundError(
                 f"لم يتم العثور على app.py: {app_path}"
             )
 
         app_root = app_path.parent
-
-        # إضافة مجلد التطبيق إلى مسارات Python.
-        # هذا يساعد على العثور على database و ui و services.
-
         app_root_text = str(app_root)
 
         if app_root_text not in sys.path:
+            sys.path.insert(0, app_root_text)
 
-            sys.path.insert(
-                0,
-                app_root_text,
-            )
-
-        # جعل مجلد التطبيق مجلد العمل الحالي.
         os.chdir(app_root)
 
         # ----------------------------------------------------
@@ -492,30 +411,23 @@ def run_streamlit(port, app_path, startup_id):
         # ----------------------------------------------------
 
         if sys.platform == "win32":
-
             asyncio.set_event_loop_policy(
                 asyncio.WindowsSelectorEventLoopPolicy()
             )
 
-        asyncio.set_event_loop(
-            asyncio.new_event_loop()
-        )
+        asyncio.set_event_loop(asyncio.new_event_loop())
 
         # ----------------------------------------------------
         # إعداد السجل
         # ----------------------------------------------------
 
         logs_dir = get_logs_dir()
-
-        streamlit_log_path = (
-            logs_dir / "streamlit.log"
-        )
+        streamlit_log_path = logs_dir / "streamlit.log"
 
         with streamlit_log_path.open(
             "a",
             encoding="utf-8",
         ) as child_log:
-
             sys.stdout = child_log
             sys.stderr = child_log
 
@@ -530,7 +442,6 @@ def run_streamlit(port, app_path, startup_id):
                 + "=" * 65
                 + "\n"
             )
-
             child_log.flush()
 
             # ------------------------------------------------
@@ -538,7 +449,6 @@ def run_streamlit(port, app_path, startup_id):
             # ------------------------------------------------
 
             os.environ["HOKAMA_STARTUP_ID"] = startup_id
-
             os.environ["HOKAMA_READINESS_PROTOCOL"] = str(
                 PROTOCOL_VERSION
             )
@@ -553,106 +463,106 @@ def run_streamlit(port, app_path, startup_id):
                 "streamlit",
                 "run",
                 str(app_path),
-
                 f"--server.port={port}",
                 f"--server.address={HOST}",
-
                 "--server.headless=true",
                 "--server.fileWatcherType=none",
                 "--server.runOnSave=false",
-
                 "--browser.gatherUsageStats=false",
                 "--global.developmentMode=false",
+
+                # اجعل المظهر الداكن هو الوضع الافتراضي.
+                # يستطيع المستخدم تغييره من قائمة Streamlit.
+                "--theme.base=dark",
+
+                # إظهار خيارات المشاهد، ومنها مبدّل المظهر،
+                # مع إخفاء أدوات المطوّر مثل Rerun وClear cache.
+                "--client.toolbarMode=viewer",
             ]
 
             # نترك CORS وXSRF على الإعدادات الافتراضية.
-
             stcli.main()
 
     except SystemExit as exc:
-
-        log_message(
-            f"Streamlit exited with code: {exc.code}"
-        )
+        log_message(f"Streamlit exited with code: {exc.code}")
 
     except Exception:
-
         error_text = traceback.format_exc()
-
         log_message(
-            "Streamlit child fatal error:\n"
-            + error_text
+            "Streamlit child fatal error:\n" + error_text
         )
 
 
 # ============================================================
-# اكتشاف Edge
+# اكتشاف Google Chrome
 # ============================================================
 
-def find_edge():
+def find_chrome():
+    """البحث عن Google Chrome في مسارات التثبيت الشائعة."""
 
     candidates = []
 
     for env_name in (
-        "PROGRAMFILES(X86)",
         "PROGRAMFILES",
+        "PROGRAMFILES(X86)",
         "ProgramW6432",
     ):
-
         root = os.getenv(env_name)
 
         if root:
-
             candidates.append(
                 Path(root)
-                / "Microsoft"
-                / "Edge"
+                / "Google"
+                / "Chrome"
                 / "Application"
-                / "msedge.exe"
+                / "chrome.exe"
             )
 
     local_appdata = os.getenv("LOCALAPPDATA")
 
     if local_appdata:
-
         candidates.append(
             Path(local_appdata)
-            / "Microsoft"
-            / "Edge"
+            / "Google"
+            / "Chrome"
             / "Application"
-            / "msedge.exe"
+            / "chrome.exe"
         )
 
-    which_result = shutil.which("msedge")
+    for executable_name in ("chrome", "chrome.exe"):
+        which_result = shutil.which(executable_name)
 
-    if which_result:
+        if which_result:
+            candidates.append(Path(which_result))
 
-        candidates.append(
-            Path(which_result)
-        )
+    # إزالة التكرارات مع الحفاظ على ترتيب البحث.
+    seen = set()
 
     for candidate in candidates:
-
         try:
+            candidate_key = str(candidate).lower()
+
+            if candidate_key in seen:
+                continue
+
+            seen.add(candidate_key)
 
             if candidate.is_file():
-
                 return str(candidate.resolve())
 
         except OSError:
-
             pass
 
     return None
 
 
 # ============================================================
-# فحص عمليات Edge الخاصة بملف التعريف
+# فحص عمليات Chrome الخاصة بملف التعريف
 # ============================================================
 
-def edge_process_using_profile(edge_profile):
+def chrome_process_using_profile(chrome_profile):
     """
-    True  = توجد عملية Edge تستخدم الملف الشخصي.
+    True  = توجد عملية Chrome تستخدم الملف الشخصي.
     False = لا توجد عملية.
     None  = تعذر الفحص.
     """
@@ -661,28 +571,24 @@ def edge_process_using_profile(edge_profile):
         return None
 
     try:
-
-        profile_text = str(edge_profile)
+        profile_text = str(chrome_profile)
 
         encoded_profile = base64.b64encode(
             profile_text.encode("utf-8")
         ).decode("ascii")
 
         powershell_script = (
-            "$profile = [Text.Encoding]::UTF8.GetString("
+            "$targetProfile = [Text.Encoding]::UTF8.GetString("
             "[Convert]::FromBase64String('"
             + encoded_profile
             + "')); "
-
             "$processes = Get-CimInstance Win32_Process "
-            "-Filter \"Name = 'msedge.exe'\" "
+            "-Filter \"Name = 'chrome.exe'\" "
             "-ErrorAction SilentlyContinue; "
-
             "$match = $processes | Where-Object { "
             "$_.CommandLine -and "
-            "$_.CommandLine.Contains($profile) "
+            "$_.CommandLine.Contains($targetProfile) "
             "} | Select-Object -First 1; "
-
             "if ($match) { $match.ProcessId }"
         )
 
@@ -696,12 +602,10 @@ def edge_process_using_profile(edge_profile):
                 "-Command",
                 powershell_script,
             ],
-
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
             timeout=8,
-
             creationflags=getattr(
                 subprocess,
                 "CREATE_NO_WINDOW",
@@ -712,68 +616,42 @@ def edge_process_using_profile(edge_profile):
         if result.returncode != 0:
             return None
 
-        return bool(
-            result.stdout.strip()
-        )
+        return bool(result.stdout.strip())
 
     except Exception as exc:
-
-        log_message(
-            f"Edge process check failed: {exc}"
-        )
-
+        log_message(f"Chrome process check failed: {exc}")
         return None
 
 
 # ============================================================
-# تشغيل Edge
+# تشغيل Chrome
 # ============================================================
 
-def launch_edge(
-    edge_exe,
-    edge_profile,
-    url,
-):
-    """فتح نافذة Edge App Mode."""
+def launch_chrome(chrome_exe, chrome_profile, url):
+    """فتح نافذة Google Chrome App Mode."""
 
     browser_args = [
-        edge_exe,
-
-        f"--user-data-dir={edge_profile}",
+        chrome_exe,
+        f"--user-data-dir={chrome_profile}",
         f"--app={url}",
-
         "--start-maximized",
         "--no-first-run",
         "--no-default-browser-check",
-
         "--disable-background-mode",
         "--disable-features=Translate",
         "--force-color-profile=srgb",
     ]
 
-    edge_log_path = (
-        get_logs_dir() / "edge.log"
-    )
+    chrome_log_path = get_logs_dir() / "chrome.log"
 
-    log_message(
-        "Launching Microsoft Edge App Mode."
-    )
+    log_message("Launching Google Chrome App Mode.")
 
-    with edge_log_path.open(
-        "a",
-        encoding="utf-8",
-    ) as edge_log:
-
+    with chrome_log_path.open("a", encoding="utf-8") as chrome_log:
         process = subprocess.Popen(
             browser_args,
-
-            cwd=str(
-                Path(edge_exe).parent
-            ),
-
-            stdout=edge_log,
+            cwd=str(Path(chrome_exe).parent),
+            stdout=chrome_log,
             stderr=subprocess.STDOUT,
-
             creationflags=getattr(
                 subprocess,
                 "CREATE_NO_WINDOW",
@@ -782,7 +660,7 @@ def launch_edge(
         )
 
     log_message(
-        f"Edge launcher process started: {process.pid}"
+        f"Chrome launcher process started: {process.pid}"
     )
 
     return process
@@ -793,31 +671,22 @@ def launch_edge(
 # ============================================================
 
 def stop_server(server):
-
     if server is None:
         return
 
     try:
-
         if server.is_alive():
-
-            log_message(
-                "Stopping Streamlit server."
-            )
-
+            log_message("Stopping Streamlit server.")
             server.terminate()
             server.join(timeout=5)
 
         if server.is_alive() and hasattr(server, "kill"):
-
             server.kill()
             server.join(timeout=3)
 
     except Exception:
-
         log_message(
-            "Server shutdown error:\n"
-            + traceback.format_exc()
+            "Server shutdown error:\n" + traceback.format_exc()
         )
 
 
@@ -825,88 +694,62 @@ def stop_server(server):
 # مراقبة التطبيق
 # ============================================================
 
-def monitor_application(
-    server,
-    edge_profile,
-):
-    """مراقبة الخادم وإغلاقه بعد إغلاق نافذة Edge."""
+def monitor_application(server, chrome_profile):
+    """مراقبة الخادم وإغلاقه بعد إغلاق نافذة Chrome الخاصة بالتطبيق."""
 
-    log_message(
-        "Monitoring Hokama ERP."
-    )
+    log_message("Monitoring Hokama ERP.")
 
     first_detection = False
-
     missing_since = None
 
     detection_deadline = (
-        time.monotonic() + EDGE_DETECTION_TIMEOUT
+        time.monotonic() + CHROME_DETECTION_TIMEOUT
     )
 
     while True:
-
         if not server.is_alive():
-
             log_message(
                 "ERROR: Streamlit server process stopped."
             )
-
             return False
 
-        edge_state = edge_process_using_profile(
-            edge_profile
+        chrome_state = chrome_process_using_profile(
+            chrome_profile
         )
 
-        if edge_state is True:
-
+        if chrome_state is True:
             if not first_detection:
-
-                log_message(
-                    "Edge application detected."
-                )
+                log_message("Chrome application detected.")
 
             first_detection = True
             missing_since = None
 
-        elif edge_state is False:
-
+        elif chrome_state is False:
             if first_detection:
-
                 if missing_since is None:
-
                     missing_since = time.monotonic()
 
                 elif (
                     time.monotonic() - missing_since
-                    >= EDGE_CLOSE_GRACE
+                    >= CHROME_CLOSE_GRACE
                 ):
-
-                    log_message(
-                        "Edge application closed."
-                    )
-
+                    log_message("Chrome application closed.")
                     return True
 
             elif time.monotonic() >= detection_deadline:
-
                 log_message(
-                    "WARNING: Edge not detected during initial period. "
+                    "WARNING: Chrome not detected during initial period. "
                     "Keeping server alive."
                 )
-
                 detection_deadline = (
-                    time.monotonic()
-                    + EDGE_DETECTION_TIMEOUT
+                    time.monotonic() + CHROME_DETECTION_TIMEOUT
                 )
 
         else:
-
             # الفحص المجهول لا يعتبر إغلاقًا للمتصفح.
             missing_since = None
 
-        time.sleep(
-            MONITOR_INTERVAL
-        )
+        time.sleep(MONITOR_INTERVAL)
 
 
 # ============================================================
@@ -917,24 +760,15 @@ def start_streamlit_with_retry(app_path):
     """
     كل محاولة لها startup_id مستقل.
 
-    ننتظر HTTP فقط هنا، ثم نفتح Edge
+    ننتظر HTTP فقط هنا، ثم نفتح Chrome
     وننتظر جاهزية app.py.
     """
 
-    for attempt in range(
-        1,
-        STARTUP_RETRIES + 1,
-    ):
-
+    for attempt in range(1, STARTUP_RETRIES + 1):
         port = find_free_port()
+        startup_id = str(uuid.uuid4())
 
-        startup_id = str(
-            uuid.uuid4()
-        )
-
-        cleanup_readiness_file(
-            startup_id
-        )
+        cleanup_readiness_file(startup_id)
 
         log_message(
             f"Starting Streamlit attempt "
@@ -945,13 +779,7 @@ def start_streamlit_with_retry(app_path):
 
         server = multiprocessing.Process(
             target=run_streamlit,
-
-            args=(
-                port,
-                str(app_path),
-                startup_id,
-            ),
-
+            args=(port, str(app_path), startup_id),
             name="HokamaERP-Streamlit",
             daemon=False,
         )
@@ -970,30 +798,19 @@ def start_streamlit_with_retry(app_path):
         )
 
         if http_ready:
-
             log_message(
                 f"Streamlit HTTP is healthy on port {port}."
             )
-
-            return (
-                server,
-                port,
-                startup_id,
-                None,
-            )
+            return server, port, startup_id, None
 
         log_message(
             f"Streamlit HTTP startup attempt {attempt} failed."
         )
 
         stop_server(server)
-
-        cleanup_readiness_file(
-            startup_id
-        )
+        cleanup_readiness_file(startup_id)
 
         if attempt < STARTUP_RETRIES:
-
             time.sleep(1)
 
     return (
@@ -1009,68 +826,44 @@ def start_streamlit_with_retry(app_path):
 # ============================================================
 
 def main():
-
     server = None
-
     startup_id = None
 
     try:
-
         log_message("=" * 60)
-
-        log_message(
-            "Starting Hokama ERP Desktop."
-        )
+        log_message("Starting Hokama ERP Desktop (Google Chrome).")
 
         # ----------------------------------------------------
         # مسار app.py
         # ----------------------------------------------------
 
-        app_path = (
-            get_base_path() / "app.py"
-        ).resolve()
+        app_path = (get_base_path() / "app.py").resolve()
 
         if not app_path.is_file():
-
             message = (
                 f"لم يتم العثور على ملف التطبيق:\n"
                 f"{app_path}\n\n"
                 "تأكد من تضمين app.py عند بناء EXE."
             )
 
-            log_message(
-                "ERROR: " + message
-            )
-
-            show_error(
-                APP_NAME,
-                message,
-            )
-
+            log_message("ERROR: " + message)
+            show_error(APP_NAME, message)
             return 1
 
         # ----------------------------------------------------
-        # اكتشاف Edge
+        # اكتشاف Google Chrome
         # ----------------------------------------------------
 
-        edge_exe = find_edge()
+        chrome_exe = find_chrome()
 
-        if not edge_exe:
-
+        if not chrome_exe:
             message = (
-                "لم يتم العثور على Microsoft Edge.\n"
-                "ثبّت Edge ثم أعد تشغيل النظام."
+                "لم يتم العثور على Google Chrome.\n"
+                "ثبّت Google Chrome ثم أعد تشغيل Hokama ERP."
             )
 
-            log_message(
-                "ERROR: " + message
-            )
-
-            show_error(
-                APP_NAME,
-                message,
-            )
-
+            log_message("ERROR: " + message)
+            show_error(APP_NAME, message)
             return 1
 
         # ----------------------------------------------------
@@ -1078,29 +871,18 @@ def main():
         # ----------------------------------------------------
 
         data_dir = get_data_dir()
+        chrome_profile = data_dir / "ChromeProfile"
 
-        edge_profile = (
-            data_dir / "EdgeProfile"
-        )
-
-        edge_profile.mkdir(
+        chrome_profile.mkdir(
             parents=True,
             exist_ok=True,
         )
 
         logs_dir = get_logs_dir()
 
-        log_message(
-            f"Application: {app_path}"
-        )
-
-        log_message(
-            f"Edge: {edge_exe}"
-        )
-
-        log_message(
-            f"Edge profile: {edge_profile}"
-        )
+        log_message(f"Application: {app_path}")
+        log_message(f"Chrome: {chrome_exe}")
+        log_message(f"Chrome profile: {chrome_profile}")
 
         # ----------------------------------------------------
         # 1. تشغيل Streamlit وانتظار صحة HTTP
@@ -1111,12 +893,9 @@ def main():
             port,
             startup_id,
             error_msg,
-        ) = start_streamlit_with_retry(
-            app_path
-        )
+        ) = start_streamlit_with_retry(app_path)
 
         if server is None:
-
             detail = read_streamlit_log_tail()
 
             message = (
@@ -1127,32 +906,20 @@ def main():
                 f"{logs_dir}"
             )
 
-            log_message(
-                "ERROR: " + message
-            )
-
-            show_error(
-                "تعذّر تشغيل Hokama ERP",
-                message,
-            )
-
+            log_message("ERROR: " + message)
+            show_error("تعذّر تشغيل Hokama ERP", message)
             return 1
 
-        url = (
-            f"http://{HOST}:{port}"
-        )
-
-        log_message(
-            f"Local URL: {url}"
-        )
+        url = f"http://{HOST}:{port}"
+        log_message(f"Local URL: {url}")
 
         # ----------------------------------------------------
-        # 2. فتح Edge لإنشاء جلسة Streamlit
+        # 2. فتح Chrome لإنشاء جلسة Streamlit
         # ----------------------------------------------------
 
-        launch_edge(
-            edge_exe,
-            edge_profile,
+        launch_chrome(
+            chrome_exe,
+            chrome_profile,
             url,
         )
 
@@ -1169,7 +936,6 @@ def main():
         )
 
         if not ready:
-
             detail = read_streamlit_log_tail()
 
             message = (
@@ -1181,15 +947,8 @@ def main():
                 f"{logs_dir}"
             )
 
-            log_message(
-                "ERROR: " + message
-            )
-
-            show_error(
-                "تعذّر تشغيل Hokama ERP",
-                message,
-            )
-
+            log_message("ERROR: " + message)
+            show_error("تعذّر تشغيل Hokama ERP", message)
             return 1
 
         log_message(
@@ -1202,16 +961,14 @@ def main():
 
         monitor_ok = monitor_application(
             server,
-            edge_profile,
+            chrome_profile,
         )
 
         if not monitor_ok:
-
             detail = read_streamlit_log_tail()
 
             show_error(
                 APP_NAME,
-
                 "توقف خادم التطبيق.\n\n"
                 f"آخر سجل Streamlit:\n"
                 f"{detail}\n\n"
@@ -1221,52 +978,32 @@ def main():
 
             return 1
 
-        log_message(
-            "Hokama ERP browser session closed."
-        )
-
+        log_message("Hokama ERP browser session closed.")
         return 0
 
     except KeyboardInterrupt:
-
-        log_message(
-            "Interrupted by user."
-        )
-
+        log_message("Interrupted by user.")
         return 0
 
     except Exception:
-
         error = traceback.format_exc()
-
-        log_message(
-            "Fatal launcher error:\n"
-            + error
-        )
+        log_message("Fatal launcher error:\n" + error)
 
         show_error(
             "Hokama ERP — خطأ",
-
             "حدث خطأ أثناء تشغيل التطبيق.\n\n"
             "راجع السجل:\n"
             f"{get_logs_dir() / 'startup.log'}",
         )
-
         return 1
 
     finally:
-
         stop_server(server)
 
         if startup_id:
+            cleanup_readiness_file(startup_id)
 
-            cleanup_readiness_file(
-                startup_id
-            )
-
-        log_message(
-            "Hokama ERP launcher stopped."
-        )
+        log_message("Hokama ERP launcher stopped.")
 
 
 # ============================================================
