@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
-# Hokama ERP — Windows Desktop Launcher
-# Streamlit + Google Chrome App Mode
-# Readiness Protocol v1
+"""Hokama ERP — Windows Desktop Launcher
+
+Streamlit + Google Chrome App Mode
+Readiness Protocol v1
+"""
 
 # ============================================================
-# معالجة multiprocessing في PyInstaller
-# يجب أن تكون مبكرة قبل بقية الاستيرادات
+# multiprocessing bootstrap for PyInstaller
+# Keep this before the remaining application imports.
 # ============================================================
 
 import multiprocessing
@@ -13,12 +15,10 @@ import multiprocessing
 if __name__ == "__main__":
     multiprocessing.freeze_support()
 
-
 # ============================================================
 # Imports
 # ============================================================
 
-import asyncio
 import base64
 import json
 import os
@@ -30,9 +30,9 @@ import time
 import traceback
 import urllib.request
 import uuid
-
 from pathlib import Path
 
+from streamlit_runner import run_streamlit
 
 # ============================================================
 # Windows
@@ -42,9 +42,8 @@ if sys.platform == "win32":
     os.environ["PYTHONIOENCODING"] = "utf-8"
     os.environ["PYTHONUTF8"] = "1"
 
-
 # ============================================================
-# إعدادات التطبيق
+# Application settings
 # ============================================================
 
 APP_NAME = "Hokama ERP"
@@ -64,14 +63,13 @@ MONITOR_INTERVAL = 2
 CHROME_CLOSE_GRACE = 15
 CHROME_DETECTION_TIMEOUT = 60
 
+# ============================================================
+# Paths
+# ============================================================
 
-# ============================================================
-# المسارات
-# ============================================================
 
 def get_base_path():
-    """مجلد الملفات المضمّنة بواسطة PyInstaller."""
-
+    """Return the directory containing PyInstaller bundled files."""
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         return Path(sys._MEIPASS).resolve()
 
@@ -79,13 +77,10 @@ def get_base_path():
 
 
 def get_data_dir():
-    """مجلد بيانات المشغّل وملف تعريف Chrome."""
-
+    """Return the launcher data directory and Chrome profile root."""
     root = Path(os.getenv("LOCALAPPDATA") or Path.home())
-
     path = root / "HokamaERP"
     path.mkdir(parents=True, exist_ok=True)
-
     return path
 
 
@@ -106,13 +101,13 @@ def get_readiness_file(startup_id):
 
 
 # ============================================================
-# السجلات
+# Logging
 # ============================================================
+
 
 def log_message(message):
     try:
         log_file = get_logs_dir() / "startup.log"
-
         with log_file.open("a", encoding="utf-8") as log:
             log.write(
                 time.strftime("%Y-%m-%d %H:%M:%S")
@@ -120,7 +115,6 @@ def log_message(message):
                 + str(message)
                 + "\n"
             )
-
     except Exception:
         pass
 
@@ -134,7 +128,6 @@ def read_streamlit_log_tail(max_chars=8000):
                 encoding="utf-8",
                 errors="replace",
             )[-max_chars:]
-
     except Exception:
         pass
 
@@ -153,7 +146,6 @@ def show_error(title, message):
                 0x10,
             )
             return
-
         except Exception:
             pass
 
@@ -161,31 +153,28 @@ def show_error(title, message):
 
 
 # ============================================================
-# ملفات الجاهزية
+# Readiness files
 # ============================================================
 
-def cleanup_readiness_file(startup_id):
-    """حذف ملف المحاولة الحالية فقط."""
 
+def cleanup_readiness_file(startup_id):
+    """Delete only the readiness file belonging to this startup attempt."""
     try:
         path = get_readiness_file(startup_id)
         if path.exists():
             path.unlink()
-
     except Exception as exc:
         log_message(f"Readiness cleanup failed: {exc}")
 
 
 def read_readiness_file(startup_id):
-    """
-    قراءة ملف الجاهزية والتحقق من هويته وإصدار البروتوكول.
+    """Read readiness and validate its startup ID and protocol version.
 
-    تعيد:
+    Returns:
         ("ready", None)
-        ("error", رسالة)
-        (None, None) إذا لم تصل إشارة صالحة بعد.
+        ("error", error_message)
+        (None, None) when no valid signal is available yet.
     """
-
     path = get_readiness_file(startup_id)
 
     if not path.exists():
@@ -196,9 +185,7 @@ def read_readiness_file(startup_id):
             data = json.load(file)
 
         if data.get("startup_id") != startup_id:
-            log_message(
-                "Ignored readiness file: startup_id mismatch."
-            )
+            log_message("Ignored readiness file: startup_id mismatch.")
             return None, None
 
         if data.get("protocol_version") != PROTOCOL_VERSION:
@@ -221,7 +208,7 @@ def read_readiness_file(startup_id):
         return None, None
 
     except json.JSONDecodeError:
-        # قد يكون الملف في طور الاستبدال.
+        # The file may be in the process of being replaced.
         return None, None
 
     except Exception as exc:
@@ -230,24 +217,21 @@ def read_readiness_file(startup_id):
 
 
 # ============================================================
-# اختيار المنفذ
+# Port selection
 # ============================================================
 
-def find_free_port():
-    """
-    اختيار منفذ متاح مبدئيًا.
-    إذا حدث تعارض عند ربط Streamlit بالمنفذ،
-    ستتعامل إعادة المحاولة مع ذلك.
-    """
 
+def find_free_port():
+    """Choose a currently available port; startup retry handles races."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind((HOST, 0))
         return sock.getsockname()[1]
 
 
 # ============================================================
-# HTTP Health Check
+# HTTP health check
 # ============================================================
+
 
 def http_get(url, timeout=3):
     request = urllib.request.Request(
@@ -260,8 +244,7 @@ def http_get(url, timeout=3):
 
 
 def is_streamlit_healthy(host, port):
-    """التحقق من استجابة Streamlit الفعلية."""
-
+    """Check the actual Streamlit health endpoint and application page."""
     try:
         status, health_body = http_get(
             f"http://{host}:{port}/_stcore/health",
@@ -292,25 +275,19 @@ def is_streamlit_healthy(host, port):
             errors="ignore",
         ).lower()
 
-        return (
-            "<html" in html_text
-            or "<!doctype html>" in html_text
-        )
+        return "<html" in html_text or "<!doctype html>" in html_text
 
     except Exception:
         return False
 
 
 def wait_for_http_health(server, host, port, timeout):
-    """انتظار صحة خادم Streamlit قبل فتح Chrome."""
-
+    """Wait for Streamlit HTTP health before opening Chrome."""
     deadline = time.monotonic() + timeout
 
     while time.monotonic() < deadline:
         if not server.is_alive():
-            log_message(
-                "Streamlit process exited before HTTP readiness."
-            )
+            log_message("Streamlit process exited before HTTP readiness.")
             return False
 
         if is_streamlit_healthy(host, port):
@@ -322,8 +299,9 @@ def wait_for_http_health(server, host, port, timeout):
 
 
 # ============================================================
-# انتظار جاهزية التطبيق
+# Application readiness
 # ============================================================
+
 
 def wait_for_readiness(
     server,
@@ -332,11 +310,7 @@ def wait_for_readiness(
     startup_id,
     timeout=APP_READINESS_TIMEOUT,
 ):
-    """
-    هذه المرحلة تبدأ بعد فتح Chrome؛ لأن app.py يحتاج
-    إلى جلسة Streamlit حتى يبدأ التنفيذ.
-    """
-
+    """Wait for app.py readiness after Chrome has opened a Streamlit session."""
     deadline = time.monotonic() + timeout
     last_health_check = 0
 
@@ -354,9 +328,7 @@ def wait_for_readiness(
             return True, None
 
         if status == "error":
-            log_message(
-                f"Application startup error: {error_message}"
-            )
+            log_message(f"Application startup error: {error_message}")
             return False, error_message
 
         now = time.monotonic()
@@ -380,126 +352,12 @@ def wait_for_readiness(
 
 
 # ============================================================
-# تشغيل Streamlit
+# Google Chrome discovery
 # ============================================================
 
-def run_streamlit(port, app_path, startup_id):
-    """تشغيل Streamlit داخل عملية مستقلة."""
-
-    try:
-        # ----------------------------------------------------
-        # تجهيز مسار التطبيق
-        # ----------------------------------------------------
-
-        app_path = Path(app_path).resolve()
-
-        if not app_path.is_file():
-            raise FileNotFoundError(
-                f"لم يتم العثور على app.py: {app_path}"
-            )
-
-        app_root = app_path.parent
-        app_root_text = str(app_root)
-
-        if app_root_text not in sys.path:
-            sys.path.insert(0, app_root_text)
-
-        os.chdir(app_root)
-
-        # ----------------------------------------------------
-        # إعداد asyncio على Windows
-        # ----------------------------------------------------
-
-        if sys.platform == "win32":
-            asyncio.set_event_loop_policy(
-                asyncio.WindowsSelectorEventLoopPolicy()
-            )
-
-        asyncio.set_event_loop(asyncio.new_event_loop())
-
-        # ----------------------------------------------------
-        # إعداد السجل
-        # ----------------------------------------------------
-
-        logs_dir = get_logs_dir()
-        streamlit_log_path = logs_dir / "streamlit.log"
-
-        with streamlit_log_path.open(
-            "a",
-            encoding="utf-8",
-        ) as child_log:
-            sys.stdout = child_log
-            sys.stderr = child_log
-
-            child_log.write(
-                "\n"
-                + "=" * 65
-                + "\n"
-                + f"New Streamlit startup: {startup_id}\n"
-                + f"Port: {port}\n"
-                + f"Application: {app_path}\n"
-                + f"Working directory: {app_root}\n"
-                + "=" * 65
-                + "\n"
-            )
-            child_log.flush()
-
-            # ------------------------------------------------
-            # متغيرات بروتوكول الجاهزية
-            # ------------------------------------------------
-
-            os.environ["HOKAMA_STARTUP_ID"] = startup_id
-            os.environ["HOKAMA_READINESS_PROTOCOL"] = str(
-                PROTOCOL_VERSION
-            )
-
-            # ------------------------------------------------
-            # تشغيل Streamlit
-            # ------------------------------------------------
-
-            from streamlit.web import cli as stcli
-
-            sys.argv = [
-                "streamlit",
-                "run",
-                str(app_path),
-                f"--server.port={port}",
-                f"--server.address={HOST}",
-                "--server.headless=true",
-                "--server.fileWatcherType=none",
-                "--server.runOnSave=false",
-                "--browser.gatherUsageStats=false",
-                "--global.developmentMode=false",
-
-                # اجعل المظهر الداكن هو الوضع الافتراضي.
-                # يستطيع المستخدم تغييره من قائمة Streamlit.
-                "--theme.base=dark",
-
-                # إظهار خيارات المشاهد، ومنها مبدّل المظهر،
-                # مع إخفاء أدوات المطوّر مثل Rerun وClear cache.
-                "--client.toolbarMode=viewer",
-            ]
-
-            # نترك CORS وXSRF على الإعدادات الافتراضية.
-            stcli.main()
-
-    except SystemExit as exc:
-        log_message(f"Streamlit exited with code: {exc.code}")
-
-    except Exception:
-        error_text = traceback.format_exc()
-        log_message(
-            "Streamlit child fatal error:\n" + error_text
-        )
-
-
-# ============================================================
-# اكتشاف Google Chrome
-# ============================================================
 
 def find_chrome():
-    """البحث عن Google Chrome في مسارات التثبيت الشائعة."""
-
+    """Find Google Chrome in common installation locations."""
     candidates = []
 
     for env_name in (
@@ -535,7 +393,7 @@ def find_chrome():
         if which_result:
             candidates.append(Path(which_result))
 
-    # إزالة التكرارات مع الحفاظ على ترتيب البحث.
+    # Remove duplicates while preserving search order.
     seen = set()
 
     for candidate in candidates:
@@ -557,16 +415,12 @@ def find_chrome():
 
 
 # ============================================================
-# فحص عمليات Chrome الخاصة بملف التعريف
+# Detect Chrome processes using this profile
 # ============================================================
 
-def chrome_process_using_profile(chrome_profile):
-    """
-    True  = توجد عملية Chrome تستخدم الملف الشخصي.
-    False = لا توجد عملية.
-    None  = تعذر الفحص.
-    """
 
+def chrome_process_using_profile(chrome_profile):
+    """Return True/False, or None when the process check is unavailable."""
     if sys.platform != "win32":
         return None
 
@@ -606,11 +460,7 @@ def chrome_process_using_profile(chrome_profile):
             stderr=subprocess.DEVNULL,
             text=True,
             timeout=8,
-            creationflags=getattr(
-                subprocess,
-                "CREATE_NO_WINDOW",
-                0,
-            ),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
 
         if result.returncode != 0:
@@ -624,12 +474,12 @@ def chrome_process_using_profile(chrome_profile):
 
 
 # ============================================================
-# تشغيل Chrome
+# Launch Chrome
 # ============================================================
 
-def launch_chrome(chrome_exe, chrome_profile, url):
-    """فتح نافذة Google Chrome App Mode."""
 
+def launch_chrome(chrome_exe, chrome_profile, url):
+    """Open the application in a dedicated Google Chrome App Mode window."""
     browser_args = [
         chrome_exe,
         f"--user-data-dir={chrome_profile}",
@@ -643,7 +493,6 @@ def launch_chrome(chrome_exe, chrome_profile, url):
     ]
 
     chrome_log_path = get_logs_dir() / "chrome.log"
-
     log_message("Launching Google Chrome App Mode.")
 
     with chrome_log_path.open("a", encoding="utf-8") as chrome_log:
@@ -652,23 +501,17 @@ def launch_chrome(chrome_exe, chrome_profile, url):
             cwd=str(Path(chrome_exe).parent),
             stdout=chrome_log,
             stderr=subprocess.STDOUT,
-            creationflags=getattr(
-                subprocess,
-                "CREATE_NO_WINDOW",
-                0,
-            ),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
 
-    log_message(
-        f"Chrome launcher process started: {process.pid}"
-    )
-
+    log_message(f"Chrome launcher process started: {process.pid}")
     return process
 
 
 # ============================================================
-# إيقاف Streamlit
+# Stop Streamlit
 # ============================================================
+
 
 def stop_server(server):
     if server is None:
@@ -691,31 +534,24 @@ def stop_server(server):
 
 
 # ============================================================
-# مراقبة التطبيق
+# Monitor application
 # ============================================================
 
-def monitor_application(server, chrome_profile):
-    """مراقبة الخادم وإغلاقه بعد إغلاق نافذة Chrome الخاصة بالتطبيق."""
 
+def monitor_application(server, chrome_profile):
+    """Monitor the app and stop Streamlit after its Chrome window closes."""
     log_message("Monitoring Hokama ERP.")
 
     first_detection = False
     missing_since = None
-
-    detection_deadline = (
-        time.monotonic() + CHROME_DETECTION_TIMEOUT
-    )
+    detection_deadline = time.monotonic() + CHROME_DETECTION_TIMEOUT
 
     while True:
         if not server.is_alive():
-            log_message(
-                "ERROR: Streamlit server process stopped."
-            )
+            log_message("ERROR: Streamlit server process stopped.")
             return False
 
-        chrome_state = chrome_process_using_profile(
-            chrome_profile
-        )
+        chrome_state = chrome_process_using_profile(chrome_profile)
 
         if chrome_state is True:
             if not first_detection:
@@ -729,10 +565,7 @@ def monitor_application(server, chrome_profile):
                 if missing_since is None:
                     missing_since = time.monotonic()
 
-                elif (
-                    time.monotonic() - missing_since
-                    >= CHROME_CLOSE_GRACE
-                ):
+                elif time.monotonic() - missing_since >= CHROME_CLOSE_GRACE:
                     log_message("Chrome application closed.")
                     return True
 
@@ -746,24 +579,19 @@ def monitor_application(server, chrome_profile):
                 )
 
         else:
-            # الفحص المجهول لا يعتبر إغلاقًا للمتصفح.
+            # An unknown process-check result is not treated as browser closure.
             missing_since = None
 
         time.sleep(MONITOR_INTERVAL)
 
 
 # ============================================================
-# تشغيل Streamlit مع إعادة المحاولة
+# Start Streamlit with retries
 # ============================================================
 
+
 def start_streamlit_with_retry(app_path):
-    """
-    كل محاولة لها startup_id مستقل.
-
-    ننتظر HTTP فقط هنا، ثم نفتح Chrome
-    وننتظر جاهزية app.py.
-    """
-
+    """Start Streamlit, retrying HTTP startup with a new port and startup ID."""
     for attempt in range(1, STARTUP_RETRIES + 1):
         port = find_free_port()
         startup_id = str(uuid.uuid4())
@@ -771,12 +599,12 @@ def start_streamlit_with_retry(app_path):
         cleanup_readiness_file(startup_id)
 
         log_message(
-            f"Starting Streamlit attempt "
-            f"{attempt}/{STARTUP_RETRIES}, "
-            f"port={port}, "
-            f"startup_id={startup_id}"
+            f"Starting Streamlit attempt {attempt}/{STARTUP_RETRIES}, "
+            f"port={port}, startup_id={startup_id}"
         )
 
+        # run_streamlit is imported from streamlit_runner at module scope.
+        # This keeps the multiprocessing target in an importable module on Windows.
         server = multiprocessing.Process(
             target=run_streamlit,
             args=(port, str(app_path), startup_id),
@@ -785,10 +613,7 @@ def start_streamlit_with_retry(app_path):
         )
 
         server.start()
-
-        log_message(
-            f"Streamlit process started: {server.pid}"
-        )
+        log_message(f"Streamlit process started: {server.pid}")
 
         http_ready = wait_for_http_health(
             server,
@@ -798,9 +623,7 @@ def start_streamlit_with_retry(app_path):
         )
 
         if http_ready:
-            log_message(
-                f"Streamlit HTTP is healthy on port {port}."
-            )
+            log_message(f"Streamlit HTTP is healthy on port {port}.")
             return server, port, startup_id, None
 
         log_message(
@@ -822,8 +645,9 @@ def start_streamlit_with_retry(app_path):
 
 
 # ============================================================
-# الدالة الرئيسية
+# Main function
 # ============================================================
+
 
 def main():
     server = None
@@ -834,7 +658,7 @@ def main():
         log_message("Starting Hokama ERP Desktop (Google Chrome).")
 
         # ----------------------------------------------------
-        # مسار app.py
+        # app.py path
         # ----------------------------------------------------
 
         app_path = (get_base_path() / "app.py").resolve()
@@ -851,7 +675,7 @@ def main():
             return 1
 
         # ----------------------------------------------------
-        # اكتشاف Google Chrome
+        # Find Google Chrome
         # ----------------------------------------------------
 
         chrome_exe = find_chrome()
@@ -867,17 +691,12 @@ def main():
             return 1
 
         # ----------------------------------------------------
-        # مجلدات البيانات
+        # Data directories
         # ----------------------------------------------------
 
         data_dir = get_data_dir()
         chrome_profile = data_dir / "ChromeProfile"
-
-        chrome_profile.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
+        chrome_profile.mkdir(parents=True, exist_ok=True)
         logs_dir = get_logs_dir()
 
         log_message(f"Application: {app_path}")
@@ -885,7 +704,7 @@ def main():
         log_message(f"Chrome profile: {chrome_profile}")
 
         # ----------------------------------------------------
-        # 1. تشغيل Streamlit وانتظار صحة HTTP
+        # 1. Start Streamlit and wait for HTTP health
         # ----------------------------------------------------
 
         (
@@ -897,7 +716,6 @@ def main():
 
         if server is None:
             detail = read_streamlit_log_tail()
-
             message = (
                 f"{error_msg}\n\n"
                 f"آخر سجل Streamlit:\n"
@@ -914,17 +732,13 @@ def main():
         log_message(f"Local URL: {url}")
 
         # ----------------------------------------------------
-        # 2. فتح Chrome لإنشاء جلسة Streamlit
+        # 2. Open Chrome to create a Streamlit session
         # ----------------------------------------------------
 
-        launch_chrome(
-            chrome_exe,
-            chrome_profile,
-            url,
-        )
+        launch_chrome(chrome_exe, chrome_profile, url)
 
         # ----------------------------------------------------
-        # 3. انتظار جاهزية app.py
+        # 3. Wait for app.py readiness
         # ----------------------------------------------------
 
         ready, readiness_error = wait_for_readiness(
@@ -937,7 +751,6 @@ def main():
 
         if not ready:
             detail = read_streamlit_log_tail()
-
             message = (
                 "تعذّر إكمال تهيئة التطبيق:\n\n"
                 f"{readiness_error}\n\n"
@@ -951,22 +764,16 @@ def main():
             show_error("تعذّر تشغيل Hokama ERP", message)
             return 1
 
-        log_message(
-            "Application readiness confirmed successfully."
-        )
+        log_message("Application readiness confirmed successfully.")
 
         # ----------------------------------------------------
-        # 4. مراقبة التطبيق
+        # 4. Monitor application
         # ----------------------------------------------------
 
-        monitor_ok = monitor_application(
-            server,
-            chrome_profile,
-        )
+        monitor_ok = monitor_application(server, chrome_profile)
 
         if not monitor_ok:
             detail = read_streamlit_log_tail()
-
             show_error(
                 APP_NAME,
                 "توقف خادم التطبيق.\n\n"
@@ -975,7 +782,6 @@ def main():
                 f"ملفات السجل:\n"
                 f"{logs_dir}",
             )
-
             return 1
 
         log_message("Hokama ERP browser session closed.")
@@ -1007,7 +813,7 @@ def main():
 
 
 # ============================================================
-# نقطة الدخول
+# Entry point
 # ============================================================
 
 if __name__ == "__main__":
