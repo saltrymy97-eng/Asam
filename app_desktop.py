@@ -4,6 +4,10 @@
 Streamlit + Google Chrome App Mode
 Fixed Readiness Protocol ID: 1111
 Single-instance protection: Windows Mutex
+
+HTTP readiness is checked through Streamlit's /_stcore/health endpoint.
+Chrome window monitoring uses Chrome DevTools' local /json/list endpoint;
+PowerShell/CIM process enumeration is deliberately not used.
 """
 
 # multiprocessing bootstrap for PyInstaller: keep this early.
@@ -12,7 +16,6 @@ import multiprocessing
 if __name__ == "__main__":
     multiprocessing.freeze_support()
 
-import base64
 import ctypes
 import json
 import os
@@ -22,6 +25,7 @@ import subprocess
 import sys
 import time
 import traceback
+import urllib.request
 from pathlib import Path
 
 from streamlit_runner import run_streamlit
@@ -46,10 +50,13 @@ STARTUP_RETRIES = 3
 HEALTH_CHECK_INTERVAL = 0.5
 READY_CHECK_INTERVAL = 0.5
 MONITOR_INTERVAL = 2
-CHROME_CLOSE_GRACE = 15
+CHROME_CLOSE_GRACE = 20
 CHROME_DETECTION_TIMEOUT = 60
+CHROME_DEVTOOLS_FILENAME = "DevToolsActivePort"
 
 _READINESS_LAST_DIAGNOSTIC = None
+_HTTP_LAST_DIAGNOSTIC = None
+_CHROME_LAST_DIAGNOSTIC = None
 
 
 # ============================================================
@@ -128,6 +135,29 @@ def show_error(title, message):
     print("{}: {}".format(title, message), file=sys.stderr)
 
 
+def log_once(global_name, message):
+    """Write a repeated diagnostic only when its text changes."""
+    global _READINESS_LAST_DIAGNOSTIC
+    global _HTTP_LAST_DIAGNOSTIC
+    global _CHROME_LAST_DIAGNOSTIC
+
+    if global_name == "readiness":
+        previous = _READINESS_LAST_DIAGNOSTIC
+        if message != previous:
+            log_message(message)
+            _READINESS_LAST_DIAGNOSTIC = message
+    elif global_name == "http":
+        previous = _HTTP_LAST_DIAGNOSTIC
+        if message != previous:
+            log_message(message)
+            _HTTP_LAST_DIAGNOSTIC = message
+    elif global_name == "chrome":
+        previous = _CHROME_LAST_DIAGNOSTIC
+        if message != previous:
+            log_message(message)
+            _CHROME_LAST_DIAGNOSTIC = message
+
+
 # ============================================================
 # Single-instance protection (Windows named Mutex)
 # ============================================================
@@ -144,7 +174,11 @@ def acquire_single_instance_mutex():
     try:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         create_mutex = kernel32.CreateMutexW
-        create_mutex.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+        create_mutex.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_bool,
+            ctypes.c_wchar_p,
+        ]
         create_mutex.restype = ctypes.c_void_p
 
         ctypes.set_last_error(0)
@@ -186,9 +220,7 @@ def release_single_instance_mutex(mutex_token):
         close_handle(handle)
         log_message("Single-instance Mutex released.")
     except Exception:
-        log_message(
-            "Mutex release error:\n" + traceback.format_exc()
-        )
+        log_message("Mutex release error:\n" + traceback.format_exc())
 
 
 # ============================================================
@@ -214,10 +246,7 @@ def cleanup_readiness_file():
 
 
 def _readiness_issue_once(message):
-    global _READINESS_LAST_DIAGNOSTIC
-    if message != _READINESS_LAST_DIAGNOSTIC:
-        log_message(message)
-        _READINESS_LAST_DIAGNOSTIC = message
+    log_once("readiness", message)
 
 
 def read_readiness_file(expected_pid=None):
@@ -234,9 +263,8 @@ def read_readiness_file(expected_pid=None):
             data = json.load(file)
     except json.JSONDecodeError as exc:
         _readiness_issue_once(
-            "[READINESS JSON ERROR] path={} | error={} | waiting for atomic write".format(
-                path, exc
-            )
+            "[READINESS JSON ERROR] path={} | error={} | "
+            "waiting for atomic write".format(path, exc)
         )
         return None, None
     except Exception as exc:
@@ -338,34 +366,58 @@ def find_free_port():
 
 
 def http_get(url, timeout=3):
+    """GET a local URL directly, bypassing any configured system proxy."""
     request = urllib.request.Request(
         url, headers={"User-Agent": "Mozilla/5.0 HokamaERP"}
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    # These URLs are loopback-only (127.0.0.1). Bypass HTTP_PROXY settings
+    # so a system proxy cannot intercept local Streamlit/Chrome requests.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(request, timeout=timeout) as response:
         return response.status, response.read()
 
 
 def is_streamlit_healthy(host, port):
+    """Check Streamlit's health endpoint without hiding diagnostics."""
+    url = "http://{}:{}/_stcore/health".format(host, port)
+
     try:
-        status, health_body = http_get(
-            "http://{}:{}/_stcore/health".format(host, port), timeout=2
-        )
-        if status != 200:
-            return False
+        status, health_body = http_get(url, timeout=3)
         health_text = health_body.decode(
             "utf-8", errors="ignore"
         ).strip().lower()
-        if health_text not in ("ok", "healthy"):
+
+        if status != 200:
+            log_once(
+                "http",
+                "[HTTP HEALTH] Unexpected HTTP status {} from {}".format(
+                    status, url
+                ),
+            )
             return False
 
-        status, page_body = http_get(
-            "http://{}:{}/".format(host, port), timeout=4
-        )
-        if status != 200:
+        # Streamlit normally returns 'ok'. 'healthy' is accepted for
+        # compatibility with builds/proxies that use that response text.
+        if health_text not in ("ok", "healthy"):
+            log_once(
+                "http",
+                "[HTTP HEALTH] Unexpected response from {}: {!r}".format(
+                    url, health_text[:300]
+                ),
+            )
             return False
-        html_text = page_body.decode("utf-8", errors="ignore").lower()
-        return "<html" in html_text or "<!doctype html>" in html_text
-    except Exception:
+
+        global _HTTP_LAST_DIAGNOSTIC
+        _HTTP_LAST_DIAGNOSTIC = None
+        return True
+
+    except Exception as exc:
+        log_once(
+            "http",
+            "[HTTP HEALTH ERROR] {}: {} | url={}".format(
+                type(exc).__name__, exc, url
+            ),
+        )
         return False
 
 
@@ -379,15 +431,28 @@ def wait_for_http_health(server, host, port, timeout):
                 )
             )
             return False
+
         if is_streamlit_healthy(host, port):
+            log_message(
+                "Streamlit HTTP health endpoint is healthy on port {}.".format(
+                    port
+                )
+            )
             return True
+
         time.sleep(HEALTH_CHECK_INTERVAL)
+
+    log_message(
+        "[HTTP HEALTH TIMEOUT] Streamlit did not answer successfully "
+        "within {} seconds on {}:{}".format(timeout, host, port)
+    )
     return False
 
 
 def wait_for_readiness(server, host, port, timeout=APP_READINESS_TIMEOUT):
     deadline = time.monotonic() + timeout
     last_health_check = 0
+
     while time.monotonic() < deadline:
         if not server.is_alive():
             message = (
@@ -412,6 +477,7 @@ def wait_for_readiness(server, host, port, timeout=APP_READINESS_TIMEOUT):
                     "Warning: Streamlit HTTP health check failed while "
                     "waiting for app readiness."
                 )
+
         time.sleep(READY_CHECK_INTERVAL)
 
     path = get_readiness_file()
@@ -426,7 +492,7 @@ def wait_for_readiness(server, host, port, timeout=APP_READINESS_TIMEOUT):
 
 
 # ============================================================
-# Google Chrome discovery and monitoring
+# Google Chrome discovery and DevTools monitoring
 # ============================================================
 
 def find_chrome():
@@ -464,53 +530,136 @@ def find_chrome():
                 return str(candidate.resolve())
         except OSError:
             pass
+
     return None
 
 
-def chrome_process_using_profile(chrome_profile):
-    if sys.platform != "win32":
+def get_chrome_devtools_port(chrome_profile):
+    """Read the ephemeral debugging port written by Chrome on startup."""
+    active_port_file = Path(chrome_profile) / CHROME_DEVTOOLS_FILENAME
+
+    if not active_port_file.is_file():
         return None
+
     try:
-        profile_text = str(chrome_profile)
-        encoded_profile = base64.b64encode(
-            profile_text.encode("utf-8")
-        ).decode("ascii")
-        powershell_script = (
-            "$targetProfile = [Text.Encoding]::UTF8.GetString("
-            "[Convert]::FromBase64String('" + encoded_profile + "')); "
-            "$processes = Get-CimInstance Win32_Process "
-            "-Filter \"Name = 'chrome.exe'\" "
-            "-ErrorAction SilentlyContinue; "
-            "$match = $processes | Where-Object { "
-            "$_.CommandLine -and $_.CommandLine.Contains($targetProfile) "
-            "} | Select-Object -First 1; "
-            "if ($match) { $match.ProcessId }"
-        )
-        result = subprocess.run(
-            [
-                "powershell.exe",
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                powershell_script,
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            timeout=8,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        if result.returncode != 0:
+        lines = active_port_file.read_text(
+            encoding="utf-8", errors="replace"
+        ).splitlines()
+        if not lines:
             return None
-        return bool(result.stdout.strip())
-    except Exception as exc:
-        log_message("Chrome process check failed: {}".format(exc))
+
+        port = int(lines[0].strip())
+        if 1 <= port <= 65535:
+            return port
+    except (OSError, ValueError, IndexError):
         return None
+
+    return None
+
+
+def chrome_devtools_request(chrome_profile, endpoint="/json/list", timeout=2):
+    """Return (reachable, parsed_json, port) for this Chrome profile."""
+    port = get_chrome_devtools_port(chrome_profile)
+    if port is None:
+        return False, None, None
+
+    url = "http://127.0.0.1:{}{}".format(port, endpoint)
+    try:
+        status, body = http_get(url, timeout=timeout)
+        if status != 200:
+            return False, None, port
+
+        parsed = json.loads(body.decode("utf-8", errors="replace"))
+        return True, parsed, port
+    except Exception:
+        return False, None, port
+
+
+def cleanup_stale_chrome_devtools_file(chrome_profile):
+    """Remove a stale DevToolsActivePort file, but preserve a live endpoint."""
+    active_port_file = Path(chrome_profile) / CHROME_DEVTOOLS_FILENAME
+    if not active_port_file.exists():
+        return
+
+    reachable, version_data, port = chrome_devtools_request(
+        chrome_profile, endpoint="/json/version", timeout=1.5
+    )
+
+    if reachable and isinstance(version_data, dict):
+        if version_data.get("Browser") or version_data.get("webSocketDebuggerUrl"):
+            log_message(
+                "Existing Chrome DevTools endpoint is active on port {}. "
+                "Keeping its active-port file.".format(port)
+            )
+            return
+
+    try:
+        active_port_file.unlink()
+        log_message("Removed stale Chrome DevTools file: {}".format(active_port_file))
+    except OSError as exc:
+        log_message(
+            "Could not remove Chrome DevTools file {}: {}".format(
+                active_port_file, exc
+            )
+        )
+
+
+def chrome_process_using_profile(chrome_profile, expected_url):
+    """Return True if the Hokama page is open, False if absent, None if unknown.
+
+    This checks Chrome's own local DevTools target list. It avoids repeatedly
+    launching PowerShell/Get-CimInstance, which was timing out on this machine.
+    """
+    reachable, targets, port = chrome_devtools_request(
+        chrome_profile, endpoint="/json/list", timeout=2
+    )
+
+    if not reachable:
+        return None
+
+    if not isinstance(targets, list):
+        log_once(
+            "chrome",
+            "[CHROME DEVTOOLS] Unexpected target-list response on port {}.".format(
+                port
+            ),
+        )
+        return None
+
+    expected_prefix = expected_url.rstrip("/")
+
+    for target in targets:
+        if not isinstance(target, dict):
+            continue
+
+        target_url = str(target.get("url") or "").strip()
+        target_type = str(target.get("type") or "").lower()
+
+        url_matches = (
+            target_url == expected_prefix
+            or target_url.startswith(expected_prefix + "/")
+            or target_url.startswith(expected_prefix + "?")
+            or target_url.startswith(expected_prefix + "#")
+        )
+
+        if url_matches and target_type in ("page", "webview", ""):
+            global _CHROME_LAST_DIAGNOSTIC
+            _CHROME_LAST_DIAGNOSTIC = None
+            return True
+
+    # The DevTools endpoint answered successfully, but the Hokama page target
+    # is no longer listed. This is a reliable indication that its app window
+    # has been closed (or navigated away from the application URL).
+    return False
 
 
 def launch_chrome(chrome_exe, chrome_profile, url):
+    chrome_profile = Path(chrome_profile)
+    chrome_profile.mkdir(parents=True, exist_ok=True)
+
+    # Clear an old marker only if it does not point to a live debugging server.
+    cleanup_stale_chrome_devtools_file(chrome_profile)
+
     browser_args = [
         chrome_exe,
         "--user-data-dir={}".format(chrome_profile),
@@ -521,9 +670,15 @@ def launch_chrome(chrome_exe, chrome_profile, url):
         "--disable-background-mode",
         "--disable-features=Translate",
         "--force-color-profile=srgb",
+        # A random local port is recorded in ChromeProfile\DevToolsActivePort.
+        # The launcher uses that endpoint to identify the Hokama app page.
+        "--remote-debugging-address=127.0.0.1",
+        "--remote-debugging-port=0",
     ]
+
     chrome_log_path = get_logs_dir() / "chrome.log"
-    log_message("Launching Google Chrome App Mode.")
+    log_message("Launching Google Chrome App Mode with local DevTools monitoring.")
+
     with chrome_log_path.open("a", encoding="utf-8") as chrome_log:
         process = subprocess.Popen(
             browser_args,
@@ -532,6 +687,7 @@ def launch_chrome(chrome_exe, chrome_profile, url):
             stderr=subprocess.STDOUT,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
+
     log_message("Chrome launcher process started: {}".format(process.pid))
     return process
 
@@ -539,11 +695,13 @@ def launch_chrome(chrome_exe, chrome_profile, url):
 def stop_server(server):
     if server is None:
         return
+
     try:
         if server.is_alive():
             log_message("Stopping Streamlit server.")
             server.terminate()
             server.join(timeout=5)
+
         if server.is_alive() and hasattr(server, "kill"):
             server.kill()
             server.join(timeout=3)
@@ -551,8 +709,9 @@ def stop_server(server):
         log_message("Server shutdown error:\n" + traceback.format_exc())
 
 
-def monitor_application(server, chrome_profile):
-    log_message("Monitoring Hokama ERP.")
+def monitor_application(server, chrome_profile, app_url):
+    """Keep Streamlit alive while the Hokama Chrome app page is open."""
+    log_message("Monitoring Hokama ERP Chrome app through local DevTools.")
     first_detection = False
     missing_since = None
     detection_deadline = time.monotonic() + CHROME_DETECTION_TIMEOUT
@@ -562,29 +721,54 @@ def monitor_application(server, chrome_profile):
             log_message("ERROR: Streamlit server process stopped.")
             return False
 
-        chrome_state = chrome_process_using_profile(chrome_profile)
+        chrome_state = chrome_process_using_profile(chrome_profile, app_url)
+
         if chrome_state is True:
             if not first_detection:
-                log_message("Chrome application detected.")
+                log_message("Chrome Hokama app page detected through DevTools.")
             first_detection = True
             missing_since = None
+
         elif chrome_state is False:
             if first_detection:
                 if missing_since is None:
                     missing_since = time.monotonic()
+                    log_message(
+                        "Chrome DevTools is reachable, but the Hokama app page "
+                        "is no longer listed; starting close grace period."
+                    )
                 elif time.monotonic() - missing_since >= CHROME_CLOSE_GRACE:
-                    log_message("Chrome application closed.")
+                    log_message("Chrome Hokama app window closed.")
                     return True
             elif time.monotonic() >= detection_deadline:
                 log_message(
-                    "WARNING: Chrome not detected during initial period. "
-                    "Keeping server alive."
+                    "WARNING: Hokama app page has not yet been detected by "
+                    "Chrome DevTools. Keeping Streamlit alive."
                 )
                 detection_deadline = (
                     time.monotonic() + CHROME_DETECTION_TIMEOUT
                 )
+
         else:
-            missing_since = None
+            # None means DevTools is not ready or temporarily unreachable.
+            # Before the first detection, never interpret that as a closed
+            # browser. After detection, treat a lost endpoint as a possible
+            # close and require the full grace period before stopping Streamlit.
+            if first_detection:
+                if missing_since is None:
+                    missing_since = time.monotonic()
+                    log_once(
+                        "chrome",
+                        "[CHROME DEVTOOLS] Endpoint became unreachable after "
+                        "the Hokama page had been detected; checking close grace period.",
+                    )
+                elif time.monotonic() - missing_since >= CHROME_CLOSE_GRACE:
+                    log_message(
+                        "Chrome DevTools endpoint stayed unreachable; "
+                        "treating the Hokama browser session as closed."
+                    )
+                    return True
+
         time.sleep(MONITOR_INTERVAL)
 
 
@@ -629,6 +813,7 @@ def start_streamlit_with_retry(app_path):
         )
         stop_server(server)
         cleanup_readiness_file()
+
         if attempt < STARTUP_RETRIES:
             time.sleep(1)
 
@@ -643,6 +828,7 @@ def main():
     server = None
     mutex_token = None
     owns_instance = False
+
     try:
         mutex_token, already_running, mutex_error = (
             acquire_single_instance_mutex()
@@ -724,7 +910,12 @@ def main():
 
         url = "http://{}:{}".format(HOST, port)
         log_message("Local URL: {}".format(url))
-        launch_chrome(chrome_exe, chrome_profile, url)
+        chrome_process = launch_chrome(chrome_exe, chrome_profile, url)
+        log_message(
+            "Chrome launch request submitted; launcher_pid={}".format(
+                getattr(chrome_process, "pid", None)
+            )
+        )
 
         ready, readiness_error = wait_for_readiness(
             server=server,
@@ -732,6 +923,7 @@ def main():
             port=port,
             timeout=APP_READINESS_TIMEOUT,
         )
+
         if not ready:
             detail = read_streamlit_log_tail()
             message = (
@@ -745,7 +937,8 @@ def main():
             return 1
 
         log_message("Application readiness confirmed successfully.")
-        monitor_ok = monitor_application(server, chrome_profile)
+        monitor_ok = monitor_application(server, chrome_profile, url)
+
         if not monitor_ok:
             detail = read_streamlit_log_tail()
             show_error(
