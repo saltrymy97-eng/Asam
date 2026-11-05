@@ -51,7 +51,7 @@ HEALTH_CHECK_INTERVAL = 0.5
 READY_CHECK_INTERVAL = 0.5
 MONITOR_INTERVAL = 2
 CHROME_CLOSE_GRACE = 20
-CHROME_DETECTION_TIMEOUT = 60
+CHROME_DETECTION_TIMEOUT = 90
 CHROME_DEVTOOLS_FILENAME = "DevToolsActivePort"
 
 _READINESS_LAST_DIAGNOSTIC = None
@@ -710,7 +710,7 @@ def stop_server(server):
 
 
 def monitor_application(server, chrome_profile, app_url):
-    """Keep Streamlit alive while the Hokama Chrome app page is open."""
+    """Return (result, detail): closed, server_stopped, or chrome_not_detected."""
     log_message("Monitoring Hokama ERP Chrome app through local DevTools.")
     first_detection = False
     missing_since = None
@@ -718,8 +718,11 @@ def monitor_application(server, chrome_profile, app_url):
 
     while True:
         if not server.is_alive():
-            log_message("ERROR: Streamlit server process stopped.")
-            return False
+            detail = "توقفت عملية Streamlit أثناء مراقبة نافذة Chrome. exitcode={}".format(
+                server.exitcode
+            )
+            log_message("ERROR: " + detail)
+            return "server_stopped", detail
 
         chrome_state = chrome_process_using_profile(chrome_profile, app_url)
 
@@ -739,21 +742,22 @@ def monitor_application(server, chrome_profile, app_url):
                     )
                 elif time.monotonic() - missing_since >= CHROME_CLOSE_GRACE:
                     log_message("Chrome Hokama app window closed.")
-                    return True
+                    return "closed", None
             elif time.monotonic() >= detection_deadline:
-                log_message(
-                    "WARNING: Hokama app page has not yet been detected by "
-                    "Chrome DevTools. Keeping Streamlit alive."
-                )
-                detection_deadline = (
-                    time.monotonic() + CHROME_DETECTION_TIMEOUT
-                )
+                detail = (
+                    "لم يتمكن المشغّل من العثور على نافذة Hokama في Chrome "
+                    "عبر واجهة DevTools خلال {} ثانية.\n"
+                    "تحقق من chrome.log، وتأكد من عدم وجود عملية Chrome قديمة "
+                    "تستخدم مجلد ChromeProfile دون تفعيل DevTools."
+                ).format(CHROME_DETECTION_TIMEOUT)
+                log_message("[CHROME DETECTION TIMEOUT] " + detail.replace("\n", " | "))
+                return "chrome_not_detected", detail
 
         else:
             # None means DevTools is not ready or temporarily unreachable.
-            # Before the first detection, never interpret that as a closed
-            # browser. After detection, treat a lost endpoint as a possible
-            # close and require the full grace period before stopping Streamlit.
+            # Before the first detection, wait only for the defined startup
+            # window. After detection, a full grace period is required before
+            # interpreting a lost endpoint as a closed browser session.
             if first_detection:
                 if missing_since is None:
                     missing_since = time.monotonic()
@@ -767,7 +771,15 @@ def monitor_application(server, chrome_profile, app_url):
                         "Chrome DevTools endpoint stayed unreachable; "
                         "treating the Hokama browser session as closed."
                     )
-                    return True
+                    return "closed", None
+            elif time.monotonic() >= detection_deadline:
+                detail = (
+                    "لم تظهر واجهة Chrome DevTools خلال {} ثانية.\n"
+                    "لم يوقف المشغّل الخادم بسبب غياب إشارة إغلاق؛ "
+                    "لكن لا يمكن مراقبة النافذة بأمان. راجع chrome.log."
+                ).format(CHROME_DETECTION_TIMEOUT)
+                log_message("[CHROME DEVTOOLS TIMEOUT] " + detail.replace("\n", " | "))
+                return "chrome_not_detected", detail
 
         time.sleep(MONITOR_INTERVAL)
 
@@ -937,19 +949,37 @@ def main():
             return 1
 
         log_message("Application readiness confirmed successfully.")
-        monitor_ok = monitor_application(server, chrome_profile, url)
+        monitor_result, monitor_detail = monitor_application(
+            server, chrome_profile, url
+        )
 
-        if not monitor_ok:
-            detail = read_streamlit_log_tail()
-            show_error(
-                APP_NAME,
-                "توقف خادم التطبيق.\n\nآخر سجل Streamlit:\n{}\n\n"
-                "ملفات السجل:\n{}".format(detail, logs_dir),
-            )
-            return 1
+        if monitor_result == "closed":
+            log_message("Hokama ERP browser session closed.")
+            return 0
 
-        log_message("Hokama ERP browser session closed.")
-        return 0
+        streamlit_detail = read_streamlit_log_tail()
+        chrome_log_path = logs_dir / "chrome.log"
+        chrome_detail = ""
+        try:
+            if chrome_log_path.exists():
+                chrome_detail = chrome_log_path.read_text(
+                    encoding="utf-8", errors="replace"
+                )[-5000:]
+        except Exception:
+            chrome_detail = "تعذر قراءة chrome.log"
+
+        message = (
+            (monitor_detail or "تعذر استمرار مراقبة جلسة Chrome.")
+            + "\n\nآخر سجل Streamlit:\n"
+            + streamlit_detail
+            + "\n\nآخر سجل Chrome:\n"
+            + (chrome_detail or "لا توجد تفاصيل إضافية في chrome.log")
+            + "\n\nمجلد السجلات:\n"
+            + str(logs_dir)
+        )
+        log_message("[APPLICATION MONITOR ERROR] " + message.replace("\n", " | "))
+        show_error(APP_NAME, message)
+        return 1
 
     except KeyboardInterrupt:
         log_message("Interrupted by user.")
