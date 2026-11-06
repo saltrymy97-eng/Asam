@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
+
 """Process entry point for running Streamlit in Hokama ERP.
 
-Kept separate from app_desktop.py for Windows multiprocessing (spawn)
-and PyInstaller imports.
+This module is intentionally separate from app_desktop.py so Windows
+multiprocessing (spawn) and PyInstaller can import the process target.
 """
 
 import asyncio
@@ -17,7 +18,7 @@ LOG_FILE_NAME = "streamlit.log"
 STARTUP_LOG_NAME = "startup.log"
 HOST = "127.0.0.1"
 
-# These constants must match app_desktop.py and app.py.
+# Must match app_desktop.py and app.py.
 PROTOCOL_ID = "1111"
 PROTOCOL_VERSION = 1
 
@@ -36,32 +37,59 @@ def _append_startup_log(message: str) -> None:
         ) as log:
             log.write(str(message).rstrip() + "\n")
     except Exception:
-        # Diagnostics must not hide the original startup exception.
+        # Logging must never mask the original startup exception.
         pass
 
 
-def run_streamlit(port: int, app_path: str, protocol_id: str) -> None:
-    """Run Streamlit in a child process with the fixed readiness protocol."""
+def run_streamlit(
+    port: int,
+    app_path: str,
+    protocol_id: str,
+    protocol_version: int,
+) -> None:
+    """Run Streamlit and pass protocol arguments to its child environment.
+
+    The launcher passes protocol_id and protocol_version as their declared
+    types. Validate them without coercing or normalizing the arguments.
+    Environment variables are textual by definition, so protocol_version is
+    serialized as the canonical string "1" only at that boundary.
+    """
     original_stdout = sys.stdout
     original_stderr = sys.stderr
     log_path = None
 
     try:
-        received_id = str(protocol_id).strip()
         _append_startup_log(
-            "[STREAMLIT_RUNNER] Received protocol_id={!r}; expected={!r}".format(
-                received_id, PROTOCOL_ID
+            "[STREAMLIT_RUNNER] Received protocol_id={!r} ({}) | "
+            "protocol_version={!r} ({})".format(
+                protocol_id,
+                type(protocol_id).__name__,
+                protocol_version,
+                type(protocol_version).__name__,
             )
         )
-        if received_id != PROTOCOL_ID:
+
+        if type(protocol_id) is not str or protocol_id != PROTOCOL_ID:
             raise RuntimeError(
                 "Protocol ID mismatch in streamlit_runner.py: "
-                "expected {!r}, received {!r}".format(PROTOCOL_ID, received_id)
+                "expected {!r}, received {!r}".format(
+                    PROTOCOL_ID, protocol_id
+                )
             )
 
-        # app.py reads these two values and writes readiness.json.
-        os.environ["HOKAMA_PROTOCOL_ID"] = PROTOCOL_ID
-        os.environ["HOKAMA_READINESS_PROTOCOL"] = str(PROTOCOL_VERSION)
+        if (
+            type(protocol_version) is not int
+            or protocol_version != PROTOCOL_VERSION
+        ):
+            raise RuntimeError(
+                "Protocol version mismatch in streamlit_runner.py: "
+                "expected {!r}, received {!r}".format(
+                    PROTOCOL_VERSION, protocol_version
+                )
+            )
+
+        os.environ["HOKAMA_PROTOCOL_ID"] = protocol_id
+        os.environ["HOKAMA_READINESS_PROTOCOL"] = str(protocol_version)
 
         app_file = Path(app_path).expanduser().resolve()
         app_root = app_file.parent
@@ -88,9 +116,9 @@ def run_streamlit(port: int, app_path: str, protocol_id: str) -> None:
 
             child_log.write("\n" + "=" * 70 + "\n")
             child_log.write("Streamlit child startup\n")
-            child_log.write("Protocol ID: {}\n".format(PROTOCOL_ID))
-            child_log.write("Protocol version: {}\n".format(PROTOCOL_VERSION))
-            child_log.write("Port: {}\n".format(int(port)))
+            child_log.write("Protocol ID: {}\n".format(protocol_id))
+            child_log.write("Protocol version: {}\n".format(protocol_version))
+            child_log.write("Port: {}\n".format(port))
             child_log.write("Host: {}\n".format(HOST))
             child_log.write("Application: {}\n".format(app_file))
             child_log.write("Working directory: {}\n".format(app_root))
@@ -129,6 +157,7 @@ def run_streamlit(port: int, app_path: str, protocol_id: str) -> None:
                 log.write(message + "\n")
         except Exception:
             pass
+        raise
 
     except BaseException:
         error_text = traceback.format_exc()
