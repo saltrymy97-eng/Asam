@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
+
 """Hokama ERP — Windows Desktop Launcher
 
 Streamlit + Google Chrome App Mode
-Fixed Readiness Protocol ID: 1111
-Single-instance protection: Windows Mutex
+Fixed Readiness Protocol ID: 1111, version: 1
+Single-instance protection: Windows named Mutex
 
 HTTP readiness is checked through Streamlit's /_stcore/health endpoint.
 Chrome window monitoring uses Chrome DevTools' local /json/list endpoint;
@@ -51,7 +52,7 @@ HEALTH_CHECK_INTERVAL = 0.5
 READY_CHECK_INTERVAL = 0.5
 MONITOR_INTERVAL = 2
 CHROME_CLOSE_GRACE = 20
-CHROME_DETECTION_TIMEOUT = 90
+CHROME_DETECTION_TIMEOUT = 60
 CHROME_DEVTOOLS_FILENAME = "DevToolsActivePort"
 
 _READINESS_LAST_DIAGNOSTIC = None
@@ -64,7 +65,7 @@ _CHROME_LAST_DIAGNOSTIC = None
 # ============================================================
 
 def get_base_path():
-    """Return the directory containing PyInstaller bundled files."""
+    """Return the directory containing the app's bundled files."""
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         return Path(sys._MEIPASS).resolve()
     return Path(__file__).resolve().parent
@@ -115,9 +116,7 @@ def read_streamlit_log_tail(max_chars=10000):
     path = get_logs_dir() / "streamlit.log"
     try:
         if path.exists():
-            return path.read_text(
-                encoding="utf-8", errors="replace"
-            )[-max_chars:]
+            return path.read_text(encoding="utf-8", errors="replace")[-max_chars:]
     except Exception:
         pass
     return "لا يوجد سجل Streamlit متاح."
@@ -197,7 +196,7 @@ def acquire_single_instance_mutex():
             close_handle(handle)
             return None, True, None
 
-        # Keep the handle alive for the complete lifetime of the launcher.
+        # Keep the DLL object and handle alive for the full launcher lifetime.
         return (kernel32, handle), False, None
 
     except Exception:
@@ -216,6 +215,7 @@ def release_single_instance_mutex(mutex_token):
         close_handle = kernel32.CloseHandle
         close_handle.argtypes = [ctypes.c_void_p]
         close_handle.restype = ctypes.c_bool
+
         release_mutex(handle)
         close_handle(handle)
         log_message("Single-instance Mutex released.")
@@ -228,7 +228,7 @@ def release_single_instance_mutex(mutex_token):
 # ============================================================
 
 def cleanup_readiness_file():
-    """Remove the single readiness file before a fresh launch/attempt."""
+    """Remove the one readiness file before a fresh launch/attempt."""
     path = get_readiness_file()
     try:
         if path.exists():
@@ -238,9 +238,7 @@ def cleanup_readiness_file():
             log_message("No previous readiness file found: {}".format(path))
     except Exception as exc:
         log_message(
-            "READINESS CLEANUP FAILED | path={} | error={!r}".format(
-                path, exc
-            )
+            "READINESS CLEANUP FAILED | path={} | error={!r}".format(path, exc)
         )
         raise
 
@@ -250,12 +248,16 @@ def _readiness_issue_once(message):
 
 
 def read_readiness_file(expected_pid=None):
-    """Return ('ready', None), ('error', text), or (None, None)."""
+    """Return ('ready', None), ('error', text), or (None, None).
+
+    The launcher accepts only the fixed protocol, exact JSON types, the
+    app.py source marker, and the PID of the current Streamlit child process.
+    """
     path = get_readiness_file()
     expected_id = PROTOCOL_ID
     expected_version = PROTOCOL_VERSION
 
-    if not path.exists():
+    if not path.is_file():
         return None, None
 
     try:
@@ -263,8 +265,9 @@ def read_readiness_file(expected_pid=None):
             data = json.load(file)
     except json.JSONDecodeError as exc:
         _readiness_issue_once(
-            "[READINESS JSON ERROR] path={} | error={} | "
-            "waiting for atomic write".format(path, exc)
+            "[READINESS JSON ERROR] path={} | error={} | waiting for atomic write".format(
+                path, exc
+            )
         )
         return None, None
     except Exception as exc:
@@ -273,76 +276,100 @@ def read_readiness_file(expected_pid=None):
         )
         return None, None
 
-    received_id = str(data.get("protocol_id", "<MISSING>")).strip()
+    if not isinstance(data, dict):
+        message = "ملف الجاهزية لا يحتوي على كائن JSON صالح: {}".format(path)
+        log_message("[READINESS FORMAT ERROR] " + message)
+        return "error", message
+
+    received_id = data.get("protocol_id", "<MISSING>")
     received_version = data.get("protocol_version", "<MISSING>")
     status = data.get("status", "<MISSING>")
     source = data.get("source", "<MISSING>")
     received_pid = data.get("pid", "<MISSING>")
+    received_error = data.get("error")
 
-    log_message(
+    diagnostic = (
         "[READINESS CHECK] expected_id={!r} | received_id={!r} | "
         "expected_version={!r} | received_version={!r} | "
         "expected_pid={!r} | received_pid={!r} | "
-        "status={!r} | source={!r} | file={!r}".format(
-            expected_id,
-            received_id,
-            expected_version,
-            received_version,
-            expected_pid,
-            received_pid,
-            status,
-            source,
-            str(path),
-        )
+        "status={!r} | source={!r} | file={!r}"
+    ).format(
+        expected_id,
+        received_id,
+        expected_version,
+        received_version,
+        expected_pid,
+        received_pid,
+        status,
+        source,
+        str(path),
     )
+    log_once("readiness", diagnostic)
 
-    if received_id != expected_id:
+    # Enforce exact field types as well as values. In particular, bool must
+    # not be accepted as an integer protocol version or process identifier.
+    if type(received_id) is not str or received_id != expected_id:
         message = (
             "عدم تطابق معرّف البروتوكول: المتوقع={!r}، المستلم={!r}. "
-            "المصدر={!r}، الملف={!r}.".format(
-                expected_id, received_id, source, path
-            )
-        )
+            "المصدر={!r}، الملف={!r}."
+        ).format(expected_id, received_id, source, path)
         log_message("[READINESS ID MISMATCH] " + message)
         return "error", message
 
-    if received_version != expected_version:
+    if type(received_version) is not int or received_version != expected_version:
         message = (
             "عدم توافق إصدار البروتوكول: المتوقع={!r}، المستلم={!r}. "
-            "المصدر={!r}، الملف={!r}.".format(
-                expected_version, received_version, source, path
-            )
-        )
+            "المصدر={!r}، الملف={!r}."
+        ).format(expected_version, received_version, source, path)
         log_message("[READINESS VERSION MISMATCH] " + message)
+        return "error", message
+
+    if type(received_pid) is not int:
+        message = "حقل PID مفقود أو غير صحيح في ملف الجاهزية: {!r}.".format(
+            received_pid
+        )
+        log_message("[READINESS PID FORMAT ERROR] " + message)
         return "error", message
 
     if expected_pid is not None and received_pid != expected_pid:
         message = (
-            "إشارة الجاهزية صادرة من عملية مختلفة: "
-            "PID المتوقع={!r}، PID المستلم={!r}. "
-            "قد تكون الإشارة من عملية قديمة متبقية.".format(
-                expected_pid, received_pid
-            )
-        )
+            "إشارة الجاهزية صادرة من عملية مختلفة: PID المتوقع={!r}، "
+            "PID المستلم={!r}. قد تكون الإشارة من عملية قديمة متبقية."
+        ).format(expected_pid, received_pid)
         log_message("[READINESS PID MISMATCH] " + message)
         return "error", message
 
+    if source != "app.py":
+        message = "مصدر إشارة الجاهزية غير صحيح: المتوقع 'app.py' والمستلم {!r}.".format(
+            source
+        )
+        log_message("[READINESS SOURCE MISMATCH] " + message)
+        return "error", message
+
     if status == "ready":
+        if received_error is not None:
+            message = "إشارة ready يجب أن تحتوي على error=null، والمستلم={!r}.".format(
+                received_error
+            )
+            log_message("[READINESS FIELD ERROR] " + message)
+            return "error", message
+
         log_message(
-            "[READINESS SUCCESS] protocol_id={} | source={} | pid={}".format(
-                received_id, source, received_pid
+            "[READINESS SUCCESS] protocol_id={} | protocol_version={} | "
+            "source={} | pid={}".format(
+                received_id, received_version, source, received_pid
             )
         )
         return "ready", None
 
     if status == "error":
-        error_text = data.get("error") or "خطأ غير معروف أثناء تهيئة التطبيق."
+        error_text = received_error or "خطأ غير معروف أثناء تهيئة التطبيق."
+        if not isinstance(error_text, str):
+            error_text = repr(error_text)
         message = (
             "أبلغ app.py عن فشل التهيئة. protocol_id={!r} | "
-            "source={!r} | error={} ".format(
-                received_id, source, error_text
-            )
-        )
+            "protocol_version={!r} | source={!r} | error={}"
+        ).format(received_id, received_version, source, error_text)
         log_message("[READINESS APP ERROR] " + message)
         return "error", message
 
@@ -370,8 +397,8 @@ def http_get(url, timeout=3):
     request = urllib.request.Request(
         url, headers={"User-Agent": "Mozilla/5.0 HokamaERP"}
     )
-    # These URLs are loopback-only (127.0.0.1). Bypass HTTP_PROXY settings
-    # so a system proxy cannot intercept local Streamlit/Chrome requests.
+    # These URLs are loopback-only. Bypass system proxy settings so a proxy
+    # cannot intercept requests to the local Streamlit/Chrome endpoints.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with opener.open(request, timeout=timeout) as response:
         return response.status, response.read()
@@ -383,9 +410,7 @@ def is_streamlit_healthy(host, port):
 
     try:
         status, health_body = http_get(url, timeout=3)
-        health_text = health_body.decode(
-            "utf-8", errors="ignore"
-        ).strip().lower()
+        health_text = health_body.decode("utf-8", errors="ignore").strip().lower()
 
         if status != 200:
             log_once(
@@ -397,7 +422,7 @@ def is_streamlit_healthy(host, port):
             return False
 
         # Streamlit normally returns 'ok'. 'healthy' is accepted for
-        # compatibility with builds/proxies that use that response text.
+        # compatibility with builds that use that response body.
         if health_text not in ("ok", "healthy"):
             log_once(
                 "http",
@@ -434,9 +459,7 @@ def wait_for_http_health(server, host, port, timeout):
 
         if is_streamlit_healthy(host, port):
             log_message(
-                "Streamlit HTTP health endpoint is healthy on port {}.".format(
-                    port
-                )
+                "Streamlit HTTP health endpoint is healthy on port {}.".format(port)
             )
             return True
 
@@ -473,9 +496,10 @@ def wait_for_readiness(server, host, port, timeout=APP_READINESS_TIMEOUT):
         if now - last_health_check >= 3:
             last_health_check = now
             if not is_streamlit_healthy(host, port):
-                log_message(
-                    "Warning: Streamlit HTTP health check failed while "
-                    "waiting for app readiness."
+                log_once(
+                    "http",
+                    "[HTTP HEALTH] Health check failed while waiting for "
+                    "app.py readiness on {}:{}".format(host, port),
                 )
 
         time.sleep(READY_CHECK_INTERVAL)
@@ -484,9 +508,10 @@ def wait_for_readiness(server, host, port, timeout=APP_READINESS_TIMEOUT):
     message = (
         "انتهت مهلة انتظار إشارة الجاهزية من app.py.\n"
         "Protocol ID المتوقع: {}\n"
+        "Protocol version المتوقع: {}\n"
         "ملف الجاهزية المتوقع: {}\n"
         "راجع startup.log وstreamlit.log لمعرفة المرحلة التي توقفت عندها التهيئة."
-    ).format(PROTOCOL_ID, path)
+    ).format(PROTOCOL_ID, PROTOCOL_VERSION, path)
     log_message("[READINESS TIMEOUT] " + message.replace("\n", " | "))
     return False, message
 
@@ -605,10 +630,10 @@ def cleanup_stale_chrome_devtools_file(chrome_profile):
 
 
 def chrome_process_using_profile(chrome_profile, expected_url):
-    """Return True if the Hokama page is open, False if absent, None if unknown.
+    """Return True if Hokama's page is open, False if absent, None if unknown.
 
-    This checks Chrome's own local DevTools target list. It avoids repeatedly
-    launching PowerShell/Get-CimInstance, which was timing out on this machine.
+    This checks Chrome's local DevTools target list and avoids invoking
+    PowerShell/Get-CimInstance repeatedly.
     """
     reachable, targets, port = chrome_devtools_request(
         chrome_profile, endpoint="/json/list", timeout=2
@@ -647,9 +672,8 @@ def chrome_process_using_profile(chrome_profile, expected_url):
             _CHROME_LAST_DIAGNOSTIC = None
             return True
 
-    # The DevTools endpoint answered successfully, but the Hokama page target
-    # is no longer listed. This is a reliable indication that its app window
-    # has been closed (or navigated away from the application URL).
+    # A successful DevTools response with no matching app page means the
+    # Chrome debugging server is alive, but the Hokama page is not listed.
     return False
 
 
@@ -670,8 +694,7 @@ def launch_chrome(chrome_exe, chrome_profile, url):
         "--disable-background-mode",
         "--disable-features=Translate",
         "--force-color-profile=srgb",
-        # A random local port is recorded in ChromeProfile\DevToolsActivePort.
-        # The launcher uses that endpoint to identify the Hokama app page.
+        # Chrome records a random local debugging port in DevToolsActivePort.
         "--remote-debugging-address=127.0.0.1",
         "--remote-debugging-port=0",
     ]
@@ -710,7 +733,7 @@ def stop_server(server):
 
 
 def monitor_application(server, chrome_profile, app_url):
-    """Return (result, detail): closed, server_stopped, or chrome_not_detected."""
+    """Keep Streamlit alive while the Hokama Chrome app page is open."""
     log_message("Monitoring Hokama ERP Chrome app through local DevTools.")
     first_detection = False
     missing_since = None
@@ -718,11 +741,8 @@ def monitor_application(server, chrome_profile, app_url):
 
     while True:
         if not server.is_alive():
-            detail = "توقفت عملية Streamlit أثناء مراقبة نافذة Chrome. exitcode={}".format(
-                server.exitcode
-            )
-            log_message("ERROR: " + detail)
-            return "server_stopped", detail
+            log_message("ERROR: Streamlit server process stopped.")
+            return False
 
         chrome_state = chrome_process_using_profile(chrome_profile, app_url)
 
@@ -742,22 +762,18 @@ def monitor_application(server, chrome_profile, app_url):
                     )
                 elif time.monotonic() - missing_since >= CHROME_CLOSE_GRACE:
                     log_message("Chrome Hokama app window closed.")
-                    return "closed", None
+                    return True
             elif time.monotonic() >= detection_deadline:
-                detail = (
-                    "لم يتمكن المشغّل من العثور على نافذة Hokama في Chrome "
-                    "عبر واجهة DevTools خلال {} ثانية.\n"
-                    "تحقق من chrome.log، وتأكد من عدم وجود عملية Chrome قديمة "
-                    "تستخدم مجلد ChromeProfile دون تفعيل DevTools."
-                ).format(CHROME_DETECTION_TIMEOUT)
-                log_message("[CHROME DETECTION TIMEOUT] " + detail.replace("\n", " | "))
-                return "chrome_not_detected", detail
+                log_message(
+                    "WARNING: Hokama app page has not yet been detected by "
+                    "Chrome DevTools. Keeping Streamlit alive."
+                )
+                detection_deadline = time.monotonic() + CHROME_DETECTION_TIMEOUT
 
         else:
             # None means DevTools is not ready or temporarily unreachable.
-            # Before the first detection, wait only for the defined startup
-            # window. After detection, a full grace period is required before
-            # interpreting a lost endpoint as a closed browser session.
+            # Before first detection, never interpret that as a closed browser.
+            # After detection, require a full grace period before shutdown.
             if first_detection:
                 if missing_since is None:
                     missing_since = time.monotonic()
@@ -771,15 +787,7 @@ def monitor_application(server, chrome_profile, app_url):
                         "Chrome DevTools endpoint stayed unreachable; "
                         "treating the Hokama browser session as closed."
                     )
-                    return "closed", None
-            elif time.monotonic() >= detection_deadline:
-                detail = (
-                    "لم تظهر واجهة Chrome DevTools خلال {} ثانية.\n"
-                    "لم يوقف المشغّل الخادم بسبب غياب إشارة إغلاق؛ "
-                    "لكن لا يمكن مراقبة النافذة بأمان. راجع chrome.log."
-                ).format(CHROME_DETECTION_TIMEOUT)
-                log_message("[CHROME DEVTOOLS TIMEOUT] " + detail.replace("\n", " | "))
-                return "chrome_not_detected", detail
+                    return True
 
         time.sleep(MONITOR_INTERVAL)
 
@@ -789,47 +797,82 @@ def monitor_application(server, chrome_profile, app_url):
 # ============================================================
 
 def start_streamlit_with_retry(app_path):
+    """Start Streamlit and retry on HTTP or app readiness failures."""
+    attempt_errors = []
+
     for attempt in range(1, STARTUP_RETRIES + 1):
         port = find_free_port()
         cleanup_readiness_file()
         log_message(
-            "Starting Streamlit attempt {}/{}, port={}, protocol_id={}".format(
-                attempt, STARTUP_RETRIES, port, PROTOCOL_ID
+            "Starting Streamlit attempt {}/{}, port={}, protocol_id={}, "
+            "protocol_version={}".format(
+                attempt,
+                STARTUP_RETRIES,
+                port,
+                PROTOCOL_ID,
+                PROTOCOL_VERSION,
             )
         )
 
         server = multiprocessing.Process(
             target=run_streamlit,
-            args=(port, str(app_path), PROTOCOL_ID),
+            args=(port, str(app_path), PROTOCOL_ID, PROTOCOL_VERSION),
             name="HokamaERP-Streamlit",
             daemon=False,
         )
         server.start()
         log_message(
-            "Streamlit process started: pid={} | protocol_id={} | port={}".format(
-                server.pid, PROTOCOL_ID, port
+            "Streamlit process started: pid={} | protocol_id={} | "
+            "protocol_version={} | port={}".format(
+                server.pid, PROTOCOL_ID, PROTOCOL_VERSION, port
             )
         )
 
         http_ready = wait_for_http_health(
             server, HOST, port, HTTP_STARTUP_TIMEOUT
         )
-        if http_ready:
-            log_message("Streamlit HTTP is healthy on port {}.".format(port))
+        if not http_ready:
+            attempt_error = (
+                "فشل فحص HTTP في المحاولة {} من {} على المنفذ {}."
+            ).format(attempt, STARTUP_RETRIES, port)
+            attempt_errors.append(attempt_error)
+            log_message("Streamlit HTTP startup attempt failed: " + attempt_error)
+            stop_server(server)
+            cleanup_readiness_file()
+            if attempt < STARTUP_RETRIES:
+                time.sleep(1)
+            continue
+
+        log_message("Streamlit HTTP is healthy on port {}.".format(port))
+        app_ready, readiness_error = wait_for_readiness(
+            server=server,
+            host=HOST,
+            port=port,
+            timeout=APP_READINESS_TIMEOUT,
+        )
+        if app_ready:
+            log_message(
+                "Streamlit app readiness confirmed on attempt {}.".format(attempt)
+            )
             return server, port, None
 
-        log_message(
-            "Streamlit HTTP startup attempt {}/{} failed.".format(
-                attempt, STARTUP_RETRIES
-            )
+        attempt_error = "فشلت جاهزية التطبيق في المحاولة {} من {}: {}".format(
+            attempt, STARTUP_RETRIES, readiness_error
         )
+        attempt_errors.append(attempt_error)
+        log_message("Streamlit app readiness attempt failed: " + attempt_error)
         stop_server(server)
         cleanup_readiness_file()
-
         if attempt < STARTUP_RETRIES:
             time.sleep(1)
 
-    return None, None, "فشل تشغيل خادم Streamlit بعد عدة محاولات."
+    return (
+        None,
+        None,
+        "فشل تشغيل Streamlit بعد {} محاولات.\n\n{}".format(
+            STARTUP_RETRIES, "\n\n".join(attempt_errors)
+        ),
+    )
 
 
 # ============================================================
@@ -842,9 +885,7 @@ def main():
     owns_instance = False
 
     try:
-        mutex_token, already_running, mutex_error = (
-            acquire_single_instance_mutex()
-        )
+        mutex_token, already_running, mutex_error = acquire_single_instance_mutex()
 
         if already_running:
             show_error(
@@ -859,8 +900,7 @@ def main():
             show_error(
                 APP_NAME,
                 "تعذر التحقق من عدم تشغيل نسخة أخرى من النظام.\n\n"
-                "تم إيقاف التشغيل لمنع فتح نسختين.\n\n"
-                + str(mutex_error),
+                "تم إيقاف التشغيل لمنع فتح نسختين.\n\n" + str(mutex_error),
             )
             return 1
 
@@ -908,6 +948,7 @@ def main():
         log_message("Chrome: {}".format(chrome_exe))
         log_message("Chrome profile: {}".format(chrome_profile))
 
+        # The retry routine now verifies both HTTP health and app.py readiness.
         server, port, error_msg = start_streamlit_with_retry(app_path)
         if server is None:
             detail = read_streamlit_log_tail()
@@ -922,6 +963,7 @@ def main():
 
         url = "http://{}:{}".format(HOST, port)
         log_message("Local URL: {}".format(url))
+
         chrome_process = launch_chrome(chrome_exe, chrome_profile, url)
         log_message(
             "Chrome launch request submitted; launcher_pid={}".format(
@@ -929,57 +971,20 @@ def main():
             )
         )
 
-        ready, readiness_error = wait_for_readiness(
-            server=server,
-            host=HOST,
-            port=port,
-            timeout=APP_READINESS_TIMEOUT,
-        )
+        log_message("Application readiness confirmed successfully.")
+        monitor_ok = monitor_application(server, chrome_profile, url)
 
-        if not ready:
+        if not monitor_ok:
             detail = read_streamlit_log_tail()
-            message = (
-                "تعذّر إكمال تهيئة التطبيق:\n\n{}\n\n"
-                "آخر سجل Streamlit:\n{}\n\nملفات السجل:\n{}".format(
-                    readiness_error, detail, logs_dir
-                )
+            show_error(
+                APP_NAME,
+                "توقف خادم التطبيق.\n\nآخر سجل Streamlit:\n{}\n\n"
+                "ملفات السجل:\n{}".format(detail, logs_dir),
             )
-            log_message("ERROR: " + message)
-            show_error("تعذّر تشغيل Hokama ERP", message)
             return 1
 
-        log_message("Application readiness confirmed successfully.")
-        monitor_result, monitor_detail = monitor_application(
-            server, chrome_profile, url
-        )
-
-        if monitor_result == "closed":
-            log_message("Hokama ERP browser session closed.")
-            return 0
-
-        streamlit_detail = read_streamlit_log_tail()
-        chrome_log_path = logs_dir / "chrome.log"
-        chrome_detail = ""
-        try:
-            if chrome_log_path.exists():
-                chrome_detail = chrome_log_path.read_text(
-                    encoding="utf-8", errors="replace"
-                )[-5000:]
-        except Exception:
-            chrome_detail = "تعذر قراءة chrome.log"
-
-        message = (
-            (monitor_detail or "تعذر استمرار مراقبة جلسة Chrome.")
-            + "\n\nآخر سجل Streamlit:\n"
-            + streamlit_detail
-            + "\n\nآخر سجل Chrome:\n"
-            + (chrome_detail or "لا توجد تفاصيل إضافية في chrome.log")
-            + "\n\nمجلد السجلات:\n"
-            + str(logs_dir)
-        )
-        log_message("[APPLICATION MONITOR ERROR] " + message.replace("\n", " | "))
-        show_error(APP_NAME, message)
-        return 1
+        log_message("Hokama ERP browser session closed.")
+        return 0
 
     except KeyboardInterrupt:
         log_message("Interrupted by user.")
