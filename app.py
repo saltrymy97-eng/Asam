@@ -4,15 +4,14 @@ import html
 import json
 import os
 import sys
-import threading
 import traceback
 import uuid
 
-from datetime import datetime
 from pathlib import Path
 
-import streamlit as st
+from datetime import datetime
 
+import streamlit as st
 
 # ============================================================
 # 1. إعداد الصفحة
@@ -24,7 +23,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
 
 # ============================================================
 # 2. بروتوكول الجاهزية Readiness Protocol
@@ -45,27 +43,24 @@ def _readiness_log(message):
         logs_dir = root / "HokamaERP" / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
         with (logs_dir / "startup.log").open("a", encoding="utf-8") as log:
-            log.write(
-                datetime.now().astimezone().isoformat()
-                + " | " + text + "\n"
-            )
+            log.write(datetime.now().astimezone().isoformat() + " | " + text + "\n")
     except Exception:
         pass
 
 
 def get_received_protocol_id():
-    """Return exactly what the runner placed in the child environment."""
-    return str(os.environ.get("HOKAMA_PROTOCOL_ID", "MISSING")).strip() or "MISSING"
+    """Return the protocol ID exactly as received from the runner environment."""
+    return os.environ.get("HOKAMA_PROTOCOL_ID", "MISSING")
 
 
 def get_received_protocol_version():
-    raw_version = str(
-        os.environ.get("HOKAMA_READINESS_PROTOCOL", "MISSING")
-    ).strip()
-    try:
-        return int(raw_version)
-    except (TypeError, ValueError):
-        return raw_version or "MISSING"
+    """Read the canonical environment representation of protocol version 1."""
+    raw_version = os.environ.get("HOKAMA_READINESS_PROTOCOL", "MISSING")
+    # Environment variables are text. Accept only the canonical representation;
+    # preserve unexpected values so that the launcher can diagnose mismatches.
+    if raw_version == "1":
+        return 1
+    return raw_version
 
 
 def get_readiness_file():
@@ -75,12 +70,12 @@ def get_readiness_file():
     return run_dir / READINESS_FILENAME
 
 
-def write_readiness_signal(status, error_msg=""):
-    """Atomically write the fixed readiness signal; preserve received values.
+def write_readiness_signal(status, error_msg=None):
+    """Atomically write the single, fixed readiness JSON record.
 
-    The actual received protocol ID is written even when incorrect. This is
-    intentional: app_desktop.py can then log expected vs. received values
-    instead of waiting until timeout with no evidence.
+    The protocol values actually received from streamlit_runner.py are written
+    unchanged (apart from the required text-to-int decoding of the canonical
+    environment value "1"). This lets the desktop launcher report mismatches.
     """
     if status not in ("ready", "error"):
         _readiness_log("Rejected unsupported status={!r}".format(status))
@@ -90,39 +85,38 @@ def write_readiness_signal(status, error_msg=""):
     received_version = get_received_protocol_version()
     target_file = get_readiness_file()
 
-    # Streamlit reruns app.py. Do not rewrite/log an identical ready signal
-    # on every rerun once this process has already announced readiness.
-    if status == "ready" and target_file.exists():
+    # Streamlit reruns app.py after interactions. Do not rewrite an identical
+    # ready record for the same process on every rerun.
+    if status == "ready" and target_file.is_file():
         try:
             with target_file.open("r", encoding="utf-8") as file:
                 previous = json.load(file)
             if (
-                previous.get("protocol_id") == received_id
+                isinstance(previous, dict)
+                and previous.get("protocol_id") == received_id
                 and previous.get("protocol_version") == received_version
                 and previous.get("status") == "ready"
+                and type(previous.get("pid")) is int
                 and previous.get("pid") == os.getpid()
+                and previous.get("source") == "app.py"
+                and previous.get("error") is None
             ):
                 return True
         except Exception:
-            # A malformed/stale file is replaced atomically below.
+            # A malformed or stale record is replaced atomically below.
             pass
 
     temp_file = target_file.with_name(
-        "{}.{}.{}.tmp".format(
-            target_file.stem,
-            os.getpid(),
-            uuid.uuid4().hex,
-        )
+        "{}.{}.{}.tmp".format(target_file.stem, os.getpid(), uuid.uuid4().hex)
     )
 
     data = {
         "protocol_id": received_id,
         "protocol_version": received_version,
         "status": status,
-        "source": "app.py",
-        "timestamp": datetime.now().astimezone().isoformat(),
         "pid": os.getpid(),
-        "error": str(error_msg or ""),
+        "source": "app.py",
+        "error": str(error_msg) if error_msg else None,
     }
 
     try:
@@ -140,15 +134,16 @@ def write_readiness_signal(status, error_msg=""):
             )
         )
 
-        with temp_file.open("w", encoding="utf-8") as file:
+        with temp_file.open("w", encoding="utf-8", newline="\n") as file:
             json.dump(data, file, ensure_ascii=False, indent=2)
+            file.write("\n")
             file.flush()
             os.fsync(file.fileno())
 
         os.replace(temp_file, target_file)
         _readiness_log(
-            "Signal written successfully | protocol_id={!r} | status={!r}".format(
-                received_id, status
+            "Signal written successfully | protocol_id={!r} | status={!r} | pid={}".format(
+                received_id, status, os.getpid()
             )
         )
         return True
@@ -169,8 +164,7 @@ def write_readiness_signal(status, error_msg=""):
 
 
 # Validate the environment at the beginning of the app run. If it is wrong,
-# write an error record containing the received value so the launcher can
-# diagnose the mismatch immediately (rather than only timing out).
+# write an error record containing the received values for immediate diagnosis.
 _received_protocol_id = get_received_protocol_id()
 _received_protocol_version = get_received_protocol_version()
 
@@ -193,15 +187,12 @@ if (
     st.error(_protocol_error)
     st.stop()
 else:
-    # Log this confirmation only before the first readiness signal. Streamlit
-    # reruns the script after user interactions, so avoid flooding startup.log.
     if not get_readiness_file().exists():
         _readiness_log(
             "Protocol received correctly | protocol_id={!r} | version={!r}".format(
                 _received_protocol_id, _received_protocol_version
             )
         )
-
 
 # ============================================================
 # 3. عرض أخطاء بدء التشغيل
@@ -210,11 +201,11 @@ else:
 def show_startup_error(title, error):
     st.markdown(
         """
-<div style="direction:rtl;text-align:center;padding:35px 20px;margin:30px auto;max-width:900px;border-radius:18px;background:linear-gradient(145deg,#351b28,#211525);border:1px solid rgba(248,113,113,.4);">
-<div style="font-size:48px;">⚠️</div>
-<h2 style="color:#FCA5A5;">تعذر تشغيل النظام</h2>
-<p style="color:#E5E7EB;">حدث خطأ أثناء تجهيز التطبيق.</p>
-</div>
+        <div class="startup-error">
+            <div style="font-size: 2rem;">⚠️</div>
+            <h2>تعذر تشغيل النظام</h2>
+            <p>حدث خطأ أثناء تجهيز التطبيق.</p>
+        </div>
         """,
         unsafe_allow_html=True,
     )
@@ -239,7 +230,6 @@ except Exception:
     )
     st.stop()
 
-
 # ============================================================
 # 5. التهيئة الأساسية
 # ============================================================
@@ -248,9 +238,11 @@ except Exception:
 def perform_initial_setup():
     try:
         from services.currency_service import create_default_currencies
+
         create_default_currencies()
 
         from services.roles_service import seed_default_roles
+
         seed_default_roles()
 
         return True, None
@@ -272,7 +264,6 @@ if not setup_success:
         setup_error,
     )
     st.stop()
-
 
 # ============================================================
 # 7. استيراد جميع وحدات النظام
@@ -324,13 +315,15 @@ except Exception:
     )
     st.stop()
 
-
 # ============================================================
 # 8. إعلان جاهزية التهيئة والاستيرادات
 # ============================================================
 
-write_readiness_signal("ready")
-
+if not write_readiness_signal("ready"):
+    readiness_error = "تعذرت كتابة إشارة الجاهزية readiness.json. راجع startup.log."
+    _readiness_log(readiness_error)
+    st.error(readiness_error)
+    st.stop()
 
 # ============================================================
 # 9. أدوات مساعدة
@@ -348,142 +341,9 @@ def safe_html(value, default=""):
 
 st.markdown(
     """
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500,1,0');
-
-:root {
-    --primary: #8B5CF6;
-    --primary-light: #A78BFA;
-    --primary-dark: #6D28D9;
-    --surface: #17172B;
-    --surface-light: #20203A;
-    --text-main: #F8FAFC;
-    --text-muted: #A1A1AA;
-    --border: rgba(255,255,255,0.08);
-}
-
-html, body, [class*="css"] {
-    font-family: 'Cairo', sans-serif !important;
-}
-
-.stApp {
-    background: radial-gradient(circle at 85% 5%, rgba(109, 40, 217, 0.09), transparent 28%), linear-gradient(135deg, #0B0B18 0%, #101024 50%, #0B0B18 100%);
-}
-
-.material-icon {
-    font-family: 'Material Symbols Rounded' !important;
-    font-weight: normal;
-    font-style: normal;
-    font-size: 21px;
-    line-height: 1;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    vertical-align: middle;
-    direction: ltr;
-    white-space: nowrap;
-    font-feature-settings: 'liga';
-    -webkit-font-feature-settings: 'liga';
-    font-variation-settings: 'FILL' 1, 'wght' 500, 'GRAD' 0, 'opsz' 24;
-}
-
-.menu-section .material-icon { font-size: 20px; color: #A78BFA; }
-.brand-icon .material-icon { font-size: 45px; color: #C4B5FD; }
-.user-icon .material-icon { font-size: 19px; color: #A78BFA; }
-.permission-icon .material-icon { font-size: 43px; color: #FCA5A5; }
-.seed-icon .material-icon { font-size: 49px; color: #C4B5FD; }
-
-#MainMenu, footer { visibility: hidden; }
-[data-testid="stHeader"] { background: transparent; }
-.block-container { padding-top: 2rem; padding-bottom: 3rem; max-width: 100%; }
-
-[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #17172D 0%, #111124 55%, #0D0D1D 100%);
-    border-right: 1px solid rgba(167,139,250,0.15);
-}
-[data-testid="stSidebar"] > div:first-child { padding: 1.2rem 0.9rem 2rem 0.9rem; }
-
-.menu-section {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin: 22px 4px 9px 4px;
-    padding: 10px 13px;
-    border-radius: 10px;
-    background: linear-gradient(90deg, rgba(139,92,246,0.13), rgba(139,92,246,0.025));
-    border-right: 3px solid #8B5CF6;
-    color: #C4B5FD;
-    font-size: 0.83rem;
-    font-weight: 800;
-    letter-spacing: 0.3px;
-}
-
-[data-testid="stSidebar"] .stButton { width: 100%; margin-bottom: 5px; }
-[data-testid="stSidebar"] .stButton > button {
-    width: 100%; min-height: 43px; display: flex; align-items: center; justify-content: flex-start;
-    gap: 10px; padding: 9px 13px; border-radius: 10px; border: 1px solid transparent;
-    background: rgba(255,255,255,0.025); color: #D4D4E0; font-family: 'Cairo', sans-serif !important;
-    font-size: 0.91rem; font-weight: 600; text-align: right; transition: all 0.2s ease;
-}
-[data-testid="stSidebar"] .stButton > button:hover {
-    background: rgba(139,92,246,0.16); border-color: rgba(167,139,250,0.35); color: #FFFFFF; transform: translateX(-3px);
-}
-[data-testid="stSidebar"] .stButton > button[kind="primary"] {
-    background: linear-gradient(100deg, #6D28D9, #8B5CF6);
-    border: 1px solid rgba(196,181,253,0.45); color: #FFFFFF; font-weight: 800; box-shadow: 0 4px 14px rgba(109,40,217,0.25);
-}
-[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
-    background: linear-gradient(100deg, #7C3AED, #A78BFA); color: #FFFFFF;
-}
-
-.logout-area .stButton > button {
-    margin-top: 12px; background: rgba(239,68,68,0.10); border: 1px solid rgba(239,68,68,0.25); color: #FCA5A5;
-}
-.logout-area .stButton > button:hover {
-    background: rgba(239,68,68,0.25); border-color: rgba(239,68,68,0.55); color: #FFFFFF;
-}
-
-[data-testid="stSidebar"] hr { border-color: rgba(255,255,255,0.09); margin: 18px 0; }
-
-.brand-panel {
-    text-align: center; padding: 22px 10px 17px 10px; margin-bottom: 12px; border-radius: 16px;
-    background: linear-gradient(145deg, rgba(139,92,246,0.15), rgba(255,255,255,0.025));
-    border: 1px solid rgba(167,139,250,0.15);
-}
-.brand-icon { display: flex; align-items: center; justify-content: center; min-height: 55px; }
-.brand-title {
-    margin: 5px 0 2px 0; font-size: 1.65rem; font-weight: 800; color: #FFFFFF;
-    background: linear-gradient(110deg, #FFFFFF, #C4B5FD); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-}
-.brand-subtitle { color: #A78BFA; font-size: 0.78rem; font-weight: 600; margin: 0; }
-
-.user-panel { padding: 12px 14px; margin: 12px 2px 15px 2px; border-radius: 12px; background: rgba(255,255,255,0.045); border: 1px solid rgba(255,255,255,0.075); }
-.user-label { color: #A1A1AA; font-size: 0.72rem; margin-bottom: 5px; }
-.user-name { display: flex; align-items: center; gap: 8px; color: #E9D5FF; font-size: 0.95rem; font-weight: 800; }
-
-.permission-denied {
-    background: linear-gradient(145deg, rgba(239,68,68,0.12), rgba(127,29,29,0.08));
-    border: 1px solid rgba(239,68,68,0.35); border-radius: 16px; padding: 2.5rem 1.5rem; text-align: center; color: #FCA5A5; margin-top: 2rem;
-}
-.permission-icon { display: flex; justify-content: center; margin-bottom: 10px; }
-.permission-denied h2 { color: #FCA5A5; font-weight: 800; }
-
-.stButton > button { font-family: 'Cairo', sans-serif !important; border-radius: 10px; }
-.stTextInput input, .stNumberInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] { border-radius: 9px; }
-[data-testid="stMetric"] { background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.07); border-radius: 13px; padding: 15px; }
-[data-testid="stDataFrame"], [data-testid="stTable"] { border-radius: 12px; overflow: hidden; }
-
-@media (max-width: 768px) {
-    .block-container { padding: 1rem 0.8rem 2rem 0.8rem; }
-    .brand-title { font-size: 1.4rem; }
-    .menu-section { font-size: 0.79rem; }
-}
-</style>
-""",
+    """,
     unsafe_allow_html=True,
 )
-
 
 # ============================================================
 # 11. تهيئة الجلسة
@@ -497,7 +357,6 @@ if "current_page" not in st.session_state:
     st.session_state.current_page = "لوحة المعلومات"
 if "run_seed" not in st.session_state:
     st.session_state.run_seed = False
-
 
 # ============================================================
 # 12. أدوات الصلاحيات والتنقل
@@ -556,17 +415,11 @@ else:
     with st.sidebar:
         st.markdown(
             """
-<div class="brand-panel">
-<div class="brand-icon">
-<span class="material-icon">apartment</span>
-</div>
-<div class="brand-title">
-حوكمة ERP
-</div>
-<p class="brand-subtitle">
-إدارة ذكية .. قرارات واثقة
-</p>
-</div>
+            <div class="sidebar-brand">
+                <div>apartment</div>
+                <h2>حوكمة ERP</h2>
+                <p>إدارة ذكية .. قرارات واثقة</p>
+            </div>
             """,
             unsafe_allow_html=True,
         )
@@ -578,46 +431,21 @@ else:
         )
 
         st.markdown(
-            f"""
-<div class="user-panel">
-<div class="user-label">
-المستخدم الحالي
-</div>
-<div class="user-name">
-<span class="material-icon user-icon">
-account_circle
-</span>
-<span>
-{safe_html(display_name)}
-</span>
-</div>
-</div>
-            """,
+            """
+            <div class="current-user">
+                <div>المستخدم الحالي</div>
+                <div>account_circle&nbsp;&nbsp; {}</div>
+            </div>
+            """.format(safe_html(display_name)),
             unsafe_allow_html=True,
         )
 
         st.divider()
 
-        st.markdown(
-            """
-<div class="menu-section">
-<span class="material-icon">home</span>
-<span>الرئيسية</span>
-</div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.markdown("<div>home&nbsp;&nbsp; الرئيسية</div>", unsafe_allow_html=True)
         nav_button("لوحة المعلومات", "لوحة المعلومات", "dashboard", ":material/dashboard:")
 
-        st.markdown(
-            """
-<div class="menu-section">
-<span class="material-icon">inventory_2</span>
-<span>العمليات</span>
-</div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.markdown("<div>inventory_2&nbsp;&nbsp; العمليات</div>", unsafe_allow_html=True)
         nav_button("مبيعات", "المبيعات", "sales", ":material/shopping_cart:", "المبيعات")
         nav_button("مشتريات", "المشتريات", "purchases", ":material/receipt_long:", "المشتريات")
         nav_button("مرتجعات", "مرتجعات البضاعة", "returns", ":material/assignment_return:", "مرتجعات البضاعة")
@@ -627,15 +455,7 @@ account_circle
         nav_button("مصروفات", "المصروفات", "expenses", ":material/money_off:", "المصروفات")
         nav_button("CRM", "إدارة العملاء", "crm", ":material/people:", "إدارة العملاء")
 
-        st.markdown(
-            """
-<div class="menu-section">
-<span class="material-icon">account_balance</span>
-<span>المحاسبة والمالية</span>
-</div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.markdown("<div>account_balance&nbsp;&nbsp; المحاسبة والمالية</div>", unsafe_allow_html=True)
         nav_button("حسابات", "الحسابات", "accounting", ":material/edit_note:", "الحسابات")
         nav_button("شجرة الحسابات", "شجرة الحسابات", "chart", ":material/account_tree:", "شجرة الحسابات")
         nav_button("قوائم مالية", "القوائم المالية", "financial", ":material/analytics:", "القوائم المالية")
@@ -651,44 +471,20 @@ account_circle
         nav_button("تقييم عملات", "تقييم العملات", "revaluation", ":material/currency_exchange:", "تقييم العملات")
         nav_button("تقارير XBRL", "التقارير المالية XBRL", "pdf", ":material/language:", "التقارير المالية XBRL")
 
-        st.markdown(
-            """
-<div class="menu-section">
-<span class="material-icon">groups</span>
-<span>إدارة الأعمال</span>
-</div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.markdown("<div>groups&nbsp;&nbsp; إدارة الأعمال</div>", unsafe_allow_html=True)
         nav_button("موارد بشرية", "الموارد البشرية", "hr", ":material/badge:", "الموارد البشرية")
         nav_button("رواتب", "كشف الرواتب", "payroll", ":material/payments:", "كشف الرواتب")
         nav_button("أصول ثابتة", "الأصول الثابتة", "assets", ":material/foundation:", "الأصول الثابتة")
         nav_button("مرفقات", "المرفقات", "attachments", ":material/attach_file:", "المرفقات")
 
-        st.markdown(
-            """
-<div class="menu-section">
-<span class="material-icon">admin_panel_settings</span>
-<span>النظام والأمان</span>
-</div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.markdown("<div>admin_panel_settings&nbsp;&nbsp; النظام والأمان</div>", unsafe_allow_html=True)
         nav_button("صلاحيات", "الصلاحيات", "roles", ":material/security:", "الصلاحيات")
         nav_button("سجل تدقيق", "سجل التدقيق", "audit", ":material/history:", "سجل التدقيق")
         nav_button("نسخ احتياطي", "نسخ احتياطي", "backup", ":material/backup:", "نسخ احتياطي")
 
         if username == "admin":
             st.markdown("---")
-            st.markdown(
-                """
-<div class="menu-section" style="color:#FCA5A5;">
-<span class="material-icon" style="color:#FCA5A5;">code</span>
-<span>أدوات المطور</span>
-</div>
-                """,
-                unsafe_allow_html=True,
-            )
+            st.markdown("<div>code&nbsp;&nbsp; أدوات المطور</div>", unsafe_allow_html=True)
             seed_clicked = st.button(
                 "حقن بيانات تجريبية",
                 key="seed_data_btn",
@@ -701,15 +497,7 @@ account_circle
                 st.session_state.run_seed = True
                 st.rerun()
 
-        st.markdown(
-            """
-<div class="menu-section">
-<span class="material-icon">psychology</span>
-<span>الذكاء الاصطناعي</span>
-</div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.markdown("<div>psychology&nbsp;&nbsp; الذكاء الاصطناعي</div>", unsafe_allow_html=True)
         nav_button("المساعد الذكي", "المساعد الذكي", "ai", ":material/psychology:", "المساعد الذكي")
 
         st.divider()
@@ -745,11 +533,11 @@ account_circle
 
             st.markdown(
                 """
-<div style="text-align:center; padding:3rem 1rem; border-radius:18px; background:linear-gradient(145deg, rgba(139,92,246,0.14), rgba(255,255,255,0.025)); border:1px solid rgba(167,139,250,0.18); margin-bottom:25px;">
-<div class="seed-icon"><span class="material-icon">database</span></div>
-<h1 style="color:#F8FAFC;font-size:2.3rem;">حقن البيانات التجريبية</h1>
-<p style="color:#A1A1AA;font-size:1.05rem;">جاري تجهيز النظام ببيانات واقعية...</p>
-</div>
+                <div class="seed-header">
+                    <div>database</div>
+                    <h2>حقن البيانات التجريبية</h2>
+                    <p>جاري تجهيز النظام ببيانات واقعية...</p>
+                </div>
                 """,
                 unsafe_allow_html=True,
             )
@@ -801,11 +589,11 @@ account_circle
         else:
             st.markdown(
                 """
-<div class="permission-denied">
-<div class="permission-icon"><span class="material-icon">lock</span></div>
-<h2>غير مصرح</h2>
-<p>ليس لديك صلاحية للوصول إلى وحدة "{}".</p>
-</div>
+                <div class="permission-denied">
+                    <div>lock</div>
+                    <h2>غير مصرح</h2>
+                    <p>ليس لديك صلاحية للوصول إلى وحدة "{}".</p>
+                </div>
                 """.format(safe_html(module)),
                 unsafe_allow_html=True,
             )
